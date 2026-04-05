@@ -1,6 +1,5 @@
 bin/
 dist/
-gen/
 *.exe
 .env.kontext
 kontext

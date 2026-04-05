@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/cli/browser"
 	"github.com/google/uuid"
 
+	agentv1 "github.com/kontext-dev/kontext-cli/gen/kontext/agent/v1"
 	"github.com/kontext-dev/kontext-cli/internal/auth"
 	"github.com/kontext-dev/kontext-cli/internal/backend"
 	"github.com/kontext-dev/kontext-cli/internal/credential"
@@ -48,47 +48,44 @@ func Start(ctx context.Context, opts Options) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ Authenticated as %s\n", identity)
 
-	// 2. Backend client
+	// 2. Backend client (native ConnectRPC)
 	backendCfg, err := backend.LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ Backend not configured: %v\n", err)
 		fmt.Fprintln(os.Stderr, "  Launching without telemetry (set KONTEXT_CLIENT_ID + KONTEXT_CLIENT_SECRET)")
 		return launchAgentDirect(ctx, opts)
 	}
-	client := backend.NewRESTBridgeClient(backendCfg)
+	client := backend.NewClient(backendCfg)
 
-	// 3. Create session
+	// 3. Create session via ConnectRPC
 	hostname, _ := os.Hostname()
 	cwd, _ := os.Getwd()
-	sessionID, sessionName, err := client.CreateSession(ctx, identity, opts.Agent, hostname, cwd)
+	createResp, err := client.CreateSession(ctx, &agentv1.CreateSessionRequest{
+		UserId:   identity,
+		Agent:    opts.Agent,
+		Hostname: hostname,
+		Cwd:      cwd,
+		ClientInfo: map[string]string{
+			"name": "kontext-cli",
+			"os":   fmt.Sprintf("%s", os.Getenv("GOOS")),
+		},
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ Session creation failed: %v\n", err)
 		fmt.Fprintln(os.Stderr, "  Launching without telemetry")
 		return launchAgentDirect(ctx, opts)
 	}
-	fmt.Fprintf(os.Stderr, "✓ Session: %s (%s)\n", sessionName, sessionID[:8])
+
+	sessionID := createResp.SessionId
+	fmt.Fprintf(os.Stderr, "✓ Session: %s (%s)\n", createResp.SessionName, sessionID[:8])
 
 	traceID := uuid.New().String()
-
-	// Ingest session.begin event
-	client.IngestEvent(ctx, &backend.IngestEventParams{
-		SessionID: sessionID,
-		EventType: "session.begin",
-		Status:    "ok",
-		TraceID:   traceID,
-		RequestJSON: map[string]string{
-			"agent":    opts.Agent,
-			"hostname": hostname,
-			"cwd":      cwd,
-			"os":       runtime.GOOS,
-		},
-	})
 
 	// 4. Start sidecar
 	sessionDir := filepath.Join(os.TempDir(), "kontext", sessionID)
 	os.MkdirAll(sessionDir, 0700)
 
-	sc, err := sidecar.New(sessionDir, client, sessionID, traceID)
+	sc, err := sidecar.New(sessionDir, client, sessionID, traceID, opts.Agent)
 	if err != nil {
 		return fmt.Errorf("sidecar: %w", err)
 	}
@@ -130,19 +127,11 @@ func Start(ctx context.Context, opts Options) error {
 	agentErr := launchAgentWithSettings(ctx, opts.Agent, env, opts.Args, settingsPath)
 
 	// 9. Teardown
-	duration := int(time.Since(startTime).Milliseconds())
+	_ = time.Since(startTime)
 	endCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client.IngestEvent(endCtx, &backend.IngestEventParams{
-		SessionID:  sessionID,
-		EventType:  "session.end",
-		Status:     "ok",
-		DurationMs: duration,
-		TraceID:    traceID,
-	})
-	client.EndSession(endCtx, sessionID)
-
+	_ = client.EndSession(endCtx, sessionID)
 	fmt.Fprintf(os.Stderr, "\n✓ Session ended (%s)\n", sessionID[:8])
 
 	os.RemoveAll(sessionDir)
@@ -253,13 +242,11 @@ func buildEnv(resolved []credential.Resolved) []string {
 	return credential.BuildEnv(resolved, env)
 }
 
-// launchAgentDirect launches the agent without hooks or sidecar (fallback).
 func launchAgentDirect(ctx context.Context, opts Options) error {
 	fmt.Fprintf(os.Stderr, "\nLaunching %s...\n\n", opts.Agent)
 	return launchAgentWithSettings(ctx, opts.Agent, os.Environ(), opts.Args, "")
 }
 
-// launchAgentWithSettings spawns the agent with optional --settings flag.
 func launchAgentWithSettings(_ context.Context, agentName string, env, extraArgs []string, settingsPath string) error {
 	binaryPath, err := exec.LookPath(agentName)
 	if err != nil {
