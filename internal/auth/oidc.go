@@ -5,40 +5,72 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/cli/browser"
-	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
 
 const (
 	// Well-known public client for the Kontext CLI. No secret.
-	// This must be pre-registered in Hydra with:
-	//   grant_types: ["authorization_code", "refresh_token"]
-	//   token_endpoint_auth_method: "none"
-	//   redirect_uris: ["http://127.0.0.1/callback", "http://localhost/callback"]
 	DefaultClientID = "kontext-cli"
 
-	// Default issuer URL. Override with --issuer-url flag or KONTEXT_ISSUER_URL env.
+	// Default API base URL.
 	DefaultIssuerURL = "https://api.kontext.security"
 )
 
-// LoginResult is the output of a successful OIDC login flow.
+// LoginResult is the output of a successful login flow.
 type LoginResult struct {
 	Session *Session
 }
 
-// Login performs the browser-based OIDC PKCE login flow.
-func Login(ctx context.Context, issuerURL, clientID string) (*LoginResult, error) {
-	// 1. OIDC discovery
-	provider, err := oidc.NewProvider(ctx, issuerURL)
+// oauthMetadata is the response from /.well-known/oauth-authorization-server.
+type oauthMetadata struct {
+	Issuer                string `json:"issuer"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+	JwksURI               string `json:"jwks_uri"`
+}
+
+// discoverEndpoints fetches OAuth authorization server metadata.
+func discoverEndpoints(ctx context.Context, baseURL string) (*oauthMetadata, error) {
+	url := strings.TrimRight(baseURL, "/") + "/.well-known/oauth-authorization-server"
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("oidc discovery failed for %s: %w", issuerURL, err)
+		return nil, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("discovery request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("discovery failed: %s", resp.Status)
+	}
+
+	var meta oauthMetadata
+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return nil, fmt.Errorf("decode discovery: %w", err)
+	}
+
+	return &meta, nil
+}
+
+// Login performs the browser-based OAuth PKCE login flow.
+func Login(ctx context.Context, issuerURL, clientID string) (*LoginResult, error) {
+	// 1. Discover endpoints
+	meta, err := discoverEndpoints(ctx, issuerURL)
+	if err != nil {
+		return nil, fmt.Errorf("oauth discovery failed for %s: %w", issuerURL, err)
 	}
 
 	// 2. Start localhost callback server
@@ -62,10 +94,13 @@ func Login(ctx context.Context, issuerURL, clientID string) (*LoginResult, error
 
 	// 4. Build OAuth2 config
 	oauthConfig := &oauth2.Config{
-		ClientID:    clientID,
-		Endpoint:    provider.Endpoint(),
+		ClientID: clientID,
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  meta.AuthorizationEndpoint,
+			TokenURL: meta.TokenEndpoint,
+		},
 		RedirectURL: redirectURI,
-		Scopes:      []string{oidc.ScopeOpenID, "email", "profile", "offline_access"},
+		Scopes:      []string{"openid", "email", "profile", "offline_access"},
 	}
 
 	// 5. Generate state parameter
@@ -108,38 +143,33 @@ func Login(ctx context.Context, issuerURL, clientID string) (*LoginResult, error
 		return nil, fmt.Errorf("token exchange: %w", err)
 	}
 
-	// 9. Verify and decode ID token
-	verifierConfig := &oidc.Config{ClientID: clientID}
-	idTokenVerifier := provider.Verifier(verifierConfig)
-
-	rawIDToken, ok := token.Extra("id_token").(string)
-	if !ok {
-		return nil, fmt.Errorf("no id_token in response")
-	}
-
-	idToken, err := idTokenVerifier.Verify(ctx, rawIDToken)
-	if err != nil {
-		return nil, fmt.Errorf("verify id_token: %w", err)
-	}
-
-	var claims struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
-	}
-	if err := idToken.Claims(&claims); err != nil {
-		return nil, fmt.Errorf("decode id_token claims: %w", err)
-	}
-
-	// 10. Build session
+	// 9. Extract user info from ID token (if present) or use token endpoint response
 	session := &Session{
 		IssuerURL:    issuerURL,
 		AccessToken:  token.AccessToken,
-		IDToken:      rawIDToken,
 		RefreshToken: token.RefreshToken,
 		ExpiresAt:    token.Expiry,
 	}
-	session.User.Name = claims.Name
-	session.User.Email = claims.Email
+
+	// Try to decode ID token for user claims
+	if rawIDToken, ok := token.Extra("id_token").(string); ok {
+		session.IDToken = rawIDToken
+		if claims, err := decodeJWTClaims(rawIDToken); err == nil {
+			if name, _ := claims["name"].(string); name != "" {
+				session.User.Name = name
+			}
+			if email, _ := claims["email"].(string); email != "" {
+				session.User.Email = email
+			}
+		}
+	}
+
+	// Fallback: if no email from ID token, try to get from userinfo or token claims
+	if session.User.Email == "" {
+		if email, _ := token.Extra("email").(string); email != "" {
+			session.User.Email = email
+		}
+	}
 
 	return &LoginResult{Session: session}, nil
 }
@@ -150,14 +180,17 @@ func RefreshSession(ctx context.Context, session *Session) (*Session, error) {
 		return nil, fmt.Errorf("no refresh token available")
 	}
 
-	provider, err := oidc.NewProvider(ctx, session.IssuerURL)
+	meta, err := discoverEndpoints(ctx, session.IssuerURL)
 	if err != nil {
-		return nil, fmt.Errorf("oidc discovery: %w", err)
+		return nil, fmt.Errorf("oauth discovery: %w", err)
 	}
 
 	oauthConfig := &oauth2.Config{
 		ClientID: DefaultClientID,
-		Endpoint: provider.Endpoint(),
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  meta.AuthorizationEndpoint,
+			TokenURL: meta.TokenEndpoint,
+		},
 	}
 
 	tokenSource := oauthConfig.TokenSource(ctx, &oauth2.Token{
@@ -203,6 +236,33 @@ func Preflight(ctx context.Context) (*Session, error) {
 }
 
 // --- helpers ---
+
+// decodeJWTClaims decodes the payload of a JWT without verification.
+// Used only for extracting user display info — not for security decisions.
+func decodeJWTClaims(rawToken string) (map[string]any, error) {
+	parts := strings.Split(rawToken, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid JWT format")
+	}
+
+	// Add padding if needed
+	payload := parts[1]
+	if m := len(payload) % 4; m != 0 {
+		payload += strings.Repeat("=", 4-m)
+	}
+
+	decoded, err := base64.URLEncoding.DecodeString(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	var claims map[string]any
+	if err := json.Unmarshal(decoded, &claims); err != nil {
+		return nil, err
+	}
+
+	return claims, nil
+}
 
 type callbackResult struct {
 	code  string
@@ -258,4 +318,3 @@ func randomString(n int) (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
-
