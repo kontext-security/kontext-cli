@@ -34,15 +34,27 @@ func Start(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "✓ Authenticated as %s\n", session.User.Email)
+	identity := session.User.Email
+	if identity == "" {
+		identity = session.User.Name
+	}
+	if identity == "" {
+		identity = "authenticated"
+	}
+	fmt.Fprintf(os.Stderr, "✓ Authenticated as %s\n", identity)
 
-	// 2. Init — create template if it doesn't exist
+	// 2. Check for env template
 	templatePath := opts.TemplateFile
 	if _, err := os.Stat(templatePath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "\nNo %s found.\n", templatePath)
-		if err := interactiveInit(ctx, session, templatePath); err != nil {
-			return err
-		}
+		fmt.Fprintf(os.Stderr, "\nNo %s found.\n\n", templatePath)
+		fmt.Fprintln(os.Stderr, "To configure providers, create a .env.kontext file:")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "  GITHUB_TOKEN={{kontext:github}}")
+		fmt.Fprintln(os.Stderr, "  STRIPE_KEY={{kontext:stripe}}")
+		fmt.Fprintln(os.Stderr, "  DATABASE_URL={{kontext:postgres}}")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintf(os.Stderr, "Or manage providers at: %s/dashboard/settings\n", opts.IssuerURL)
+		return fmt.Errorf("no env template found — create %s to get started", templatePath)
 	}
 
 	// 3. Parse template
@@ -89,49 +101,6 @@ func ensureSession(ctx context.Context, issuerURL, clientID string) (*auth.Sessi
 	return result.Session, nil
 }
 
-// interactiveInit prompts the user to select providers and writes the template.
-func interactiveInit(_ context.Context, _ *auth.Session, templatePath string) error {
-	// Available providers — in the future, fetch from the backend based on
-	// what the user's org has configured. For now, hardcoded common ones.
-	providers := []struct {
-		Name   string
-		EnvVar string
-		Handle string
-	}{
-		{"GitHub", "GITHUB_TOKEN", "github"},
-		{"Google Workspace", "GOOGLE_TOKEN", "google-workspace"},
-		{"Stripe", "STRIPE_KEY", "stripe"},
-		{"Linear", "LINEAR_API_KEY", "linear"},
-		{"Slack", "SLACK_TOKEN", "slack"},
-		{"PostgreSQL", "DATABASE_URL", "postgres"},
-	}
-
-	fmt.Fprintln(os.Stderr, "Which providers does this project need? (y/N)")
-	reader := bufio.NewReader(os.Stdin)
-
-	var lines []string
-	for _, p := range providers {
-		fmt.Fprintf(os.Stderr, "  %s (%s)? ", p.Name, p.EnvVar)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(strings.ToLower(input))
-		if input == "y" || input == "yes" {
-			lines = append(lines, fmt.Sprintf("%s={{kontext:%s}}", p.EnvVar, p.Handle))
-		}
-	}
-
-	if len(lines) == 0 {
-		fmt.Fprintln(os.Stderr, "\nNo providers selected. You can edit .env.kontext later.")
-		lines = append(lines, "# Add providers: VAR_NAME={{kontext:provider-handle}}")
-	}
-
-	content := strings.Join(lines, "\n") + "\n"
-	if err := os.WriteFile(templatePath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write template: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", templatePath)
-	return nil
-}
 
 // resolveCredentials exchanges each template entry for a live credential.
 func resolveCredentials(ctx context.Context, session *auth.Session, entries []credential.Entry) ([]credential.Resolved, error) {

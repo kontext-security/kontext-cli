@@ -19,7 +19,7 @@ import (
 
 const (
 	// Well-known public client for the Kontext CLI. No secret.
-	DefaultClientID = "kontext-cli"
+	DefaultClientID = "app_a4fb6d20-e937-450f-aa19-db585405aa92"
 
 	// Default API base URL.
 	DefaultIssuerURL = "https://api.kontext.security"
@@ -75,6 +75,7 @@ func Login(ctx context.Context, issuerURL, clientID string) (*LoginResult, error
 
 	// 2. Start localhost callback server
 	callbackCh := make(chan callbackResult, 1)
+	// Use port 0 — Ory Hydra allows any port on localhost for native apps
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("start callback server: %w", err)
