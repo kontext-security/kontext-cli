@@ -43,23 +43,25 @@ func Start(ctx context.Context, opts Options) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ Authenticated as %s\n", identity)
 
-	// 2. Parse env template (optional — launch without credentials if missing)
+	// 2. Ensure env template exists (create interactively on first run)
 	templatePath := opts.TemplateFile
-	var resolved []credential.Resolved
-
 	if _, err := os.Stat(templatePath); os.IsNotExist(err) {
-		fmt.Fprintln(os.Stderr, "  No .env.kontext — launching without credential injection")
-	} else {
-		entries, err := credential.ParseTemplate(templatePath)
-		if err != nil {
-			return fmt.Errorf("parse template: %w", err)
+		if err := initTemplate(templatePath); err != nil {
+			return err
 		}
+	}
 
-		if len(entries) > 0 {
-			resolved, err = resolveCredentials(ctx, session, entries)
-			if err != nil {
-				return err
-			}
+	// 3. Parse template and resolve credentials
+	var resolved []credential.Resolved
+	entries, err := credential.ParseTemplate(templatePath)
+	if err != nil {
+		return fmt.Errorf("parse template: %w", err)
+	}
+
+	if len(entries) > 0 {
+		resolved, err = resolveCredentials(ctx, session, entries)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -91,6 +93,45 @@ func ensureSession(ctx context.Context, issuerURL, clientID string) (*auth.Sessi
 	return result.Session, nil
 }
 
+
+// initTemplate interactively creates a .env.kontext on first run.
+func initTemplate(path string) error {
+	providers := []struct {
+		Name   string
+		EnvVar string
+		Handle string
+	}{
+		{"GitHub", "GITHUB_TOKEN", "github"},
+		{"Google Workspace", "GOOGLE_TOKEN", "google-workspace"},
+		{"Stripe", "STRIPE_KEY", "stripe"},
+		{"Linear", "LINEAR_API_KEY", "linear"},
+		{"Slack", "SLACK_TOKEN", "slack"},
+		{"PostgreSQL", "DATABASE_URL", "postgres"},
+	}
+
+	fmt.Fprintln(os.Stderr, "\nNo .env.kontext found. Which providers does this project need?")
+	reader := bufio.NewReader(os.Stdin)
+
+	var lines []string
+	for _, p := range providers {
+		fmt.Fprintf(os.Stderr, "  %s? [y/N] ", p.Name)
+		input, _ := reader.ReadString('\n')
+		if strings.TrimSpace(strings.ToLower(input)) == "y" {
+			lines = append(lines, fmt.Sprintf("%s={{kontext:%s}}", p.EnvVar, p.Handle))
+		}
+	}
+
+	if len(lines) == 0 {
+		// Write an empty template so it doesn't prompt again
+		lines = append(lines, "# Add providers: VAR_NAME={{kontext:provider-handle}}")
+	}
+
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	fmt.Fprintf(os.Stderr, "✓ Wrote %s\n\n", path)
+	return nil
+}
 
 // resolveCredentials exchanges each template entry for a live credential.
 func resolveCredentials(ctx context.Context, session *auth.Session, entries []credential.Entry) ([]credential.Resolved, error) {
