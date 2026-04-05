@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/kontext-dev/kontext-cli/internal/auth"
 
 	// Register agent adapters
 	_ "github.com/kontext-dev/kontext-cli/internal/agent/claude"
@@ -62,17 +65,32 @@ func startCmd() *cobra.Command {
 }
 
 func loginCmd() *cobra.Command {
-	return &cobra.Command{
+	var issuerURL, clientID string
+
+	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate with Kontext via browser",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprintln(os.Stderr, "kontext login (not yet implemented)")
-			// TODO:
-			// 1. OIDC PKCE flow with well-known public client
-			// 2. Store refresh token in system keyring
+			ctx := context.Background()
+
+			result, err := auth.Login(ctx, issuerURL, clientID)
+			if err != nil {
+				return fmt.Errorf("login failed: %w", err)
+			}
+
+			if err := auth.SaveSession(result.Session); err != nil {
+				return fmt.Errorf("save session: %w", err)
+			}
+
+			fmt.Fprintf(os.Stderr, "Logged in as %s (%s)\n", result.Session.User.Name, result.Session.User.Email)
 			return nil
 		},
 	}
+
+	cmd.Flags().StringVar(&issuerURL, "issuer-url", auth.DefaultIssuerURL, "OIDC issuer URL")
+	cmd.Flags().StringVar(&clientID, "client-id", auth.DefaultClientID, "OAuth client ID")
+
+	return cmd
 }
 
 func hookCmd() *cobra.Command {
