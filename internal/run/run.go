@@ -158,23 +158,10 @@ func isNotConnectedError(err error) bool {
 
 // buildEnv constructs the environment for the agent subprocess.
 func buildEnv(resolved []credential.Resolved) []string {
-	// Start with a minimal base environment — NOT the full parent env.
-	// Only pass through safe variables.
-	safe := []string{"PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_ALL",
-		"EDITOR", "VISUAL", "TMPDIR", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME",
-		"SSH_AUTH_SOCK", "GPG_TTY"}
-
-	var env []string
-	for _, key := range safe {
-		if val, ok := os.LookupEnv(key); ok {
-			env = append(env, key+"="+val)
-		}
-	}
-
-	// Add Kontext session indicators
-	env = append(env, "KONTEXT_RUN=1")
-
-	// Add resolved credentials
+	// Pass through the parent environment + add Kontext session indicator +
+	// overlay resolved credentials. In the future, this should be tightened
+	// to a minimal allowlist to prevent leaking existing secrets.
+	env := append(os.Environ(), "KONTEXT_RUN=1")
 	return credential.BuildEnv(resolved, env)
 }
 
