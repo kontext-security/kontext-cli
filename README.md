@@ -68,10 +68,10 @@ Commit this to your repo — the team shares it.
 kontext start --agent claude
   │
   ├── Auth: OIDC refresh token from keyring
-  ├── Backend: REST bridge client → CreateSession
+  ├── ConnectRPC: CreateSession → session in dashboard
   ├── Sidecar: Unix socket server (kontext.sock)
   │     ├── Heartbeat loop (30s)
-  │     └── Async event ingestion to backend
+  │     └── Async event ingestion via ConnectRPC
   ├── Hooks: settings.json → Claude Code --settings
   ├── Agent: spawn claude with injected env
   │     │
@@ -79,8 +79,7 @@ kontext start --agent claude
   │     ├── [PostToolUse]       → kontext hook → sidecar → ingest
   │     └── [UserPromptSubmit]  → kontext hook → sidecar → ingest
   │
-  ├── On exit: EndSession → cleanup
-  └── Backend: REST bridge (swappable to native ConnectRPC)
+  └── On exit: EndSession → cleanup
 ```
 
 ### Hook flow (per tool call)
@@ -142,7 +141,7 @@ This is additive — the governance pipeline works independently. OTEL export is
 
 Service definitions: [`proto/kontext/agent/v1/agent.proto`](proto/kontext/agent/v1/agent.proto)
 
-The proto defines the target architecture (native ConnectRPC). The CLI currently uses a REST bridge client that maps proto RPCs to existing Kontext REST endpoints. When the gRPC `AgentService` is deployed server-side, the swap is one constructor call.
+The CLI communicates with the Kontext backend exclusively via ConnectRPC using the generated stubs. Requires the server-side `AgentService` endpoint ([kontext-dev/kontext#408](https://github.com/kontext-dev/kontext/issues/408)).
 
 ### Sidecar wire protocol
 
