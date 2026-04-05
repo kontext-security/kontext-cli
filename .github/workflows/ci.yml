@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./cmd/kontext
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+  proto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bufbuild/buf-setup-action@v1
+
+      - name: Lint proto
+        run: buf lint proto
+
+      - name: Check generated code is up to date
+        run: |
+          buf generate
+          git diff --exit-code gen/ || (echo "Generated code is out of date. Run 'buf generate' and commit." && exit 1)
+
+  proto-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bufbuild/buf-setup-action@v1
+
+      - name: Check proto compatibility with kontext-dev/proto
+        run: |
+          git clone --depth 1 https://github.com/kontext-dev/proto.git /tmp/kontext-proto
+          diff <(sort proto/kontext/agent/v1/agent.proto) <(sort /tmp/kontext-proto/kontext/agent/v1/agent.proto) || (echo "Proto definitions diverged from kontext-dev/proto. Sync them." && exit 1)
