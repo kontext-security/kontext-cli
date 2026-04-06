@@ -74,7 +74,7 @@ func Start(ctx context.Context, opts Options) error {
 	}
 
 	sessionID := createResp.SessionId
-	fmt.Fprintf(os.Stderr, "✓ Session: %s (%s)\n", createResp.SessionName, sessionID[:8])
+	fmt.Fprintf(os.Stderr, "✓ Session: %s (%s)\n", createResp.SessionName, truncateID(sessionID))
 
 	// 4. Start sidecar
 	sessionDir := filepath.Join(os.TempDir(), "kontext", sessionID)
@@ -125,7 +125,7 @@ func Start(ctx context.Context, opts Options) error {
 	defer cancel()
 
 	_ = client.EndSession(endCtx, sessionID)
-	fmt.Fprintf(os.Stderr, "\n✓ Session ended (%s)\n", sessionID[:8])
+	fmt.Fprintf(os.Stderr, "\n✓ Session ended (%s)\n", truncateID(sessionID))
 
 	os.RemoveAll(sessionDir)
 
@@ -301,14 +301,36 @@ func filterArgs(args []string) []string {
 		"--bare":                         true,
 		"--dangerously-skip-permissions": true,
 	}
+	// Flags that take a value argument — strip the flag AND the next arg.
+	blockedWithValue := map[string]bool{
+		"--settings":       true,
+		"--setting-sources": true,
+	}
 
 	var filtered []string
+	skip := false
 	for _, arg := range args {
+		if skip {
+			skip = false
+			continue
+		}
 		if blocked[arg] {
 			fmt.Fprintf(os.Stderr, "⚠ Stripped blocked flag: %s\n", arg)
+			continue
+		}
+		if blockedWithValue[arg] {
+			fmt.Fprintf(os.Stderr, "⚠ Stripped blocked flag: %s\n", arg)
+			skip = true // skip the next arg (the value)
 			continue
 		}
 		filtered = append(filtered, arg)
 	}
 	return filtered
+}
+
+func truncateID(id string) string {
+	if len(id) >= 8 {
+		return id[:8]
+	}
+	return id
 }
