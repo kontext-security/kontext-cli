@@ -194,7 +194,7 @@ func resolveCredentials(ctx context.Context, session *auth.Session, entries []cr
 // to resolve a provider credential. The user's access token serves as both
 // the subject_token and the Bearer auth — no client secret needed.
 func exchangeCredential(ctx context.Context, session *auth.Session, entry credential.Entry) (string, error) {
-	meta, err := auth.DiscoverEndpoints(ctx, auth.DefaultIssuerURL)
+	meta, err := auth.DiscoverEndpoints(ctx, session.IssuerURL)
 	if err != nil {
 		return "", fmt.Errorf("oauth discovery: %w", err)
 	}
