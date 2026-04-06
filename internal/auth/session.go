@@ -32,6 +32,15 @@ func (s *Session) IsExpired() bool {
 	return time.Now().After(s.ExpiresAt.Add(-refreshBuffer))
 }
 
+// APIToken returns the token to use for REST API calls.
+// The API expects a JWT (the ID token), not the opaque OAuth access token.
+func (s *Session) APIToken() string {
+	if s.IDToken != "" {
+		return s.IDToken
+	}
+	return s.AccessToken
+}
+
 // LoadSession reads the stored session from the system keyring.
 func LoadSession() (*Session, error) {
 	data, err := keyring.Get(keyringService, keyringUser)

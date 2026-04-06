@@ -48,8 +48,8 @@ func Start(ctx context.Context, opts Options) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ Authenticated as %s\n", identity)
 
-	// 2. Create agent session
-	mgr, err := session.Create(ctx, sess.IssuerURL, sess.AccessToken)
+	// 2. Create agent session (uses JWT for REST API auth)
+	mgr, err := session.Create(ctx, sess.IssuerURL, sess.APIToken())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ Agent session: %v (continuing without session tracking)\n", err)
 	} else {
@@ -95,14 +95,14 @@ func Start(ctx context.Context, opts Options) error {
 		return fmt.Errorf("create sidecar: %w", err)
 	}
 
-	engine, err := policy.Fetch(ctx, sess.IssuerURL, sess.AccessToken)
+	engine, err := policy.Fetch(ctx, sess.IssuerURL, sess.APIToken())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ Policy fetch: %v (allowing all)\n", err)
 		engine = policy.NewEngine(false, nil)
 	}
 	sidecarSrv.SetEngine(engine)
 
-	auditor := sidecar.NewAuditor(sess.IssuerURL, sess.AccessToken)
+	auditor := sidecar.NewAuditor(sess.IssuerURL, sess.APIToken())
 	auditor.Start(ctx)
 	sidecarSrv.SetAuditor(auditor)
 
