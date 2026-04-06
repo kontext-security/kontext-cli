@@ -11,11 +11,12 @@ import (
 
 // AuditEvent is sent to the backend after each policy decision.
 type AuditEvent struct {
-	ToolName  string `json:"toolName"`
-	Action    string `json:"action"` // "allow" or "deny"
-	Reason    string `json:"reason"`
-	SessionID string `json:"sessionId"`
-	Timestamp string `json:"timestamp"`
+	ToolName  string         `json:"toolName"`
+	ToolInput map[string]any `json:"toolInput,omitempty"`
+	Action    string         `json:"action"` // "allow" or "deny"
+	Reason    string         `json:"reason"`
+	SessionID string         `json:"sessionId"`
+	Timestamp string         `json:"timestamp"`
 }
 
 // Auditor sends MCP events to the backend asynchronously.
@@ -49,13 +50,14 @@ func (a *Auditor) Start(ctx context.Context) {
 }
 
 // Record queues an audit event. Non-blocking; drops if buffer is full.
-func (a *Auditor) Record(toolName string, allowed bool, reason string, sessionID string) {
+func (a *Auditor) Record(toolName string, toolInput map[string]any, allowed bool, reason string, sessionID string) {
 	action := "allow"
 	if !allowed {
 		action = "deny"
 	}
 	event := AuditEvent{
 		ToolName:  toolName,
+		ToolInput: toolInput,
 		Action:    action,
 		Reason:    reason,
 		SessionID: sessionID,

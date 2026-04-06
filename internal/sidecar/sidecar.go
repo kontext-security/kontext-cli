@@ -101,10 +101,15 @@ func (s *Server) handleConn(_ context.Context, conn net.Conn) {
 		return
 	}
 
+	if s.engine == nil {
+		s.writeDecision(conn, false, "sidecar: no policy engine configured")
+		return
+	}
+
 	allowed, reason := s.engine.Evaluate(event.ToolName, event.ToolUseID)
 
 	if s.auditor != nil {
-		s.auditor.Record(event.ToolName, allowed, reason, event.SessionID)
+		s.auditor.Record(event.ToolName, event.ToolInput, allowed, reason, event.SessionID)
 	}
 
 	s.writeDecision(conn, allowed, reason)

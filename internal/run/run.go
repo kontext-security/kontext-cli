@@ -296,11 +296,15 @@ func launchAgent(_ context.Context, agentName string, env []string, extraArgs []
 
 // filterArgs removes flags that could bypass governance.
 func filterArgs(args []string) []string {
-	blocked := map[string]bool{
-		"--bare":                          true,
-		"--dangerously-skip-permissions":  true,
-		"--settings":                      true,
-		"--setting-sources":               true,
+	// Flags that take no value (boolean flags)
+	blockedBool := []string{
+		"--bare",
+		"--dangerously-skip-permissions",
+	}
+	// Flags that take a value (--flag value or --flag=value)
+	blockedValue := []string{
+		"--settings",
+		"--setting-sources",
 	}
 
 	var filtered []string
@@ -310,14 +314,38 @@ func filterArgs(args []string) []string {
 			skip = false
 			continue
 		}
-		if blocked[arg] {
-			fmt.Fprintf(os.Stderr, "⚠ Stripped blocked flag: %s\n", arg)
-			// If this flag takes a value, skip the next arg too
-			if arg == "--settings" || arg == "--setting-sources" {
-				skip = true
+
+		// Check boolean flags (exact match only)
+		blocked := false
+		for _, f := range blockedBool {
+			if arg == f {
+				fmt.Fprintf(os.Stderr, "⚠ Stripped blocked flag: %s\n", arg)
+				blocked = true
+				break
 			}
+		}
+		if blocked {
 			continue
 		}
+
+		// Check value flags (exact match or --flag=value)
+		for _, f := range blockedValue {
+			if arg == f {
+				fmt.Fprintf(os.Stderr, "⚠ Stripped blocked flag: %s\n", arg)
+				skip = true // skip the next arg (the value)
+				blocked = true
+				break
+			}
+			if strings.HasPrefix(arg, f+"=") {
+				fmt.Fprintf(os.Stderr, "⚠ Stripped blocked flag: %s\n", f)
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			continue
+		}
+
 		filtered = append(filtered, arg)
 	}
 	return filtered
