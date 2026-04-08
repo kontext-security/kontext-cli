@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"strings"
 	"syscall"
 	"time"
@@ -51,8 +52,8 @@ func Start(ctx context.Context, opts Options) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ Authenticated as %s\n", identity)
 
-	// 2. Backend client — authenticated with the user's OIDC token
-	client := backend.NewClient(backend.BaseURL(), session.AccessToken)
+	// 2. Backend client — token source refreshes automatically on expiry
+	client := backend.NewClient(backend.BaseURL(), newSessionTokenSource(ctx, session))
 
 	// 3. Create session via ConnectRPC
 	hostname, _ := os.Hostname()
@@ -252,6 +253,34 @@ func isNotConnectedError(err error) bool {
 func buildEnv(resolved []credential.Resolved) []string {
 	env := append(os.Environ(), "KONTEXT_RUN=1")
 	return credential.BuildEnv(resolved, env)
+}
+
+// newSessionTokenSource returns a TokenSource that transparently refreshes
+// the OIDC access token when it expires, so long-running sessions keep working.
+func newSessionTokenSource(ctx context.Context, session *auth.Session) backend.TokenSource {
+	mu := &sync.Mutex{}
+	return func() (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if !session.IsExpired() {
+			return session.AccessToken, nil
+		}
+
+		refreshed, err := auth.RefreshSession(ctx, session)
+		if err != nil {
+			return "", fmt.Errorf("token expired and refresh failed: %w", err)
+		}
+
+		// Persist so other processes (and the next `kontext start`) see the new token
+		if saveErr := auth.SaveSession(refreshed); saveErr != nil {
+			fmt.Fprintf(os.Stderr, "⚠ Could not persist refreshed session: %v\n", saveErr)
+		}
+
+		// Update the shared session pointer for subsequent calls
+		*session = *refreshed
+		return session.AccessToken, nil
+	}
 }
 
 func launchAgentDirect(ctx context.Context, opts Options) error {
