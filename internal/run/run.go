@@ -94,7 +94,9 @@ func Start(ctx context.Context, opts Options) error {
 	}
 
 	// 5. Start sidecar
-	sessionDir := filepath.Join(os.TempDir(), "kontext", sessionID)
+	// Use /tmp (not $TMPDIR) with a short ID to keep the Unix socket path
+	// under macOS's 104-byte sun_path limit.
+	sessionDir := filepath.Join("/tmp", "kontext", truncateID(sessionID))
 	os.MkdirAll(sessionDir, 0700)
 
 	sc, err := sidecar.New(sessionDir, client, sessionID, opts.Agent)
