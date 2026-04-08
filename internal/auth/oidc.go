@@ -30,16 +30,16 @@ type LoginResult struct {
 	Session *Session
 }
 
-// oauthMetadata is the response from /.well-known/oauth-authorization-server.
-type oauthMetadata struct {
+// OAuthMetadata is the response from /.well-known/oauth-authorization-server.
+type OAuthMetadata struct {
 	Issuer                string `json:"issuer"`
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 	TokenEndpoint         string `json:"token_endpoint"`
 	JwksURI               string `json:"jwks_uri"`
 }
 
-// discoverEndpoints fetches OAuth authorization server metadata.
-func discoverEndpoints(ctx context.Context, baseURL string) (*oauthMetadata, error) {
+// DiscoverEndpoints fetches OAuth authorization server metadata.
+func DiscoverEndpoints(ctx context.Context, baseURL string) (*OAuthMetadata, error) {
 	url := strings.TrimRight(baseURL, "/") + "/.well-known/oauth-authorization-server"
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -57,7 +57,7 @@ func discoverEndpoints(ctx context.Context, baseURL string) (*oauthMetadata, err
 		return nil, fmt.Errorf("discovery failed: %s", resp.Status)
 	}
 
-	var meta oauthMetadata
+	var meta OAuthMetadata
 	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
 		return nil, fmt.Errorf("decode discovery: %w", err)
 	}
@@ -68,7 +68,7 @@ func discoverEndpoints(ctx context.Context, baseURL string) (*oauthMetadata, err
 // Login performs the browser-based OAuth PKCE login flow.
 func Login(ctx context.Context, issuerURL, clientID string) (*LoginResult, error) {
 	// 1. Discover endpoints
-	meta, err := discoverEndpoints(ctx, issuerURL)
+	meta, err := DiscoverEndpoints(ctx, issuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("oauth discovery failed for %s: %w", issuerURL, err)
 	}
@@ -181,7 +181,7 @@ func RefreshSession(ctx context.Context, session *Session) (*Session, error) {
 		return nil, fmt.Errorf("no refresh token available")
 	}
 
-	meta, err := discoverEndpoints(ctx, session.IssuerURL)
+	meta, err := DiscoverEndpoints(ctx, session.IssuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("oauth discovery: %w", err)
 	}

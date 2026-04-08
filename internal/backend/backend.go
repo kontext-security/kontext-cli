@@ -16,21 +16,30 @@ import (
 	"github.com/kontext-dev/kontext-cli/gen/kontext/agent/v1/agentv1connect"
 )
 
+// TokenSource returns a valid access token, refreshing if necessary.
+type TokenSource func() (string, error)
+
 // Client wraps the ConnectRPC AgentService client.
 type Client struct {
 	rpc agentv1connect.AgentServiceClient
 }
 
-// NewClient creates a ConnectRPC client authenticated with the user's bearer token.
-func NewClient(baseURL, accessToken string) *Client {
+// NewClient creates a ConnectRPC client that fetches a fresh token per request.
+func NewClient(baseURL string, ts TokenSource) *Client {
 	httpClient := &http.Client{
 		Timeout:   30 * time.Second,
-		Transport: &bearerTransport{token: accessToken, base: http.DefaultTransport},
+		Transport: &bearerTransport{tokenSource: ts, base: http.DefaultTransport},
 	}
 
 	return &Client{
 		rpc: agentv1connect.NewAgentServiceClient(httpClient, baseURL),
 	}
+}
+
+// StaticToken returns a TokenSource that always returns the same token.
+// Useful for tests or short-lived commands.
+func StaticToken(token string) TokenSource {
+	return func() (string, error) { return token, nil }
 }
 
 // BaseURL returns the API base URL from env or default.
@@ -81,13 +90,18 @@ func (c *Client) IngestEvent(ctx context.Context, req *agentv1.ProcessHookEventR
 	return stream.CloseResponse()
 }
 
-// bearerTransport injects the user's OIDC token into every request.
+// bearerTransport fetches a fresh token for every outgoing request.
 type bearerTransport struct {
-	token string
-	base  http.RoundTripper
+	tokenSource TokenSource
+	base        http.RoundTripper
 }
 
 func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.Header.Set("Authorization", "Bearer "+t.token)
-	return t.base.RoundTrip(req)
+	token, err := t.tokenSource()
+	if err != nil {
+		return nil, fmt.Errorf("token refresh: %w", err)
+	}
+	r := req.Clone(req.Context())
+	r.Header.Set("Authorization", "Bearer "+token)
+	return t.base.RoundTrip(r)
 }
