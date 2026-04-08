@@ -4,12 +4,16 @@ package run
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"strings"
 	"syscall"
 	"time"
@@ -48,8 +52,8 @@ func Start(ctx context.Context, opts Options) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ Authenticated as %s\n", identity)
 
-	// 2. Backend client — authenticated with the user's OIDC token
-	client := backend.NewClient(backend.BaseURL(), session.AccessToken)
+	// 2. Backend client — token source refreshes automatically on expiry
+	client := backend.NewClient(backend.BaseURL(), newSessionTokenSource(ctx, session))
 
 	// 3. Create session via ConnectRPC
 	hostname, _ := os.Hostname()
@@ -71,29 +75,10 @@ func Start(ctx context.Context, opts Options) error {
 	}
 
 	sessionID := createResp.SessionId
-	fmt.Fprintf(os.Stderr, "✓ Session: %s (%s)\n", createResp.SessionName, sessionID[:8])
+	fmt.Fprintf(os.Stderr, "✓ Session: %s (%s)\n", createResp.SessionName, truncateID(sessionID))
 
-	// 4. Start sidecar
-	sessionDir := filepath.Join(os.TempDir(), "kontext", sessionID)
-	os.MkdirAll(sessionDir, 0700)
-
-	sc, err := sidecar.New(sessionDir, client, sessionID, opts.Agent)
-	if err != nil {
-		return fmt.Errorf("sidecar: %w", err)
-	}
-	if err := sc.Start(ctx); err != nil {
-		return fmt.Errorf("sidecar start: %w", err)
-	}
-	defer sc.Stop()
-
-	// 5. Generate hook settings
-	kontextBin, _ := os.Executable()
-	settingsPath, err := GenerateSettings(sessionDir, kontextBin, opts.Agent)
-	if err != nil {
-		return fmt.Errorf("generate settings: %w", err)
-	}
-
-	// 6. Env template + credentials (optional)
+	// 4. Resolve credentials (before sidecar starts — no background goroutines yet,
+	//    so reading session fields is safe without synchronization)
 	var resolved []credential.Resolved
 	if _, err := os.Stat(opts.TemplateFile); err == nil {
 		entries, err := credential.ParseTemplate(opts.TemplateFile)
@@ -106,6 +91,26 @@ func Start(ctx context.Context, opts Options) error {
 				return err
 			}
 		}
+	}
+
+	// 5. Start sidecar
+	sessionDir := filepath.Join(os.TempDir(), "kontext", sessionID)
+	os.MkdirAll(sessionDir, 0700)
+
+	sc, err := sidecar.New(sessionDir, client, sessionID, opts.Agent)
+	if err != nil {
+		return fmt.Errorf("sidecar: %w", err)
+	}
+	if err := sc.Start(ctx); err != nil {
+		return fmt.Errorf("sidecar start: %w", err)
+	}
+	defer sc.Stop()
+
+	// 6. Generate hook settings
+	kontextBin, _ := os.Executable()
+	settingsPath, err := GenerateSettings(sessionDir, kontextBin, opts.Agent)
+	if err != nil {
+		return fmt.Errorf("generate settings: %w", err)
 	}
 
 	// 7. Build env
@@ -122,7 +127,7 @@ func Start(ctx context.Context, opts Options) error {
 	defer cancel()
 
 	_ = client.EndSession(endCtx, sessionID)
-	fmt.Fprintf(os.Stderr, "\n✓ Session ended (%s)\n", sessionID[:8])
+	fmt.Fprintf(os.Stderr, "\n✓ Session ended (%s)\n", truncateID(sessionID))
 
 	os.RemoveAll(sessionDir)
 
@@ -187,8 +192,59 @@ func resolveCredentials(ctx context.Context, session *auth.Session, entries []cr
 	return resolved, nil
 }
 
-func exchangeCredential(_ context.Context, _ *auth.Session, _ credential.Entry) (string, error) {
-	return "", fmt.Errorf("credential exchange not yet connected to backend")
+// exchangeCredential calls POST /oauth2/token with RFC 8693 token exchange
+// to resolve a provider credential. The user's access token serves as both
+// the subject_token and the Bearer auth — no client secret needed.
+func exchangeCredential(ctx context.Context, session *auth.Session, entry credential.Entry) (string, error) {
+	meta, err := auth.DiscoverEndpoints(ctx, session.IssuerURL)
+	if err != nil {
+		return "", fmt.Errorf("oauth discovery: %w", err)
+	}
+
+	form := url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"client_id":          {auth.DefaultClientID},
+		"subject_token":      {session.AccessToken},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+		"resource":           {entry.Provider},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", meta.TokenEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+session.AccessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("token exchange request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		AccessToken  string `json:"access_token"`
+		TokenType    string `json:"token_type"`
+		ProviderKind string `json:"provider_kind"`
+		Error        string `json:"error"`
+		ErrorDesc    string `json:"error_description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode token exchange response: %w", err)
+	}
+
+	if result.Error != "" {
+		if result.Error == "invalid_target" && strings.Contains(result.ErrorDesc, "not allowed") {
+			return "", fmt.Errorf("provider not connected: %s", entry.Provider)
+		}
+		return "", fmt.Errorf("token exchange failed: %s: %s", result.Error, result.ErrorDesc)
+	}
+
+	if result.AccessToken == "" {
+		return "", fmt.Errorf("token exchange returned empty access_token")
+	}
+
+	return result.AccessToken, nil
 }
 
 func isNotConnectedError(err error) bool {
@@ -199,6 +255,34 @@ func isNotConnectedError(err error) bool {
 func buildEnv(resolved []credential.Resolved) []string {
 	env := append(os.Environ(), "KONTEXT_RUN=1")
 	return credential.BuildEnv(resolved, env)
+}
+
+// newSessionTokenSource returns a TokenSource that transparently refreshes
+// the OIDC access token when it expires, so long-running sessions keep working.
+func newSessionTokenSource(ctx context.Context, session *auth.Session) backend.TokenSource {
+	mu := &sync.Mutex{}
+	return func() (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if !session.IsExpired() {
+			return session.AccessToken, nil
+		}
+
+		refreshed, err := auth.RefreshSession(ctx, session)
+		if err != nil {
+			return "", fmt.Errorf("token expired and refresh failed: %w", err)
+		}
+
+		// Persist so other processes (and the next `kontext start`) see the new token
+		if saveErr := auth.SaveSession(refreshed); saveErr != nil {
+			fmt.Fprintf(os.Stderr, "⚠ Could not persist refreshed session: %v\n", saveErr)
+		}
+
+		// Update the shared session pointer for subsequent calls
+		*session = *refreshed
+		return session.AccessToken, nil
+	}
 }
 
 func launchAgentDirect(ctx context.Context, opts Options) error {
@@ -243,19 +327,52 @@ func launchAgentWithSettings(_ context.Context, agentName string, env, extraArgs
 	return err
 }
 
+// flagName extracts the flag name from an arg, handling --flag=value syntax.
+func flagName(arg string) string {
+	if i := strings.Index(arg, "="); i != -1 {
+		return arg[:i]
+	}
+	return arg
+}
+
 func filterArgs(args []string) []string {
 	blocked := map[string]bool{
 		"--bare":                         true,
 		"--dangerously-skip-permissions": true,
 	}
+	// Flags that take a value argument — strip the flag AND the next arg.
+	blockedWithValue := map[string]bool{
+		"--settings":        true,
+		"--setting-sources": true,
+	}
 
 	var filtered []string
+	skip := false
 	for _, arg := range args {
-		if blocked[arg] {
+		if skip {
+			skip = false
+			continue
+		}
+		name := flagName(arg)
+		if blocked[name] {
 			fmt.Fprintf(os.Stderr, "⚠ Stripped blocked flag: %s\n", arg)
+			continue
+		}
+		if blockedWithValue[name] {
+			fmt.Fprintf(os.Stderr, "⚠ Stripped blocked flag: %s\n", arg)
+			if !strings.Contains(arg, "=") {
+				skip = true // skip the next arg (the value)
+			}
 			continue
 		}
 		filtered = append(filtered, arg)
 	}
 	return filtered
+}
+
+func truncateID(id string) string {
+	if len(id) >= 8 {
+		return id[:8]
+	}
+	return id
 }
