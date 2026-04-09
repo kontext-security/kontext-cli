@@ -283,3 +283,15 @@ func TestAgentOAuthClientID(t *testing.T) {
 		t.Fatalf("agentOAuthClientID() = %q, want %q", got, "app_agent-123")
 	}
 }
+
+func TestResolveCredentialClientID(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveCredentialClientID("agent-123", "bootstrap-client"); got != "app_agent-123" {
+		t.Fatalf("resolveCredentialClientID() = %q, want %q", got, "app_agent-123")
+	}
+
+	if got := resolveCredentialClientID("", "bootstrap-client"); got != "bootstrap-client" {
+		t.Fatalf("resolveCredentialClientID() empty agent = %q, want %q", got, "bootstrap-client")
+	}
+}

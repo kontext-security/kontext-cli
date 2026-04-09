@@ -80,7 +80,7 @@ func Start(ctx context.Context, opts Options) error {
 	}
 
 	sessionID := createResp.SessionId
-	credentialClientID := agentOAuthClientID(createResp.AgentId)
+	credentialClientID := resolveCredentialClientID(createResp.AgentId, opts.ClientID)
 	fmt.Fprintf(os.Stderr, "✓ Session: %s (%s)\n", createResp.SessionName, truncateID(sessionID))
 
 	// 4. Resolve credentials (before sidecar starts — no background goroutines yet,
@@ -250,6 +250,13 @@ func fetchConnectURL(ctx context.Context, session *auth.Session, clientID string
 
 func agentOAuthClientID(agentID string) string {
 	return "app_" + agentID
+}
+
+func resolveCredentialClientID(agentID, fallback string) string {
+	if strings.TrimSpace(agentID) == "" {
+		return fallback
+	}
+	return agentOAuthClientID(agentID)
 }
 
 type tokenExchangeResponse struct {
