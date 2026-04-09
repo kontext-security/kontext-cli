@@ -1,0 +1,50 @@
+version: 2
+
+project_name: kontext
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/kontext
+    binary: kontext
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^ci:"
+      - "^chore:"
+
+brews:
+  - repository:
+      owner: kontext-dev
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://kontext.security"
+    description: "Identity, credentials, and governance for AI agents"
+    license: "MIT"
+    install: |
+      bin.install "kontext"
+    test: |
+      system "#{bin}/kontext", "--version"
