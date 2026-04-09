@@ -140,12 +140,6 @@ func Start(ctx context.Context, opts Options) error {
 
 	os.RemoveAll(sessionDir)
 
-	// Propagate agent exit code
-	if agentErr != nil {
-		if exitErr, ok := agentErr.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
-		}
-	}
 	return agentErr
 }
 

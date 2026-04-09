@@ -64,6 +64,7 @@ kontext start --agent claude
 - **Governance telemetry:** Claude hook events are streamed to the backend with user, session, and org attribution
 - **Secure by default:** OIDC authentication, system keyring storage, RFC 8693 token exchange, AES-256-GCM encryption at rest
 - **Lean runtime:** native Go binary, no local daemon install, no Node/Python runtime required
+- **Update notifications:** on `kontext start`, a background check queries the public GitHub releases API (cached for 24h, never blocks startup). Disable with `KONTEXT_NO_UPDATE_CHECK=1`
 
 ## Declare Credentials
 
