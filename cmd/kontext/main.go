@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zalando/go-keyring"
 
 	"github.com/kontext-dev/kontext-cli/internal/agent"
 	"github.com/kontext-dev/kontext-cli/internal/auth"
@@ -32,6 +34,7 @@ func main() {
 
 	root.AddCommand(startCmd())
 	root.AddCommand(loginCmd())
+	root.AddCommand(logoutCmd())
 	root.AddCommand(hookCmd())
 
 	if err := root.Execute(); err != nil {
@@ -97,6 +100,27 @@ func loginCmd() *cobra.Command {
 	cmd.Flags().StringVar(&clientID, "client-id", auth.DefaultClientID, "OAuth client ID")
 
 	return cmd
+}
+
+func logoutCmd() *cobra.Command {
+	return newLogoutCmd(auth.ClearSession)
+}
+
+func newLogoutCmd(clearSession func() error) *cobra.Command {
+	return &cobra.Command{
+		Use:   "logout",
+		Short: "Log out and clear stored credentials",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := clearSession(); err != nil {
+				if errors.Is(err, keyring.ErrNotFound) {
+					return errors.New("already logged out")
+				}
+				return fmt.Errorf("logout failed: %w", err)
+			}
+			fmt.Fprintln(cmd.ErrOrStderr(), "Logged out successfully.")
+			return nil
+		},
+	}
 }
 
 func hookCmd() *cobra.Command {

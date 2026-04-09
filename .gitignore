@@ -2,5 +2,5 @@ bin/
 dist/
 *.exe
 .env.kontext
-kontext
+/kontext
 .DS_Store
