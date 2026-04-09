@@ -15,6 +15,7 @@ import (
 	"github.com/kontext-dev/kontext-cli/internal/hook"
 	"github.com/kontext-dev/kontext-cli/internal/run"
 	"github.com/kontext-dev/kontext-cli/internal/sidecar"
+	"github.com/kontext-dev/kontext-cli/internal/update"
 
 	// Register agent adapters
 	_ "github.com/kontext-dev/kontext-cli/internal/agent/claude"
@@ -49,6 +50,7 @@ func startCmd() *cobra.Command {
 		Use:   "start [flags] [-- extra-agent-args...]",
 		Short: "Launch an agent with Kontext governance",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			update.CheckAsync(version)
 			ctx := context.Background()
 			return run.Start(ctx, run.Options{
 				Agent:        agentName,
