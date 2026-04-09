@@ -30,6 +30,7 @@ buf generate
 - Include tests for behavior changes.
 - Update the README when user-facing behavior changes.
 - Keep generated code, docs, and release notes in sync with the code.
+- Public PRs also run `dependency-review`, so dependency changes must pass both CI and GitHub advisory checks.
 
 ## Release flow
 
