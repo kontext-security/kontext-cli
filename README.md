@@ -1,9 +1,14 @@
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/kontext-dev/kontext-cli/main/assets/banner-cli.png" alt="Kontext" width="auto" height="auto" style="margin-bottom: 20px;" />
+
 # Kontext CLI
 
-The identity layer for AI agents.
-One command. Scoped credentials. Full audit trail. Agents never touch the keys.
+Identity, credentials, and governance for AI agents.
 
-[Website](https://kontext.dev) · [Docs](https://docs.kontext.dev) · [Discord](https://discord.gg/kontext)
+[Website](https://kontext.security) · [Documentation](https://kontext.security/docs) · [Discord](https://discord.gg/gw9UpFUhyY)
+
+</div>
 
 ## What is Kontext CLI?
 
