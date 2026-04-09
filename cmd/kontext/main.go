@@ -31,6 +31,7 @@ func main() {
 
 	root.AddCommand(startCmd())
 	root.AddCommand(loginCmd())
+	root.AddCommand(logoutCmd())
 	root.AddCommand(hookCmd())
 
 	if err := root.Execute(); err != nil {
@@ -93,6 +94,20 @@ func loginCmd() *cobra.Command {
 	cmd.Flags().StringVar(&clientID, "client-id", auth.DefaultClientID, "OAuth client ID")
 
 	return cmd
+}
+
+func logoutCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "logout",
+		Short: "Log out and clear stored credentials",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := auth.ClearSession(); err != nil {
+				return fmt.Errorf("logout failed: %w", err)
+			}
+			fmt.Fprintln(os.Stderr, "Logged out successfully.")
+			return nil
+		},
+	}
 }
 
 func hookCmd() *cobra.Command {
