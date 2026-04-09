@@ -52,4 +52,29 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: kontext-dev/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Render Homebrew formula
+        env:
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          version="${TAG_NAME#v}"
+          ./scripts/render-homebrew-formula.sh "$version" dist/checksums.txt > homebrew-tap/Formula/kontext.rb
+          ruby -c homebrew-tap/Formula/kontext.rb
+
+      - name: Publish Homebrew formula
+        env:
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          version="${TAG_NAME#v}"
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/kontext.rb
+          git commit -m "chore: update kontext formula to ${version}"
+          git push
