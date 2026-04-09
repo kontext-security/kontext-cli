@@ -50,15 +50,17 @@ func startCmd() *cobra.Command {
 		Use:   "start [flags] [-- extra-agent-args...]",
 		Short: "Launch an agent with Kontext governance",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			update.CheckAsync(version)
+			updateDone := update.CheckAsync(version)
 			ctx := context.Background()
-			return run.Start(ctx, run.Options{
+			err := run.Start(ctx, run.Options{
 				Agent:        agentName,
 				TemplateFile: templateFile,
 				IssuerURL:    auth.DefaultIssuerURL,
 				ClientID:     auth.DefaultClientID,
 				Args:         args,
 			})
+			<-updateDone
+			return err
 		},
 	}
 

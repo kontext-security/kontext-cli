@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,7 +24,8 @@ type cachedVersion struct {
 
 // CheckAsync spawns a background goroutine that checks for a newer release.
 // It prints a one-liner to stderr if an update is available, and does nothing
-// on any error. The done channel is closed when the check completes.
+// on any error. The done channel is closed when the check completes; callers
+// should wait on it before exiting to avoid truncated output.
 func CheckAsync(currentVersion string) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
@@ -37,6 +39,9 @@ func check(currentVersion string) {
 	if currentVersion == "" || currentVersion == "dev" {
 		return
 	}
+	if os.Getenv("KONTEXT_NO_UPDATE_CHECK") != "" {
+		return
+	}
 
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
@@ -46,19 +51,56 @@ func check(currentVersion string) {
 
 	latest, ok := readCache(cacheFile)
 	if !ok {
-		latest = fetchLatest()
+		latest = fetchLatest(currentVersion)
 		if latest == "" {
 			return
 		}
 		writeCache(cacheFile, latest)
 	}
 
-	if latest != "" && latest != normalise(currentVersion) {
+	if newerThan(latest, normalise(currentVersion)) {
 		fmt.Fprintf(os.Stderr,
 			"\n⚠ A new version of kontext is available: %s → %s\n"+
-				"  Update: gh release download %s --repo %s --pattern '*darwin_arm64*' --dir /tmp\n\n",
-			currentVersion, latest, latest, repo)
+				"  See: https://github.com/%s/releases/tag/v%s\n\n",
+			currentVersion, latest, repo, latest)
 	}
+}
+
+// newerThan returns true if version a is strictly newer than b.
+// Both must be normalised (no "v" prefix). Falls back to string
+// comparison if either version is not a valid major.minor.patch triple.
+func newerThan(a, b string) bool {
+	aParts, aOK := parseSemver(a)
+	bParts, bOK := parseSemver(b)
+	if !aOK || !bOK {
+		return a != b
+	}
+	for i := 0; i < 3; i++ {
+		if aParts[i] != bParts[i] {
+			return aParts[i] > bParts[i]
+		}
+	}
+	return false
+}
+
+func parseSemver(v string) ([3]int, bool) {
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) != 3 {
+		return [3]int{}, false
+	}
+	var out [3]int
+	for i, p := range parts {
+		// Strip pre-release suffix (e.g. "1-rc.1" → "1")
+		if idx := strings.IndexByte(p, '-'); idx != -1 {
+			p = p[:idx]
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return [3]int{}, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
 
 func readCache(path string) (string, bool) {
@@ -77,7 +119,9 @@ func readCache(path string) (string, bool) {
 }
 
 func writeCache(path, version string) {
-	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
 	data, _ := json.Marshal(cachedVersion{
 		LatestVersion: version,
 		CheckedAt:     time.Now(),
@@ -85,7 +129,7 @@ func writeCache(path, version string) {
 	_ = os.WriteFile(path, data, 0o644)
 }
 
-func fetchLatest() string {
+func fetchLatest(currentVersion string) string {
 	client := &http.Client{Timeout: 3 * time.Second}
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
 
@@ -94,12 +138,17 @@ func fetchLatest() string {
 		return ""
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "kontext-cli/"+currentVersion)
 
 	resp, err := client.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	if err != nil {
 		return ""
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
 
 	var release struct {
 		TagName string `json:"tag_name"`
