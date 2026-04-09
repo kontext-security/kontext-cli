@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -35,26 +36,46 @@ func TestFilterArgs(t *testing.T) {
 func TestFetchConnectURL(t *testing.T) {
 	t.Parallel()
 
+	handlerErrs := make(chan error, 1)
+	recordHandlerErr := func(format string, args ...any) {
+		select {
+		case handlerErrs <- fmt.Errorf(format, args...):
+		default:
+		}
+	}
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			t.Fatalf("method = %q, want %q", r.Method, http.MethodPost)
+			recordHandlerErr("method = %q, want %q", r.Method, http.MethodPost)
+			http.Error(w, "bad method", http.StatusBadRequest)
+			return
 		}
 		if r.URL.Path != "/mcp/connect-session" {
-			t.Fatalf("path = %q, want %q", r.URL.Path, "/mcp/connect-session")
+			recordHandlerErr("path = %q, want %q", r.URL.Path, "/mcp/connect-session")
+			http.Error(w, "bad path", http.StatusBadRequest)
+			return
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer test-access-token" {
-			t.Fatalf("authorization = %q, want %q", got, "Bearer test-access-token")
+			recordHandlerErr("authorization = %q, want %q", got, "Bearer test-access-token")
+			http.Error(w, "bad auth", http.StatusUnauthorized)
+			return
 		}
 		if got := r.Header.Get("Content-Type"); got != "application/json" {
-			t.Fatalf("content-type = %q, want %q", got, "application/json")
+			recordHandlerErr("content-type = %q, want %q", got, "application/json")
+			http.Error(w, "bad content-type", http.StatusBadRequest)
+			return
 		}
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			t.Fatalf("read body: %v", err)
+			recordHandlerErr("read body: %v", err)
+			http.Error(w, "read error", http.StatusInternalServerError)
+			return
 		}
 		if got := string(body); got != "{}" {
-			t.Fatalf("body = %q, want %q", got, "{}")
+			recordHandlerErr("body = %q, want %q", got, "{}")
+			http.Error(w, "bad body", http.StatusBadRequest)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -70,6 +91,11 @@ func TestFetchConnectURL(t *testing.T) {
 	got, err := fetchConnectURL(context.Background(), session)
 	if err != nil {
 		t.Fatalf("fetchConnectURL() error = %v", err)
+	}
+	select {
+	case err := <-handlerErrs:
+		t.Fatal(err)
+	default:
 	}
 
 	want := "https://app.kontext.security/providers/connect#handshake=session-123"
