@@ -1,6 +1,6 @@
 module github.com/kontext-dev/kontext-cli
 
-go 1.25.0
+go 1.25.9
 
 require (
 	connectrpc.com/connect v1.19.1

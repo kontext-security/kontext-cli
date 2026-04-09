@@ -1,6 +1,6 @@
 // Package sidecar implements the local session server.
 // Hook handlers connect over a Unix socket. The sidecar relays events
-// to the Kontext backend via ConnectRPC and returns policy decisions.
+// to the Kontext backend via ConnectRPC and keeps the session alive.
 package sidecar
 
 import (

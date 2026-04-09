@@ -3,3 +3,4 @@ dist/
 *.exe
 .env.kontext
 kontext
+.DS_Store

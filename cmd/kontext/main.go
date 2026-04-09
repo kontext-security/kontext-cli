@@ -60,7 +60,7 @@ func startCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&agentName, "agent", "claude", "Agent to launch (claude, cursor, codex)")
+	cmd.Flags().StringVar(&agentName, "agent", "claude", "Agent to launch (currently: claude)")
 	cmd.Flags().StringVar(&templateFile, "env-template", ".env.kontext", "Path to env template file")
 
 	return cmd

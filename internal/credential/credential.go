@@ -20,6 +20,14 @@ type Entry struct {
 	Raw      string // e.g., "{{kontext:github}}"
 }
 
+// Target returns the full provider target used for token exchange.
+func (e Entry) Target() string {
+	if e.Resource == "" {
+		return e.Provider
+	}
+	return e.Provider + "/" + e.Resource
+}
+
 // Resolved is a credential entry with its resolved value.
 type Resolved struct {
 	Entry
