@@ -250,8 +250,10 @@ func exchangeCredential(ctx context.Context, session *auth.Session, entry creden
 }
 
 func isNotConnectedError(err error) bool {
-	return strings.Contains(err.Error(), "not connected") ||
-		strings.Contains(err.Error(), "provider not found")
+	msg := err.Error()
+	return strings.Contains(msg, "not connected") ||
+		strings.Contains(msg, "provider not found") ||
+		strings.Contains(msg, "provider_reauthorization_required")
 }
 
 func buildEnv(resolved []credential.Resolved) []string {
