@@ -64,10 +64,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up Buf
-        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Buf
+        run: |
+          go install github.com/bufbuild/buf/cmd/buf@v1.58.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Install protoc plugins
         run: |
