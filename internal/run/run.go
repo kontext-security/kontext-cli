@@ -13,14 +13,16 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"sync"
+	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/cli/browser"
 
 	agentv1 "github.com/kontext-dev/kontext-cli/gen/kontext/agent/v1"
+	"github.com/kontext-dev/kontext-cli/internal/agent"
 	"github.com/kontext-dev/kontext-cli/internal/auth"
 	"github.com/kontext-dev/kontext-cli/internal/backend"
 	"github.com/kontext-dev/kontext-cli/internal/credential"
@@ -38,6 +40,10 @@ type Options struct {
 
 // Start is the main entry point for `kontext start`.
 func Start(ctx context.Context, opts Options) error {
+	if _, ok := agent.Get(opts.Agent); !ok {
+		return fmt.Errorf("unsupported agent %q (supported: %s)", opts.Agent, strings.Join(supportedAgents(), ", "))
+	}
+
 	// 1. Auth
 	session, err := ensureSession(ctx, opts.IssuerURL, opts.ClientID)
 	if err != nil {
@@ -69,9 +75,7 @@ func Start(ctx context.Context, opts Options) error {
 		},
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "⚠ Session creation failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "  Launching without telemetry (backend may not support ConnectRPC yet)")
-		return launchAgentDirect(ctx, opts)
+		return fmt.Errorf("create managed session: %w", err)
 	}
 
 	sessionID := createResp.SessionId
@@ -86,7 +90,7 @@ func Start(ctx context.Context, opts Options) error {
 			return fmt.Errorf("parse template: %w", err)
 		}
 		if len(entries) > 0 {
-			resolved, err = resolveCredentials(ctx, session, entries)
+			resolved, err = resolveCredentials(ctx, session, entries, opts.IssuerURL, opts.ClientID)
 			if err != nil {
 				return err
 			}
@@ -97,7 +101,9 @@ func Start(ctx context.Context, opts Options) error {
 	// Use /tmp (not $TMPDIR) with a short ID to keep the Unix socket path
 	// under macOS's 104-byte sun_path limit.
 	sessionDir := filepath.Join("/tmp", "kontext", truncateID(sessionID))
-	os.MkdirAll(sessionDir, 0700)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		return fmt.Errorf("create session dir: %w", err)
+	}
 
 	sc, err := sidecar.New(sessionDir, client, sessionID, opts.Agent)
 	if err != nil {
@@ -163,23 +169,23 @@ func ensureSession(ctx context.Context, issuerURL, clientID string) (*auth.Sessi
 }
 
 // resolveCredentials exchanges each template entry for a live credential.
-func resolveCredentials(ctx context.Context, session *auth.Session, entries []credential.Entry) ([]credential.Resolved, error) {
+func resolveCredentials(ctx context.Context, session *auth.Session, entries []credential.Entry, issuerURL, clientID string) ([]credential.Resolved, error) {
 	fmt.Fprintln(os.Stderr, "\nResolving credentials...")
 	var resolved []credential.Resolved
 
 	for _, entry := range entries {
-		fmt.Fprintf(os.Stderr, "  %s (%s)... ", entry.EnvVar, entry.Provider)
+		fmt.Fprintf(os.Stderr, "  %s (%s)... ", entry.EnvVar, entry.Target())
 
-		value, err := exchangeCredential(ctx, session, entry)
+		value, err := exchangeCredential(ctx, session, entry, clientID)
 		if err != nil {
 			if isNotConnectedError(err) {
 				fmt.Fprintln(os.Stderr, "not connected")
 				fmt.Fprintf(os.Stderr, "  Opening browser to connect %s...\n", entry.Provider)
-				connectURL := fmt.Sprintf("%s/connect/%s", auth.DefaultIssuerURL, entry.Provider)
+				connectURL := fmt.Sprintf("%s/connect/%s", strings.TrimRight(issuerURL, "/"), entry.Provider)
 				_ = browser.OpenURL(connectURL)
 				fmt.Fprint(os.Stderr, "  Press Enter after connecting...")
 				bufio.NewReader(os.Stdin).ReadString('\n')
-				value, err = exchangeCredential(ctx, session, entry)
+				value, err = exchangeCredential(ctx, session, entry, clientID)
 			}
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "⚠ skipped (%v)\n", err)
@@ -197,7 +203,7 @@ func resolveCredentials(ctx context.Context, session *auth.Session, entries []cr
 // exchangeCredential calls POST /oauth2/token with RFC 8693 token exchange
 // to resolve a provider credential. The user's access token serves as both
 // the subject_token and the Bearer auth — no client secret needed.
-func exchangeCredential(ctx context.Context, session *auth.Session, entry credential.Entry) (string, error) {
+func exchangeCredential(ctx context.Context, session *auth.Session, entry credential.Entry, clientID string) (string, error) {
 	meta, err := auth.DiscoverEndpoints(ctx, session.IssuerURL)
 	if err != nil {
 		return "", fmt.Errorf("oauth discovery: %w", err)
@@ -205,10 +211,10 @@ func exchangeCredential(ctx context.Context, session *auth.Session, entry creden
 
 	form := url.Values{
 		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
-		"client_id":          {auth.DefaultClientID},
+		"client_id":          {clientID},
 		"subject_token":      {session.AccessToken},
 		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
-		"resource":           {entry.Provider},
+		"resource":           {entry.Target()},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", meta.TokenEndpoint, strings.NewReader(form.Encode()))
@@ -261,6 +267,12 @@ func buildEnv(resolved []credential.Resolved) []string {
 	return credential.BuildEnv(resolved, env)
 }
 
+func supportedAgents() []string {
+	names := agent.Names()
+	slices.Sort(names)
+	return names
+}
+
 // newSessionTokenSource returns a TokenSource that transparently refreshes
 // the OIDC access token when it expires, so long-running sessions keep working.
 func newSessionTokenSource(ctx context.Context, session *auth.Session) backend.TokenSource {
@@ -287,11 +299,6 @@ func newSessionTokenSource(ctx context.Context, session *auth.Session) backend.T
 		*session = *refreshed
 		return session.AccessToken, nil
 	}
-}
-
-func launchAgentDirect(ctx context.Context, opts Options) error {
-	fmt.Fprintf(os.Stderr, "\nLaunching %s...\n\n", opts.Agent)
-	return launchAgentWithSettings(ctx, opts.Agent, os.Environ(), opts.Args, "")
 }
 
 func launchAgentWithSettings(_ context.Context, agentName string, env, extraArgs []string, settingsPath string) error {

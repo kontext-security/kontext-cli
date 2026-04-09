@@ -51,17 +51,17 @@ type hookOutput struct {
 }
 
 type hookSpecificOutput struct {
-	HookEventName          string `json:"hookEventName"`
-	PermissionDecision     string `json:"permissionDecision,omitempty"`
+	HookEventName            string `json:"hookEventName"`
+	PermissionDecision       string `json:"permissionDecision,omitempty"`
 	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
-	AdditionalContext      string `json:"additionalContext,omitempty"`
+	AdditionalContext        string `json:"additionalContext,omitempty"`
 }
 
 func (c *Claude) EncodeAllow(event *agent.HookEvent, reason string) ([]byte, error) {
 	out := hookOutput{
 		HookSpecificOutput: &hookSpecificOutput{
-			HookEventName:      event.HookEventName,
-			PermissionDecision: "allow",
+			HookEventName:            event.HookEventName,
+			PermissionDecision:       "allow",
 			PermissionDecisionReason: reason,
 		},
 	}
@@ -71,8 +71,8 @@ func (c *Claude) EncodeAllow(event *agent.HookEvent, reason string) ([]byte, err
 func (c *Claude) EncodeDeny(event *agent.HookEvent, reason string) ([]byte, error) {
 	out := hookOutput{
 		HookSpecificOutput: &hookSpecificOutput{
-			HookEventName:      event.HookEventName,
-			PermissionDecision: "deny",
+			HookEventName:            event.HookEventName,
+			PermissionDecision:       "deny",
 			PermissionDecisionReason: reason,
 		},
 	}

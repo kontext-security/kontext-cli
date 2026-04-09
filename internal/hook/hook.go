@@ -1,6 +1,6 @@
 // Package hook handles the hook event lifecycle.
-// It reads hook events from stdin, evaluates them against the sidecar
-// (or directly against the backend), and writes decisions to stdout.
+// It reads hook events from stdin, hands them to the local evaluator,
+// and writes the resulting decision to stdout.
 package hook
 
 import (
