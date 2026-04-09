@@ -20,18 +20,18 @@ Kontext CLI is an open-source command-line tool that wraps AI coding agents with
 
 ## Quick Start
 
-If the tap is public:
-
 ```bash
 brew install kontext-dev/tap/kontext
 ```
 
-If you're on the private preview, install from GitHub Releases instead:
+If you prefer a direct binary install, download the latest GitHub Release instead:
 
 ```bash
-gh release download v0.1.0 --repo kontext-dev/kontext-cli --pattern '*darwin_arm64*' --dir /tmp \
-  && tar -xzf /tmp/kontext_0.1.0_darwin_arm64.tar.gz -C /tmp \
-  && sudo mv /tmp/kontext /usr/local/bin/kontext
+tmpdir="$(mktemp -d)" \
+  && gh release download --repo kontext-dev/kontext-cli --pattern 'kontext_*_darwin_arm64.tar.gz' --dir "$tmpdir" \
+  && archive="$(find "$tmpdir" -maxdepth 1 -name 'kontext_*_darwin_arm64.tar.gz' -print -quit)" \
+  && tar -xzf "$archive" -C "$tmpdir" \
+  && sudo install -m 0755 "$tmpdir/kontext" /usr/local/bin/kontext
 ```
 
 Then, from any project directory with Claude Code installed:
@@ -135,3 +135,7 @@ The CLI communicates with the Kontext backend exclusively via ConnectRPC. Hook h
 ## License
 
 MIT
+
+## Support
+
+See [SUPPORT.md](SUPPORT.md) for the right support channel.
