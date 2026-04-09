@@ -1,49 +1,56 @@
 # Kontext CLI
 
-Governed agent sessions for Claude Code, Cursor, and other AI agents. One command to run any agent with scoped credentials and policy enforcement.
+The identity layer for AI agents.
+One command. Scoped credentials. Full audit trail. Agents never touch the keys.
 
-## How it works
+[Website](https://kontext.dev) · [Docs](https://docs.kontext.dev) · [Discord](https://discord.gg/kontext)
 
-```bash
-kontext start --agent claude
-```
+## What is Kontext CLI?
 
-1. **Authenticates** — loads your identity from the system keyring (set up via `kontext login`)
-2. **Creates a session** — registers with the Kontext backend, visible in the dashboard
-3. **Resolves credentials** — reads `.env.kontext`, exchanges placeholders for short-lived tokens
-4. **Launches the agent** — spawns Claude Code with credentials injected as env vars + governance hooks
-5. **Captures every action** — PreToolUse, PostToolUse, and UserPromptSubmit events streamed to the backend
-6. **Tears down cleanly** — session disconnected, credentials expired, temp files removed
+Kontext CLI is an open-source command-line tool that wraps your AI coding agents (Claude Code, Cursor, Codex) with enterprise-grade identity, credential management, and governance — without changing how you use them.
 
-Credentials are ephemeral — scoped to the session, gone when it ends.
+**Why we built it:** AI coding agents need access to GitHub, Stripe, databases, and dozens of other services. Today, teams copy-paste long-lived API keys into `.env` files and hope for the best. Kontext replaces that with short-lived, scoped credentials that are injected at session start and gone when the session ends. Every tool call is logged. Every secret is accounted for.
 
-## Install
+**How it works:** You declare what credentials your project needs in a single `.env.kontext` file. When you run `kontext start`, the CLI authenticates you, exchanges placeholders for short-lived tokens via RFC 8693 token exchange, launches your agent with those credentials injected, and streams every tool call to the Kontext dashboard for audit and governance. When the session ends, credentials expire automatically.
+
+## Quick Start
 
 ```bash
 brew install kontext-dev/tap/kontext
 ```
 
-Or build from source:
-
-```bash
-go build -o bin/kontext ./cmd/kontext
-```
-
-## Usage
-
-### First-time setup
+Then, from any project directory:
 
 ```bash
 kontext start --agent claude
 ```
 
-On first run, the CLI handles everything interactively:
+That's it. On first run, the CLI handles everything interactively — login, provider connections, credential resolution.
 
-- No session? Opens browser for OIDC login, stores refresh token in system keyring
-- No `.env.kontext`? Prompts for which providers the project needs, writes the file
-- Provider not connected? Opens browser to the Kontext hosted connect flow
+## How it Works
 
-### Declare credentials
+```bash
+kontext start --agent claude
+```
+
+1. **Authenticates** — opens browser for OIDC login, stores refresh token in system keyring
+2. **Creates a session** — registers with the Kontext backend, visible in the dashboard
+3. **Resolves credentials** — reads `.env.kontext`, exchanges placeholders for short-lived tokens
+4. **Launches the agent** — spawns Claude Code with credentials injected as env vars + governance hooks
+5. **Captures every action** — PreToolUse, PostToolUse, and UserPromptSubmit events streamed to the backend
+6. **Tears down cleanly** — session ended, credentials expired, temp files removed
+
+## Features
+
+- **One command to launch any agent:** `kontext start --agent claude` — no config files, no Docker, no setup scripts
+- **Ephemeral credentials:** short-lived tokens scoped to the session, automatically expired on exit. No more long-lived API keys in `.env` files
+- **Declarative credential templates:** commit `.env.kontext` to your repo, and every developer on the team gets the same credential setup without sharing secrets
+- **Full audit trail:** every tool call, every file edit, every command — streamed to the dashboard with user, session, and org attribution
+- **Policy enforcement:** PreToolUse hooks evaluate allow/deny before the agent acts, with ~5ms overhead (native Go binary, no runtime startup)
+- **Secure by default:** OIDC authentication, system keyring storage, RFC 8693 token exchange, AES-256-GCM encryption at rest
+- **Agent-agnostic:** works with Claude Code today, with Cursor and Codex support coming
+
+## Declare Credentials
 
 The `.env.kontext` file declares what credentials the project needs:
 
@@ -53,9 +60,9 @@ STRIPE_KEY={{kontext:stripe}}
 DATABASE_URL={{kontext:postgres/prod-readonly}}
 ```
 
-Commit this to your repo — the team shares it.
+Commit this to your repo — the whole team shares the same template. Secrets stay in Kontext, never in source control.
 
-### Supported agents
+## Supported Agents
 
 | Agent       | Flag             | Status  |
 | ----------- | ---------------- | ------- |
@@ -83,76 +90,9 @@ kontext start --agent claude
   └── On exit: EndSession → cleanup
 ```
 
-### Hook flow (per tool call)
+**Go sidecar:** A lightweight sidecar process runs alongside the agent, communicating over a Unix socket. Hook handlers evaluate policy decisions in ~5ms and stream events asynchronously to the backend — zero impact on agent performance.
 
-```
-Claude Code fires PreToolUse
-  → spawns: kontext hook --agent claude
-  → hook reads stdin JSON (tool_name, tool_input)
-  → hook connects to sidecar via KONTEXT_SOCKET (Unix socket)
-  → sidecar returns allow/deny immediately
-  → sidecar ingests event to backend asynchronously
-  → hook writes decision JSON to stdout, exits
-  → ~5ms total (Go binary, no runtime startup)
-```
-
-## Telemetry Strategy
-
-The CLI separates **governance telemetry** from **developer observability**. These are distinct concerns with different backends and data models.
-
-### Governance telemetry (built-in)
-
-Session lifecycle and tool call events flow to the Kontext backend. This powers the dashboard — sessions, traces, audit trail.
-
-| Event                 | Source                | When                        |
-| --------------------- | --------------------- | --------------------------- |
-| `session.begin`       | CLI lifecycle         | Agent launched              |
-| `session.end`         | CLI lifecycle         | Agent exited                |
-| `hook.pre_tool_call`  | PreToolUse hook       | Before every tool execution |
-| `hook.post_tool_call` | PostToolUse hook      | After every tool execution  |
-| `hook.user_prompt`    | UserPromptSubmit hook | User submits a prompt       |
-
-Events are sent to the backend via the ConnectRPC `ProcessHookEvent` unary RPC and stored in the `mcp_events` table.
-
-**What governance telemetry captures:**
-
-- What the agent tried to do (tool name + input)
-- What happened (tool response)
-- Whether it was allowed (policy decision)
-- Who did it (session → user → org attribution)
-- When (timestamps, duration)
-
-**What governance telemetry does NOT capture:**
-
-- LLM reasoning or thinking
-- Token usage or cost
-- Model parameters
-- Conversation history
-- Response quality
-
-### Developer observability (external, future)
-
-LLM-level observability — generation details, token costs, reasoning traces, conversation history — is a separate concern. It is not part of the governance pipeline.
-
-For this, the CLI will optionally export OpenTelemetry spans to an external backend:
-
-- **Langfuse** — open-source, has a native Claude Code integration, self-hostable
-- **Dash0** — OTEL-native SaaS, cheap ($0.60/M spans), AI/agent-aware
-
-This is additive — the governance pipeline works independently. OTEL export is planned but not yet implemented.
-
-## Protocol
-
-Service definitions: [`proto/kontext/agent/v1/agent.proto`](proto/kontext/agent/v1/agent.proto)
-
-The CLI communicates with the Kontext backend exclusively via ConnectRPC using the generated stubs. Requires the server-side `AgentService` endpoint ([kontext-dev/kontext#408](https://github.com/kontext-dev/kontext/issues/408)).
-
-### Sidecar wire protocol
-
-Hook handlers communicate with the sidecar over a Unix socket using length-prefixed JSON (4-byte big-endian uint32 + JSON payload):
-
-- `EvaluateRequest` — hook → sidecar: agent, hook_event, tool_name, tool_input, tool_response
-- `EvaluateResult` — sidecar → hook: allowed (bool), reason (string)
+**Governance telemetry:** Session lifecycle and tool call events flow to the Kontext backend, powering the dashboard with sessions, traces, and full audit trail. The CLI captures what the agent tried to do, what happened, and whether it was allowed — but never captures LLM reasoning, token usage, or conversation history.
 
 ## Development
 
@@ -169,6 +109,12 @@ go test ./...
 # Link for local use
 ln -sf $(pwd)/bin/kontext ~/.local/bin/kontext
 ```
+
+## Protocol
+
+Service definitions: [`proto/kontext/agent/v1/agent.proto`](proto/kontext/agent/v1/agent.proto)
+
+The CLI communicates with the Kontext backend exclusively via ConnectRPC. Hook handlers communicate with the sidecar over a Unix socket using length-prefixed JSON.
 
 ## License
 
