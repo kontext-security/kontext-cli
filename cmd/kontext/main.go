@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zalando/go-keyring"
 
 	"github.com/kontext-dev/kontext-cli/internal/agent"
 	"github.com/kontext-dev/kontext-cli/internal/auth"
@@ -97,14 +99,21 @@ func loginCmd() *cobra.Command {
 }
 
 func logoutCmd() *cobra.Command {
+	return newLogoutCmd(auth.ClearSession)
+}
+
+func newLogoutCmd(clearSession func() error) *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Log out and clear stored credentials",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := auth.ClearSession(); err != nil {
+			if err := clearSession(); err != nil {
+				if errors.Is(err, keyring.ErrNotFound) {
+					return errors.New("already logged out")
+				}
 				return fmt.Errorf("logout failed: %w", err)
 			}
-			fmt.Fprintln(os.Stderr, "Logged out successfully.")
+			fmt.Fprintln(cmd.ErrOrStderr(), "Logged out successfully.")
 			return nil
 		},
 	}

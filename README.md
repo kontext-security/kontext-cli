@@ -41,6 +41,7 @@ kontext start --agent claude
 ```
 
 That's it. On first run, the CLI handles everything interactively — login, provider connections, credential resolution.
+Run `kontext logout` any time to clear the stored OIDC session from your system keyring.
 
 ## How it Works
 
@@ -48,7 +49,7 @@ That's it. On first run, the CLI handles everything interactively — login, pro
 kontext start --agent claude
 ```
 
-1. **Authenticates** — opens browser for OIDC login, stores refresh token in system keyring
+1. **Authenticates** — opens browser for OIDC login, stores refresh token in system keyring, and lets you clear it later with `kontext logout`
 2. **Creates a session** — registers with the Kontext backend, visible in the dashboard
 3. **Resolves credentials** — reads `.env.kontext`, exchanges placeholders for short-lived tokens
 4. **Launches the agent** — spawns Claude Code with credentials injected as env vars + governance hooks
