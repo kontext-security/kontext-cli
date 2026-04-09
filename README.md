@@ -27,9 +27,11 @@ brew install kontext-dev/tap/kontext
 If you prefer a direct binary install, download the latest GitHub Release instead:
 
 ```bash
-gh release download --repo kontext-dev/kontext-cli --pattern '*darwin_arm64*' --dir /tmp \
-  && tar -xzf /tmp/kontext_*_darwin_arm64.tar.gz -C /tmp \
-  && sudo install -m 0755 /tmp/kontext /usr/local/bin/kontext
+tmpdir="$(mktemp -d)" \
+  && gh release download --repo kontext-dev/kontext-cli --pattern 'kontext_*_darwin_arm64.tar.gz' --dir "$tmpdir" \
+  && archive="$(find "$tmpdir" -maxdepth 1 -name 'kontext_*_darwin_arm64.tar.gz' -print -quit)" \
+  && tar -xzf "$archive" -C "$tmpdir" \
+  && sudo install -m 0755 "$tmpdir/kontext" /usr/local/bin/kontext
 ```
 
 Then, from any project directory with Claude Code installed:
