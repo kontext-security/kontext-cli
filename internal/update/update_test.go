@@ -39,6 +39,9 @@ func TestNewerThan(t *testing.T) {
 		{"0.1.0", "0.1.1", false},
 		{"2.0.0", "1.99.99", true},
 		{"0.2.0-rc.1", "0.1.0", true},
+		{"not-semver", "0.1.0", false},
+		{"0.1.0", "not-semver", false},
+		{"foo", "bar", false},
 	}
 	for _, tt := range tests {
 		if got := newerThan(tt.a, tt.b); got != tt.want {

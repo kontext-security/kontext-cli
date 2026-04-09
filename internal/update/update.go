@@ -67,13 +67,13 @@ func check(currentVersion string) {
 }
 
 // newerThan returns true if version a is strictly newer than b.
-// Both must be normalised (no "v" prefix). Falls back to string
-// comparison if either version is not a valid major.minor.patch triple.
+// Both must be normalised (no "v" prefix). Returns false if either
+// version is not a valid major.minor.patch triple.
 func newerThan(a, b string) bool {
 	aParts, aOK := parseSemver(a)
 	bParts, bOK := parseSemver(b)
 	if !aOK || !bOK {
-		return a != b
+		return false
 	}
 	for i := 0; i < 3; i++ {
 		if aParts[i] != bParts[i] {
