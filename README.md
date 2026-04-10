@@ -4,7 +4,7 @@
 
 # Kontext CLI
 
-Identity, credentials, and governance for AI agents.
+Store Credentials. Inject At Runtime. Agents Never Store The Keys.
 
 [Website](https://kontext.security) · [Documentation](https://kontext.security/docs) · [Discord](https://discord.gg/gw9UpFUhyY)
 
