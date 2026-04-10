@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/kontext-dev/kontext-cli/compare/v0.2.0...v0.2.1) (2026-04-10)
+
+
+### Bug Fixes
+
+* handle provider required in hosted connect ([#52](https://github.com/kontext-dev/kontext-cli/issues/52)) ([93bae50](https://github.com/kontext-dev/kontext-cli/commit/93bae50afcefa1ccd56f76685eaeea4bee303d07))
+
 ## [0.2.0](https://github.com/kontext-dev/kontext-cli/compare/v0.1.1...v0.2.0) (2026-04-09)
 
 
