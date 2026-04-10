@@ -383,6 +383,14 @@ func TestExchangeCredentialUsesProvidedClientID(t *testing.T) {
 	}
 }
 
+func TestIsNotConnectedErrorRecognizesProviderRequired(t *testing.T) {
+	t.Parallel()
+
+	if !isNotConnectedError(fmt.Errorf("token exchange failed: provider_required: User has not configured provider 'Linear Stub'")) {
+		t.Fatal("expected provider_required to trigger hosted connect fallback")
+	}
+}
+
 func TestAgentOAuthClientID(t *testing.T) {
 	t.Parallel()
 
