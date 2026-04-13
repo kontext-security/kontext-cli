@@ -5,33 +5,49 @@ package sidecar
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	agentv1 "github.com/kontext-dev/kontext-cli/gen/kontext/agent/v1"
+	"github.com/kontext-dev/kontext-cli/internal/auth"
 	"github.com/kontext-dev/kontext-cli/internal/backend"
 )
 
+const defaultHeartbeatInterval = 30 * time.Second
+
+// backendClient is the subset of *backend.Client that the sidecar uses.
+// It exists so tests can substitute a fake implementation.
+type backendClient interface {
+	Heartbeat(ctx context.Context, sessionID string) error
+	IngestEvent(ctx context.Context, req *agentv1.ProcessHookEventRequest) error
+}
+
 // Server is the local sidecar that hook handlers communicate with.
 type Server struct {
-	socketPath string
-	listener   net.Listener
-	sessionID  string
-	agentName  string
-	client     *backend.Client
-	cancel     context.CancelFunc
+	socketPath        string
+	listener          net.Listener
+	sessionID         string
+	agentName         string
+	client            backendClient
+	cancel            context.CancelFunc
+	heartbeatInterval time.Duration
+	authFailed        sync.Once
 }
 
 // New creates a new sidecar server.
 func New(sessionDir string, client *backend.Client, sessionID, agentName string) (*Server, error) {
 	return &Server{
-		socketPath: filepath.Join(sessionDir, "kontext.sock"),
-		sessionID:  sessionID,
-		agentName:  agentName,
-		client:     client,
+		socketPath:        filepath.Join(sessionDir, "kontext.sock"),
+		sessionID:         sessionID,
+		agentName:         agentName,
+		client:            client,
+		heartbeatInterval: defaultHeartbeatInterval,
 	}, nil
 }
 
@@ -120,12 +136,15 @@ func (s *Server) ingestEvent(ctx context.Context, req *EvaluateRequest) {
 	}
 
 	if err := s.client.IngestEvent(ctx, hookEvent); err != nil {
+		if s.handleAuthFailure(err) {
+			return
+		}
 		log.Printf("sidecar: ingest: %v", err)
 	}
 }
 
 func (s *Server) heartbeatLoop(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(s.heartbeatInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -133,8 +152,33 @@ func (s *Server) heartbeatLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := s.client.Heartbeat(ctx, s.sessionID); err != nil {
+				if s.handleAuthFailure(err) {
+					return
+				}
 				log.Printf("sidecar: heartbeat: %v", err)
 			}
 		}
 	}
+}
+
+// handleAuthFailure checks whether err represents a permanent authentication
+// failure (refresh token revoked or expired beyond recovery). On the first
+// such error, it prints a user-facing re-auth message and cancels the
+// sidecar's context to stop both heartbeat and event-ingestion loops. The
+// agent child process continues running — the user can finish their work
+// without telemetry and re-authenticate next session.
+//
+// Returns true if the error was a permanent auth failure (caller should
+// exit its loop without additional logging).
+func (s *Server) handleAuthFailure(err error) bool {
+	if !errors.Is(err, auth.ErrInvalidGrant) {
+		return false
+	}
+	s.authFailed.Do(func() {
+		fmt.Fprintln(os.Stderr, "✗ Your session has expired. Please run `kontext login` to continue receiving telemetry.")
+		if s.cancel != nil {
+			s.cancel()
+		}
+	})
+	return true
 }
