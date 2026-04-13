@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,13 @@ import (
 	"github.com/kontext-dev/kontext-cli/internal/backend"
 	"github.com/kontext-dev/kontext-cli/internal/credential"
 	"github.com/kontext-dev/kontext-cli/internal/sidecar"
+)
+
+// Injection seams for testing. Overriding these in tests avoids touching the
+// real system keyring or network.
+var (
+	refreshSession = auth.RefreshSession
+	clearSession   = auth.ClearSession
 )
 
 // Options configures a kontext start run.
@@ -404,18 +412,35 @@ func supportedAgents() []string {
 
 // newSessionTokenSource returns a TokenSource that transparently refreshes
 // the OIDC access token when it expires, so long-running sessions keep working.
+//
+// When the refresh token is permanently rejected (invalid_grant), the stale
+// session is cleared from the keychain and subsequent calls short-circuit with
+// a wrapped auth.ErrInvalidGrant so upstream callers (e.g. the sidecar) can
+// detect the permanent failure and shut down cleanly instead of retrying the
+// dead token every heartbeat tick.
 func newSessionTokenSource(ctx context.Context, session *auth.Session) backend.TokenSource {
 	mu := &sync.Mutex{}
+	var permanentlyFailed bool
 	return func() (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
+
+		if permanentlyFailed {
+			return "", fmt.Errorf("token expired and refresh failed: %w", auth.ErrInvalidGrant)
+		}
 
 		if !session.IsExpired() {
 			return session.AccessToken, nil
 		}
 
-		refreshed, err := auth.RefreshSession(ctx, session)
+		refreshed, err := refreshSession(ctx, session)
 		if err != nil {
+			if errors.Is(err, auth.ErrInvalidGrant) {
+				permanentlyFailed = true
+				if clearErr := clearSession(); clearErr != nil {
+					fmt.Fprintf(os.Stderr, "⚠ Could not clear stale session: %v\n", clearErr)
+				}
+			}
 			return "", fmt.Errorf("token expired and refresh failed: %w", err)
 		}
 

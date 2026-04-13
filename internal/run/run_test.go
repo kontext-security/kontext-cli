@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kontext-dev/kontext-cli/internal/auth"
 	"github.com/kontext-dev/kontext-cli/internal/credential"
@@ -408,5 +410,126 @@ func TestResolveCredentialClientID(t *testing.T) {
 
 	if got := resolveCredentialClientID("", "bootstrap-client"); got != "bootstrap-client" {
 		t.Fatalf("resolveCredentialClientID() empty agent = %q, want %q", got, "bootstrap-client")
+	}
+}
+
+// withStubbedAuthSeams overrides the package-level refreshSession and
+// clearSession hooks for the duration of a test. The originals are restored
+// via t.Cleanup. Tests using this helper must NOT run in parallel because
+// the hooks are package globals.
+func withStubbedAuthSeams(
+	t *testing.T,
+	refresh func(context.Context, *auth.Session) (*auth.Session, error),
+	clear func() error,
+) {
+	t.Helper()
+	origRefresh, origClear := refreshSession, clearSession
+	refreshSession, clearSession = refresh, clear
+	t.Cleanup(func() {
+		refreshSession, clearSession = origRefresh, origClear
+	})
+}
+
+func TestNewSessionTokenSource_ReturnsCachedTokenWhenFresh(t *testing.T) {
+	withStubbedAuthSeams(t,
+		func(_ context.Context, _ *auth.Session) (*auth.Session, error) {
+			t.Fatal("refresh should not be called when token is fresh")
+			return nil, nil
+		},
+		func() error { t.Fatal("clear should not be called when token is fresh"); return nil },
+	)
+
+	session := &auth.Session{
+		AccessToken: "fresh-token",
+		ExpiresAt:   time.Now().Add(time.Hour),
+	}
+	ts := newSessionTokenSource(context.Background(), session)
+
+	tok, err := ts()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tok != "fresh-token" {
+		t.Fatalf("token = %q, want %q", tok, "fresh-token")
+	}
+}
+
+func TestNewSessionTokenSource_InvalidGrantClearsSessionAndShortCircuits(t *testing.T) {
+	var refreshCalls, clearCalls int
+	withStubbedAuthSeams(t,
+		func(_ context.Context, _ *auth.Session) (*auth.Session, error) {
+			refreshCalls++
+			return nil, fmt.Errorf("refresh token: %w", auth.ErrInvalidGrant)
+		},
+		func() error { clearCalls++; return nil },
+	)
+
+	session := &auth.Session{
+		AccessToken:  "stale-token",
+		RefreshToken: "dead-refresh",
+		ExpiresAt:    time.Now().Add(-time.Hour),
+	}
+	ts := newSessionTokenSource(context.Background(), session)
+
+	// First call triggers refresh, which fails with invalid_grant.
+	_, err := ts()
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, auth.ErrInvalidGrant) {
+		t.Fatalf("errors.Is(err, ErrInvalidGrant) = false; err = %v", err)
+	}
+	if refreshCalls != 1 {
+		t.Errorf("refreshCalls = %d, want 1", refreshCalls)
+	}
+	if clearCalls != 1 {
+		t.Errorf("clearCalls = %d, want 1", clearCalls)
+	}
+
+	// Second call must short-circuit without calling refresh or clear again.
+	_, err2 := ts()
+	if !errors.Is(err2, auth.ErrInvalidGrant) {
+		t.Fatalf("second call: errors.Is(err, ErrInvalidGrant) = false; err = %v", err2)
+	}
+	if refreshCalls != 1 {
+		t.Errorf("after short-circuit, refreshCalls = %d, want 1", refreshCalls)
+	}
+	if clearCalls != 1 {
+		t.Errorf("after short-circuit, clearCalls = %d, want 1", clearCalls)
+	}
+}
+
+func TestNewSessionTokenSource_TransientErrorDoesNotClearSession(t *testing.T) {
+	var refreshCalls, clearCalls int
+	withStubbedAuthSeams(t,
+		func(_ context.Context, _ *auth.Session) (*auth.Session, error) {
+			refreshCalls++
+			return nil, fmt.Errorf("refresh token: oauth discovery: network down")
+		},
+		func() error { clearCalls++; return nil },
+	)
+
+	session := &auth.Session{
+		AccessToken:  "stale-token",
+		RefreshToken: "still-valid",
+		ExpiresAt:    time.Now().Add(-time.Hour),
+	}
+	ts := newSessionTokenSource(context.Background(), session)
+
+	_, err := ts()
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if errors.Is(err, auth.ErrInvalidGrant) {
+		t.Fatalf("transient error should not classify as ErrInvalidGrant; err = %v", err)
+	}
+	if clearCalls != 0 {
+		t.Errorf("clearCalls = %d, want 0 for transient error", clearCalls)
+	}
+
+	// Subsequent call should retry refresh (not short-circuit).
+	_, _ = ts()
+	if refreshCalls != 2 {
+		t.Errorf("transient failures should not latch; refreshCalls = %d, want 2", refreshCalls)
 	}
 }
