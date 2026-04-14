@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/kontext-security/kontext-cli/compare/v0.2.1...v0.2.2) (2026-04-14)
+
+
+### Bug Fixes
+
+* cut over github org and release links ([#58](https://github.com/kontext-security/kontext-cli/issues/58)) ([fa561fd](https://github.com/kontext-security/kontext-cli/commit/fa561fd4b09a09e0ce930e0a3f6f4f976e829ecb))
+
 ## [0.2.1](https://github.com/kontext-security/kontext-cli/compare/v0.2.0...v0.2.1) (2026-04-10)
 
 
