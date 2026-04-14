@@ -24,6 +24,12 @@ func normalizePlaceholderValue(value string) string {
 	return trimmed
 }
 
+// NormalizeEnvValue trims surrounding quotes from dotenv-style values so the
+// launched process receives the literal token, not the quote characters.
+func NormalizeEnvValue(value string) string {
+	return normalizePlaceholderValue(value)
+}
+
 // Entry represents a single credential placeholder from the env template.
 type Entry struct {
 	EnvVar   string // e.g., "GITHUB_TOKEN"

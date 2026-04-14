@@ -701,7 +701,7 @@ func buildEnv(templateDoc *credential.TemplateFile, resolved []credential.Resolv
 			if _, isPlaceholder := placeholderKeys[envVar]; isPlaceholder {
 				continue
 			}
-			env = append(env, fmt.Sprintf("%s=%s", envVar, value))
+			env = append(env, fmt.Sprintf("%s=%s", envVar, credential.NormalizeEnvValue(value)))
 		}
 	}
 	return credential.BuildEnv(resolved, env)

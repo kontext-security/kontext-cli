@@ -521,6 +521,34 @@ func TestBuildEnvUsesLiteralValuesAndResolvedPlaceholders(t *testing.T) {
 	}
 }
 
+func TestBuildEnvNormalizesQuotedLiteralValues(t *testing.T) {
+	t.Parallel()
+
+	env := buildEnv(
+		&credential.TemplateFile{
+			ExistingValues: map[string]string{
+				"OPENAI_API_KEY": "\"sk-test-token\"",
+				"CALLBACK_URL":   "'https://example.com/callback'",
+			},
+		},
+		nil,
+	)
+
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "OPENAI_API_KEY=sk-test-token") {
+		t.Fatalf("buildEnv() missing normalized openai token: %q", joined)
+	}
+	if strings.Contains(joined, "OPENAI_API_KEY=\"sk-test-token\"") {
+		t.Fatalf("buildEnv() preserved quoted openai token: %q", joined)
+	}
+	if !strings.Contains(joined, "CALLBACK_URL=https://example.com/callback") {
+		t.Fatalf("buildEnv() missing normalized callback url: %q", joined)
+	}
+	if strings.Contains(joined, "CALLBACK_URL='https://example.com/callback'") {
+		t.Fatalf("buildEnv() preserved quoted callback url: %q", joined)
+	}
+}
+
 type recordingSessionEnder struct {
 	sessionID string
 	calls     int
