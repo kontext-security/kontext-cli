@@ -171,7 +171,7 @@ func EnsureManagedTemplate(path string, managed []ManagedProvider) (*SyncResult,
 	for _, provider := range managed {
 		existingValue, exists := template.ExistingValues[provider.EnvVar]
 		if exists {
-			if existingValue != provider.Placeholder {
+			if normalizePlaceholderValue(existingValue) != normalizePlaceholderValue(provider.Placeholder) {
 				result.CollisionSkipped = append(result.CollisionSkipped, provider)
 			}
 			continue

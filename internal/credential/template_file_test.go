@@ -95,6 +95,28 @@ func TestEnsureManagedTemplateReportsCollisionWithoutOverwriting(t *testing.T) {
 	}
 }
 
+func TestEnsureManagedTemplateDoesNotReportCollisionForQuotedManagedPlaceholder(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".env.kontext")
+	if err := os.WriteFile(path, []byte("GITHUB_TOKEN=\"{{kontext:github}}\"\n"), 0o600); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	result, err := EnsureManagedTemplate(path, []ManagedProvider{
+		{EnvVar: "GITHUB_TOKEN", Placeholder: "{{kontext:github}}", SeedOnFirstRun: true},
+	})
+	if err != nil {
+		t.Fatalf("EnsureManagedTemplate() error = %v", err)
+	}
+	if got := len(result.CollisionSkipped); got != 0 {
+		t.Fatalf("collision len = %d, want 0", got)
+	}
+	if result.Updated {
+		t.Fatal("EnsureManagedTemplate() Updated = true, want false")
+	}
+}
+
 func TestEnsureManagedTemplateAppendsNonSeededManagedProvidersOnExistingFiles(t *testing.T) {
 	t.Parallel()
 
