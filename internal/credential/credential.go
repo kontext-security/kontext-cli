@@ -4,10 +4,25 @@ package credential
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // placeholder matches {{kontext:<provider>}} or {{kontext:<provider>/<resource>}} patterns.
 var placeholder = regexp.MustCompile(`^\{\{kontext:([^}]+)\}\}$`)
+
+func normalizePlaceholderValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) < 2 {
+		return trimmed
+	}
+
+	if (trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"') ||
+		(trimmed[0] == '\'' && trimmed[len(trimmed)-1] == '\'') {
+		return strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+	}
+
+	return trimmed
+}
 
 // Entry represents a single credential placeholder from the env template.
 type Entry struct {

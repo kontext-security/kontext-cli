@@ -425,6 +425,48 @@ func TestExchangeCredentialReturnsTypedFailureReason(t *testing.T) {
 	}
 }
 
+func TestExchangeCredentialClassifiesLegacyProviderRequired(t *testing.T) {
+	t.Parallel()
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"issuer":"%s","authorization_endpoint":"%s/oauth2/auth","token_endpoint":"%s/oauth2/token","jwks_uri":"%s/.well-known/jwks.json"}`, server.URL, server.URL, server.URL, server.URL)))
+		case "/oauth2/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"error":"provider_required","error_description":"User has not configured provider 'Linear Stub'","provider_name":"Linear Stub","provider_id":"provider-linear"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	session := &auth.Session{
+		IssuerURL:   server.URL,
+		AccessToken: "test-access-token",
+	}
+
+	_, err := exchangeCredential(
+		context.Background(),
+		session,
+		credential.Entry{EnvVar: "LINEAR_API_KEY", Provider: "linear"},
+		"app_agent-123",
+	)
+	if err == nil {
+		t.Fatal("exchangeCredential() error = nil, want non-nil")
+	}
+
+	resolutionErr, ok := err.(*credentialResolutionError)
+	if !ok {
+		t.Fatalf("exchangeCredential() error type = %T, want *credentialResolutionError", err)
+	}
+	if resolutionErr.Reason != failureDisconnected {
+		t.Fatalf("resolutionErr.Reason = %q, want %q", resolutionErr.Reason, failureDisconnected)
+	}
+}
+
 func TestAgentOAuthClientID(t *testing.T) {
 	t.Parallel()
 

@@ -115,11 +115,11 @@ func Start(ctx context.Context, opts Options) error {
 		}
 		templateDoc = syncResult.Template
 		if syncResult.Created {
-			fmt.Fprintf(os.Stderr, "✓ Created local %s automatically", opts.TemplateFile)
-			if opts.TemplateFile == ".env.kontext" {
-				fmt.Fprint(os.Stderr, " (gitignored)")
-			}
-			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(
+				os.Stderr,
+				"✓ Created local %s automatically\n",
+				opts.TemplateFile,
+			)
 		}
 		if syncResult.Updated {
 			fmt.Fprintf(
@@ -630,10 +630,10 @@ func exchangeCredential(ctx context.Context, session *auth.Session, entry creden
 		}
 	}
 	if result.Error != "" {
-		switch credentialFailureReason(result.FailureReason) {
+		switch classifyCredentialFailure(result) {
 		case failureDisconnected, failureNotAttached, failureUnknown, failureInvalid, failureTransient:
 			return "", &credentialResolutionError{
-				Reason:       credentialFailureReason(result.FailureReason),
+				Reason:       classifyCredentialFailure(result),
 				Entry:        entry,
 				ProviderName: result.ProviderName,
 				ProviderID:   result.ProviderID,
@@ -648,6 +648,22 @@ func exchangeCredential(ctx context.Context, session *auth.Session, entry creden
 	}
 
 	return result.AccessToken, nil
+}
+
+func classifyCredentialFailure(
+	result *tokenExchangeResponse,
+) credentialFailureReason {
+	switch credentialFailureReason(result.FailureReason) {
+	case failureDisconnected, failureNotAttached, failureUnknown, failureInvalid, failureTransient:
+		return credentialFailureReason(result.FailureReason)
+	}
+
+	switch result.Error {
+	case "provider_required", "provider_not_configured":
+		return failureDisconnected
+	default:
+		return ""
+	}
 }
 
 func needsGatewayAccessReauthentication(err error) bool {

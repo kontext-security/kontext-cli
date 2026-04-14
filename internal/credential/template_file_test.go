@@ -137,3 +137,23 @@ func TestLoadTemplateFileCollectsInvalidPlaceholders(t *testing.T) {
 		t.Fatalf("valid entries len = %d, want %d", got, want)
 	}
 }
+
+func TestLoadTemplateFileAcceptsQuotedPlaceholders(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".env.kontext")
+	if err := os.WriteFile(path, []byte("GITHUB_TOKEN=\"{{kontext:github}}\"\n"), 0o600); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	doc, err := LoadTemplateFile(path)
+	if err != nil {
+		t.Fatalf("LoadTemplateFile() error = %v", err)
+	}
+	if got, want := len(doc.Entries), 1; got != want {
+		t.Fatalf("entries len = %d, want %d", got, want)
+	}
+	if got := doc.Entries[0].Raw; got != "{{kontext:github}}" {
+		t.Fatalf("entry raw = %q, want %q", got, "{{kontext:github}}")
+	}
+}

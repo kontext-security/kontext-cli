@@ -36,7 +36,7 @@ type SyncResult struct {
 	Template         *TemplateFile
 }
 
-const managedHeader = "# Managed by Kontext CLI (local, gitignored).\n# You can add your own variables; the CLI will append managed entries as needed.\n"
+const managedHeader = "# Managed by Kontext CLI (local file).\n# You can add your own variables; the CLI will append managed entries as needed.\n"
 
 func LoadTemplateFile(path string) (*TemplateFile, error) {
 	f, err := os.Open(path)
@@ -81,9 +81,10 @@ func LoadTemplateFile(path string) (*TemplateFile, error) {
 		seenKeys[envVar] = struct{}{}
 
 		value := strings.TrimSpace(parts[1])
+		normalizedValue := normalizePlaceholderValue(value)
 		result.ExistingValues[envVar] = value
 
-		matches := placeholder.FindStringSubmatch(value)
+		matches := placeholder.FindStringSubmatch(normalizedValue)
 		if matches != nil {
 			providerSpec := matches[1]
 			provider, resource, _ := strings.Cut(providerSpec, "/")
@@ -99,12 +100,12 @@ func LoadTemplateFile(path string) (*TemplateFile, error) {
 				EnvVar:   envVar,
 				Provider: provider,
 				Resource: resource,
-				Raw:      matches[0],
+				Raw:      normalizedValue,
 			})
 			continue
 		}
 
-		if strings.Contains(value, "{{kontext:") {
+		if strings.Contains(normalizedValue, "{{kontext:") {
 			result.InvalidPlaceholders = append(result.InvalidPlaceholders, InvalidPlaceholder{
 				EnvVar: envVar,
 				Value:  value,
