@@ -16,7 +16,7 @@ Kontext CLI is an open-source command-line tool that wraps AI coding agents with
 
 **Why we built it:** AI coding agents need access to GitHub, Stripe, databases, and dozens of other services. Today, teams copy-paste long-lived API keys into `.env` files and hope for the best. Kontext replaces that with short-lived, scoped credentials that are injected at session start and gone when the session ends. Every tool call is logged. Every secret is accounted for.
 
-**How it works:** You declare what credentials your project needs in a single `.env.kontext` file. When you run `kontext start`, the CLI authenticates you, exchanges placeholders for short-lived tokens via RFC 8693 token exchange, launches your agent with those credentials injected, and streams every tool call to the Kontext dashboard for audit and governance. When the session ends, credentials expire automatically.
+**How it works:** On first run, `kontext start` authenticates you, bootstraps the shared Kontext CLI application for your org, creates a local `.env.kontext` file if needed, opens hosted connect for any missing preset providers, exchanges placeholders for short-lived tokens via RFC 8693 token exchange, and launches your agent with those credentials injected. When the session ends, credentials expire automatically.
 
 ## Quick Start
 
@@ -40,7 +40,7 @@ Then, from any project directory with Claude Code installed:
 kontext start --agent claude
 ```
 
-That's it. On first run, the CLI handles everything interactively — login, provider connections, credential resolution.
+That's it. On first run, the CLI handles everything interactively: login, `.env.kontext` creation, provider linking when needed, credential resolution, and agent launch.
 Run `kontext logout` any time to clear the stored OIDC session from your system keyring.
 
 ## How it Works
@@ -51,32 +51,33 @@ kontext start --agent claude
 
 1. **Authenticates** — opens browser for OIDC login, stores refresh token in system keyring, and lets you clear it later with `kontext logout`
 2. **Creates a session** — registers with the Kontext backend, visible in the dashboard
-3. **Resolves credentials** — reads `.env.kontext`, exchanges placeholders for short-lived tokens
-4. **Launches the agent** — spawns Claude Code with credentials injected as env vars + governance hooks
-5. **Captures hook events** — PreToolUse, PostToolUse, and UserPromptSubmit events streamed to the backend
-6. **Tears down cleanly** — session ended, credentials expired, temp files removed
+3. **Syncs local env config** — creates or updates local `.env.kontext` with managed preset placeholders
+4. **Resolves credentials** — reads `.env.kontext`, exchanges placeholders for short-lived tokens
+5. **Opens hosted connect when needed** — if GitHub or Linear still need linking, opens the providers page and retries resolution
+6. **Launches the agent** — spawns Claude Code with credentials injected as env vars + governance hooks
+7. **Captures hook events** — PreToolUse, PostToolUse, and UserPromptSubmit events streamed to the backend
+8. **Tears down cleanly** — session ended, credentials expired, temp files removed
 
 ## Features
 
 - **One command to launch Claude Code:** `kontext start --agent claude` — no config files, no Docker, no setup scripts
 - **Ephemeral credentials:** short-lived tokens scoped to the session, automatically expired on exit. No more long-lived API keys in `.env` files
-- **Declarative credential templates:** commit `.env.kontext` to your repo, and every developer on the team gets the same credential setup without sharing secrets
+- **Managed local env file:** the CLI creates and updates a local, gitignored `.env.kontext` with managed preset placeholders
 - **Governance telemetry:** Claude hook events are streamed to the backend with user, session, and org attribution
 - **Secure by default:** OIDC authentication, system keyring storage, RFC 8693 token exchange, AES-256-GCM encryption at rest
 - **Lean runtime:** native Go binary, no local daemon install, no Node/Python runtime required
 - **Update notifications:** on `kontext start`, a background check queries the public GitHub releases API (cached for 24h, never blocks startup). Disable with `KONTEXT_NO_UPDATE_CHECK=1`
 
-## Declare Credentials
+## Managed Credentials
 
-The `.env.kontext` file declares what credentials the project needs:
+The CLI creates `.env.kontext` locally on first run:
 
 ```
 GITHUB_TOKEN={{kontext:github}}
-STRIPE_KEY={{kontext:stripe}}
-DATABASE_URL={{kontext:postgres/prod-readonly}}
+LINEAR_API_KEY={{kontext:linear}}
 ```
 
-Commit this to your repo — the whole team shares the same template. Secrets stay in Kontext, never in source control.
+This file is local and gitignored by default. The CLI may append more preset provider placeholders later if your org attaches them to the shared Kontext CLI application. Literal values you add stay untouched. Providers connected after the agent has already started become available on the next `kontext start`.
 
 ## Supported Agents
 
