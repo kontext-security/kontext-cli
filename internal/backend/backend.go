@@ -59,6 +59,15 @@ func (c *Client) CreateSession(ctx context.Context, req *agentv1.CreateSessionRe
 	return resp.Msg, nil
 }
 
+// BootstrapCli prepares the shared CLI application for env template sync.
+func (c *Client) BootstrapCli(ctx context.Context, req *agentv1.BootstrapCliRequest) (*agentv1.BootstrapCliResponse, error) {
+	resp, err := c.rpc.BootstrapCli(ctx, connect.NewRequest(req))
+	if err != nil {
+		return nil, fmt.Errorf("BootstrapCli: %w", err)
+	}
+	return resp.Msg, nil
+}
+
 // Heartbeat keeps a session alive.
 func (c *Client) Heartbeat(ctx context.Context, sessionID string) error {
 	_, err := c.rpc.Heartbeat(ctx, connect.NewRequest(&agentv1.HeartbeatRequest{

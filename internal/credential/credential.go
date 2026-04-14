@@ -2,15 +2,85 @@
 package credential
 
 import (
-	"bufio"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 )
 
 // placeholder matches {{kontext:<provider>}} or {{kontext:<provider>/<resource>}} patterns.
-var placeholder = regexp.MustCompile(`\{\{kontext:([^}]+)\}\}`)
+var placeholder = regexp.MustCompile(`^\{\{kontext:([^}]+)\}\}$`)
+
+func normalizePlaceholderValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if idx := inlineCommentIndex(trimmed); idx >= 0 {
+		trimmed = strings.TrimSpace(trimmed[:idx])
+	}
+
+	return trimMatchingQuotes(trimmed)
+}
+
+// NormalizeEnvValue trims surrounding quotes from dotenv-style values so the
+// launched process receives the literal token, not the quote characters.
+func NormalizeEnvValue(value string) string {
+	return normalizePlaceholderValue(value)
+}
+
+func trimMatchingQuotes(value string) string {
+	if len(value) < 2 {
+		return value
+	}
+
+	if (value[0] == '"' && value[len(value)-1] == '"') ||
+		(value[0] == '\'' && value[len(value)-1] == '\'') {
+		return strings.TrimSpace(value[1 : len(value)-1])
+	}
+
+	return value
+}
+
+func inlineCommentIndex(value string) int {
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+
+		switch ch {
+		case '\\':
+			if inDouble {
+				escaped = true
+			}
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case '#':
+			if !inSingle && !inDouble && (i == 0 || isInlineCommentWhitespace(value[i-1])) {
+				return i
+			}
+		}
+	}
+
+	return -1
+}
+
+func isInlineCommentWhitespace(ch byte) bool {
+	switch ch {
+	case ' ', '\t':
+		return true
+	default:
+		return false
+	}
+}
 
 // Entry represents a single credential placeholder from the env template.
 type Entry struct {
@@ -36,45 +106,11 @@ type Resolved struct {
 
 // ParseTemplate reads an env template file and extracts credential placeholders.
 func ParseTemplate(path string) ([]Entry, error) {
-	f, err := os.Open(path)
+	doc, err := LoadTemplateFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("open env template: %w", err)
+		return nil, fmt.Errorf("parse template: %w", err)
 	}
-	defer f.Close()
-
-	var entries []Entry
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		envVar := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		matches := placeholder.FindStringSubmatch(value)
-		if matches == nil {
-			continue
-		}
-
-		providerSpec := matches[1]
-		provider, resource, _ := strings.Cut(providerSpec, "/")
-
-		entries = append(entries, Entry{
-			EnvVar:   envVar,
-			Provider: provider,
-			Resource: resource,
-			Raw:      matches[0],
-		})
-	}
-
-	return entries, scanner.Err()
+	return doc.Entries, nil
 }
 
 // BuildEnv converts resolved credentials into environment variable assignments.

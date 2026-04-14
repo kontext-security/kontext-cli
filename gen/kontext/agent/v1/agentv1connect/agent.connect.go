@@ -39,6 +39,9 @@ const (
 	// AgentServiceCreateSessionProcedure is the fully-qualified name of the AgentService's
 	// CreateSession RPC.
 	AgentServiceCreateSessionProcedure = "/kontext.agent.v1.AgentService/CreateSession"
+	// AgentServiceBootstrapCliProcedure is the fully-qualified name of the AgentService's BootstrapCli
+	// RPC.
+	AgentServiceBootstrapCliProcedure = "/kontext.agent.v1.AgentService/BootstrapCli"
 	// AgentServiceHeartbeatProcedure is the fully-qualified name of the AgentService's Heartbeat RPC.
 	AgentServiceHeartbeatProcedure = "/kontext.agent.v1.AgentService/Heartbeat"
 	// AgentServiceEndSessionProcedure is the fully-qualified name of the AgentService's EndSession RPC.
@@ -53,6 +56,10 @@ type AgentServiceClient interface {
 	// CreateSession establishes a governed agent session. Called once at the
 	// start of `kontext start`.
 	CreateSession(context.Context, *connect.Request[v1.CreateSessionRequest]) (*connect.Response[v1.CreateSessionResponse], error)
+	// BootstrapCli prepares the shared CLI application for credential
+	// resolution and returns the managed preset providers the CLI should sync
+	// into the local env file.
+	BootstrapCli(context.Context, *connect.Request[v1.BootstrapCliRequest]) (*connect.Response[v1.BootstrapCliResponse], error)
 	// Heartbeat keeps the session alive. The sidecar sends heartbeats on an
 	// interval; the backend marks sessions as disconnected if heartbeats stop.
 	Heartbeat(context.Context, *connect.Request[v1.HeartbeatRequest]) (*connect.Response[v1.HeartbeatResponse], error)
@@ -83,6 +90,12 @@ func NewAgentServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(agentServiceMethods.ByName("CreateSession")),
 			connect.WithClientOptions(opts...),
 		),
+		bootstrapCli: connect.NewClient[v1.BootstrapCliRequest, v1.BootstrapCliResponse](
+			httpClient,
+			baseURL+AgentServiceBootstrapCliProcedure,
+			connect.WithSchema(agentServiceMethods.ByName("BootstrapCli")),
+			connect.WithClientOptions(opts...),
+		),
 		heartbeat: connect.NewClient[v1.HeartbeatRequest, v1.HeartbeatResponse](
 			httpClient,
 			baseURL+AgentServiceHeartbeatProcedure,
@@ -102,6 +115,7 @@ func NewAgentServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 type agentServiceClient struct {
 	processHookEvent *connect.Client[v1.ProcessHookEventRequest, v1.ProcessHookEventResponse]
 	createSession    *connect.Client[v1.CreateSessionRequest, v1.CreateSessionResponse]
+	bootstrapCli     *connect.Client[v1.BootstrapCliRequest, v1.BootstrapCliResponse]
 	heartbeat        *connect.Client[v1.HeartbeatRequest, v1.HeartbeatResponse]
 	endSession       *connect.Client[v1.EndSessionRequest, v1.EndSessionResponse]
 }
@@ -114,6 +128,11 @@ func (c *agentServiceClient) ProcessHookEvent(ctx context.Context, req *connect.
 // CreateSession calls kontext.agent.v1.AgentService.CreateSession.
 func (c *agentServiceClient) CreateSession(ctx context.Context, req *connect.Request[v1.CreateSessionRequest]) (*connect.Response[v1.CreateSessionResponse], error) {
 	return c.createSession.CallUnary(ctx, req)
+}
+
+// BootstrapCli calls kontext.agent.v1.AgentService.BootstrapCli.
+func (c *agentServiceClient) BootstrapCli(ctx context.Context, req *connect.Request[v1.BootstrapCliRequest]) (*connect.Response[v1.BootstrapCliResponse], error) {
+	return c.bootstrapCli.CallUnary(ctx, req)
 }
 
 // Heartbeat calls kontext.agent.v1.AgentService.Heartbeat.
@@ -134,6 +153,10 @@ type AgentServiceHandler interface {
 	// CreateSession establishes a governed agent session. Called once at the
 	// start of `kontext start`.
 	CreateSession(context.Context, *connect.Request[v1.CreateSessionRequest]) (*connect.Response[v1.CreateSessionResponse], error)
+	// BootstrapCli prepares the shared CLI application for credential
+	// resolution and returns the managed preset providers the CLI should sync
+	// into the local env file.
+	BootstrapCli(context.Context, *connect.Request[v1.BootstrapCliRequest]) (*connect.Response[v1.BootstrapCliResponse], error)
 	// Heartbeat keeps the session alive. The sidecar sends heartbeats on an
 	// interval; the backend marks sessions as disconnected if heartbeats stop.
 	Heartbeat(context.Context, *connect.Request[v1.HeartbeatRequest]) (*connect.Response[v1.HeartbeatResponse], error)
@@ -160,6 +183,12 @@ func NewAgentServiceHandler(svc AgentServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(agentServiceMethods.ByName("CreateSession")),
 		connect.WithHandlerOptions(opts...),
 	)
+	agentServiceBootstrapCliHandler := connect.NewUnaryHandler(
+		AgentServiceBootstrapCliProcedure,
+		svc.BootstrapCli,
+		connect.WithSchema(agentServiceMethods.ByName("BootstrapCli")),
+		connect.WithHandlerOptions(opts...),
+	)
 	agentServiceHeartbeatHandler := connect.NewUnaryHandler(
 		AgentServiceHeartbeatProcedure,
 		svc.Heartbeat,
@@ -178,6 +207,8 @@ func NewAgentServiceHandler(svc AgentServiceHandler, opts ...connect.HandlerOpti
 			agentServiceProcessHookEventHandler.ServeHTTP(w, r)
 		case AgentServiceCreateSessionProcedure:
 			agentServiceCreateSessionHandler.ServeHTTP(w, r)
+		case AgentServiceBootstrapCliProcedure:
+			agentServiceBootstrapCliHandler.ServeHTTP(w, r)
 		case AgentServiceHeartbeatProcedure:
 			agentServiceHeartbeatHandler.ServeHTTP(w, r)
 		case AgentServiceEndSessionProcedure:
@@ -197,6 +228,10 @@ func (UnimplementedAgentServiceHandler) ProcessHookEvent(context.Context, *conne
 
 func (UnimplementedAgentServiceHandler) CreateSession(context.Context, *connect.Request[v1.CreateSessionRequest]) (*connect.Response[v1.CreateSessionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("kontext.agent.v1.AgentService.CreateSession is not implemented"))
+}
+
+func (UnimplementedAgentServiceHandler) BootstrapCli(context.Context, *connect.Request[v1.BootstrapCliRequest]) (*connect.Response[v1.BootstrapCliResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("kontext.agent.v1.AgentService.BootstrapCli is not implemented"))
 }
 
 func (UnimplementedAgentServiceHandler) Heartbeat(context.Context, *connect.Request[v1.HeartbeatRequest]) (*connect.Response[v1.HeartbeatResponse], error) {

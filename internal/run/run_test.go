@@ -1,6 +1,7 @@
 package run
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -328,6 +329,53 @@ func TestFetchConnectURLWithGatewayLoginFallback(t *testing.T) {
 	}
 }
 
+func TestFetchConnectURLForConnectFlowSkipsLoginWhenNonInteractive(t *testing.T) {
+	t.Parallel()
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"issuer":"%s","authorization_endpoint":"%s/oauth2/auth","token_endpoint":"%s/oauth2/token","jwks_uri":"%s/.well-known/jwks.json"}`, server.URL, server.URL, server.URL, server.URL)))
+		case "/oauth2/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"error":"invalid_scope","error_description":"Requested scope 'gateway:access' exceeds subject token scopes"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	session := &auth.Session{
+		IssuerURL:   server.URL,
+		AccessToken: "stale-access-token",
+	}
+
+	var loginCalls int
+	login := func(ctx context.Context, issuerURL, clientID string, scopes ...string) (*auth.LoginResult, error) {
+		loginCalls++
+		return nil, fmt.Errorf("login should not be called")
+	}
+
+	_, err := fetchConnectURLForConnectFlow(
+		context.Background(),
+		session,
+		"app_agent-123",
+		false,
+		login,
+	)
+	if err == nil {
+		t.Fatal("fetchConnectURLForConnectFlow() error = nil, want non-nil")
+	}
+	if loginCalls != 0 {
+		t.Fatalf("loginCalls = %d, want 0", loginCalls)
+	}
+	if !needsGatewayAccessReauthentication(err) {
+		t.Fatalf("err = %v, want gateway reauthentication failure", err)
+	}
+}
+
 func TestExchangeCredentialUsesProvidedClientID(t *testing.T) {
 	t.Parallel()
 
@@ -383,11 +431,171 @@ func TestExchangeCredentialUsesProvidedClientID(t *testing.T) {
 	}
 }
 
-func TestIsNotConnectedErrorRecognizesProviderRequired(t *testing.T) {
+func TestExchangeCredentialReturnsTypedFailureReason(t *testing.T) {
 	t.Parallel()
 
-	if !isNotConnectedError(fmt.Errorf("token exchange failed: provider_required: User has not configured provider 'Linear Stub'")) {
-		t.Fatal("expected provider_required to trigger hosted connect fallback")
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"issuer":"%s","authorization_endpoint":"%s/oauth2/auth","token_endpoint":"%s/oauth2/token","jwks_uri":"%s/.well-known/jwks.json"}`, server.URL, server.URL, server.URL, server.URL)))
+		case "/oauth2/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"error":"provider_required","error_description":"User has not configured provider 'Linear Stub'","failure_reason":"disconnected_or_reauth_required","provider_name":"Linear Stub","provider_id":"provider-linear"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	session := &auth.Session{
+		IssuerURL:   server.URL,
+		AccessToken: "test-access-token",
+	}
+
+	_, err := exchangeCredential(
+		context.Background(),
+		session,
+		credential.Entry{EnvVar: "LINEAR_API_KEY", Provider: "linear"},
+		"app_agent-123",
+	)
+	if err == nil {
+		t.Fatal("exchangeCredential() error = nil, want non-nil")
+	}
+
+	resolutionErr, ok := err.(*credentialResolutionError)
+	if !ok {
+		t.Fatalf("exchangeCredential() error type = %T, want *credentialResolutionError", err)
+	}
+	if resolutionErr.Reason != failureDisconnected {
+		t.Fatalf("resolutionErr.Reason = %q, want %q", resolutionErr.Reason, failureDisconnected)
+	}
+}
+
+func TestExchangeCredentialClassifiesLegacyProviderRequired(t *testing.T) {
+	t.Parallel()
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"issuer":"%s","authorization_endpoint":"%s/oauth2/auth","token_endpoint":"%s/oauth2/token","jwks_uri":"%s/.well-known/jwks.json"}`, server.URL, server.URL, server.URL, server.URL)))
+		case "/oauth2/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"error":"provider_required","error_description":"User has not configured provider 'Linear Stub'","provider_name":"Linear Stub","provider_id":"provider-linear"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	session := &auth.Session{
+		IssuerURL:   server.URL,
+		AccessToken: "test-access-token",
+	}
+
+	_, err := exchangeCredential(
+		context.Background(),
+		session,
+		credential.Entry{EnvVar: "LINEAR_API_KEY", Provider: "linear"},
+		"app_agent-123",
+	)
+	if err == nil {
+		t.Fatal("exchangeCredential() error = nil, want non-nil")
+	}
+
+	resolutionErr, ok := err.(*credentialResolutionError)
+	if !ok {
+		t.Fatalf("exchangeCredential() error type = %T, want *credentialResolutionError", err)
+	}
+	if resolutionErr.Reason != failureDisconnected {
+		t.Fatalf("resolutionErr.Reason = %q, want %q", resolutionErr.Reason, failureDisconnected)
+	}
+}
+
+func TestExchangeCredentialClassifiesLegacyProviderReauthorizationRequired(t *testing.T) {
+	t.Parallel()
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"issuer":"%s","authorization_endpoint":"%s/oauth2/auth","token_endpoint":"%s/oauth2/token","jwks_uri":"%s/.well-known/jwks.json"}`, server.URL, server.URL, server.URL, server.URL)))
+		case "/oauth2/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"error":"provider_reauthorization_required","error_description":"User must reconnect provider 'Linear Stub'","provider_name":"Linear Stub","provider_id":"provider-linear","reauthorization_reason":"missing_scopes"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	session := &auth.Session{
+		IssuerURL:   server.URL,
+		AccessToken: "test-access-token",
+	}
+
+	_, err := exchangeCredential(
+		context.Background(),
+		session,
+		credential.Entry{EnvVar: "LINEAR_API_KEY", Provider: "linear"},
+		"app_agent-123",
+	)
+	if err == nil {
+		t.Fatal("exchangeCredential() error = nil, want non-nil")
+	}
+
+	resolutionErr, ok := err.(*credentialResolutionError)
+	if !ok {
+		t.Fatalf("exchangeCredential() error type = %T, want *credentialResolutionError", err)
+	}
+	if resolutionErr.Reason != failureDisconnected {
+		t.Fatalf("resolutionErr.Reason = %q, want %q", resolutionErr.Reason, failureDisconnected)
+	}
+}
+
+func TestExchangeCredentialClassifiesLegacyInvalidTargetNotAllowed(t *testing.T) {
+	t.Parallel()
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"issuer":"%s","authorization_endpoint":"%s/oauth2/auth","token_endpoint":"%s/oauth2/token","jwks_uri":"%s/.well-known/jwks.json"}`, server.URL, server.URL, server.URL, server.URL)))
+		case "/oauth2/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"error":"invalid_target","error_description":"Resource 'linear' is not allowed for this application"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	session := &auth.Session{
+		IssuerURL:   server.URL,
+		AccessToken: "test-access-token",
+	}
+
+	_, err := exchangeCredential(
+		context.Background(),
+		session,
+		credential.Entry{EnvVar: "LINEAR_API_KEY", Provider: "linear"},
+		"app_agent-123",
+	)
+	if err == nil {
+		t.Fatal("exchangeCredential() error = nil, want non-nil")
+	}
+
+	resolutionErr, ok := err.(*credentialResolutionError)
+	if !ok {
+		t.Fatalf("exchangeCredential() error type = %T, want *credentialResolutionError", err)
+	}
+	if resolutionErr.Reason != failureDisconnected {
+		t.Fatalf("resolutionErr.Reason = %q, want %q", resolutionErr.Reason, failureDisconnected)
 	}
 }
 
@@ -408,5 +616,163 @@ func TestResolveCredentialClientID(t *testing.T) {
 
 	if got := resolveCredentialClientID("", "bootstrap-client"); got != "bootstrap-client" {
 		t.Fatalf("resolveCredentialClientID() empty agent = %q, want %q", got, "bootstrap-client")
+	}
+}
+
+func TestBuildEnvUsesLiteralValuesAndResolvedPlaceholders(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "shell-token")
+
+	env := buildEnv(
+		&credential.TemplateFile{
+			Entries: []credential.Entry{
+				{EnvVar: "GITHUB_TOKEN", Provider: "github"},
+			},
+			ExistingValues: map[string]string{
+				"GITHUB_TOKEN":   "{{kontext:github}}",
+				"LINEAR_API_KEY": "literal-linear-token",
+			},
+		},
+		[]credential.Resolved{
+			{
+				Entry: credential.Entry{
+					EnvVar:   "GITHUB_TOKEN",
+					Provider: "github",
+				},
+				Value: "resolved-github-token",
+			},
+		},
+	)
+
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "GITHUB_TOKEN=resolved-github-token") {
+		t.Fatalf("buildEnv() missing resolved github token: %q", joined)
+	}
+	if !strings.Contains(joined, "LINEAR_API_KEY=literal-linear-token") {
+		t.Fatalf("buildEnv() missing literal linear token: %q", joined)
+	}
+}
+
+func TestBuildEnvNormalizesQuotedLiteralValues(t *testing.T) {
+	t.Parallel()
+
+	env := buildEnv(
+		&credential.TemplateFile{
+			ExistingValues: map[string]string{
+				"OPENAI_API_KEY": "\"sk-test-token\"",
+				"CALLBACK_URL":   "'https://example.com/callback'",
+			},
+		},
+		nil,
+	)
+
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "OPENAI_API_KEY=sk-test-token") {
+		t.Fatalf("buildEnv() missing normalized openai token: %q", joined)
+	}
+	if strings.Contains(joined, "OPENAI_API_KEY=\"sk-test-token\"") {
+		t.Fatalf("buildEnv() preserved quoted openai token: %q", joined)
+	}
+	if !strings.Contains(joined, "CALLBACK_URL=https://example.com/callback") {
+		t.Fatalf("buildEnv() missing normalized callback url: %q", joined)
+	}
+	if strings.Contains(joined, "CALLBACK_URL='https://example.com/callback'") {
+		t.Fatalf("buildEnv() preserved quoted callback url: %q", joined)
+	}
+}
+
+func TestBuildEnvStripsInlineCommentsFromLiteralValues(t *testing.T) {
+	t.Parallel()
+
+	env := buildEnv(
+		&credential.TemplateFile{
+			ExistingValues: map[string]string{
+				"OPENAI_API_KEY": "sk-test-token # production",
+				"CALLBACK_URL":   "\"https://example.com/callback\" # main callback",
+			},
+		},
+		nil,
+	)
+
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "OPENAI_API_KEY=sk-test-token") {
+		t.Fatalf("buildEnv() missing stripped literal token: %q", joined)
+	}
+	if strings.Contains(joined, "OPENAI_API_KEY=sk-test-token # production") {
+		t.Fatalf("buildEnv() preserved inline comment on token: %q", joined)
+	}
+	if !strings.Contains(joined, "CALLBACK_URL=https://example.com/callback") {
+		t.Fatalf("buildEnv() missing stripped callback url: %q", joined)
+	}
+	if strings.Contains(joined, "CALLBACK_URL=\"https://example.com/callback\" # main callback") {
+		t.Fatalf("buildEnv() preserved inline comment on callback url: %q", joined)
+	}
+}
+
+func TestBuildEnvPreservesLiteralHashFragmentsWithoutWhitespace(t *testing.T) {
+	t.Parallel()
+
+	env := buildEnv(
+		&credential.TemplateFile{
+			ExistingValues: map[string]string{
+				"CALLBACK_URL": "https://example.com/callback#fragment",
+			},
+		},
+		nil,
+	)
+
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "CALLBACK_URL=https://example.com/callback#fragment") {
+		t.Fatalf("buildEnv() lost url fragment: %q", joined)
+	}
+}
+
+func TestBuildEnvTreatsCommentOnlyRightHandSideAsEmpty(t *testing.T) {
+	t.Parallel()
+
+	env := buildEnv(
+		&credential.TemplateFile{
+			ExistingValues: map[string]string{
+				"OPENAI_API_KEY": " # set later",
+			},
+		},
+		nil,
+	)
+
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "OPENAI_API_KEY=") {
+		t.Fatalf("buildEnv() missing empty env assignment: %q", joined)
+	}
+	if strings.Contains(joined, "OPENAI_API_KEY=# set later") {
+		t.Fatalf("buildEnv() preserved comment-only value: %q", joined)
+	}
+}
+
+type recordingSessionEnder struct {
+	sessionID string
+	calls     int
+}
+
+func (r *recordingSessionEnder) EndSession(_ context.Context, sessionID string) error {
+	r.calls++
+	r.sessionID = sessionID
+	return nil
+}
+
+func TestEndManagedSessionEndsTheManagedSession(t *testing.T) {
+	t.Parallel()
+
+	client := &recordingSessionEnder{}
+	var output bytes.Buffer
+
+	endManagedSession(client, "session-1234567890", &output)
+
+	if client.calls != 1 {
+		t.Fatalf("EndSession calls = %d, want 1", client.calls)
+	}
+	if client.sessionID != "session-1234567890" {
+		t.Fatalf("EndSession sessionID = %q, want %q", client.sessionID, "session-1234567890")
+	}
+	if got := output.String(); !strings.Contains(got, "Session ended") {
+		t.Fatalf("output = %q, want session-ended message", got)
 	}
 }

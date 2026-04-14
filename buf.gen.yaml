@@ -7,7 +7,7 @@ managed:
 inputs:
   - git_repo: https://github.com/kontext-security/proto.git
     branch: main
-    ref: eb148cfee8e1d390a3f1e29116d210f2459f4670
+    ref: ba2b704abfde23ec2c30bfd2b5c540a91a674f41
 plugins:
   - local: protoc-gen-go
     out: gen
