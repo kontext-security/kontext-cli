@@ -183,6 +183,38 @@ func TestLoadTemplateFileMarksDuplicateKeysUnsafeForMutation(t *testing.T) {
 	if !strings.Contains(doc.MutationWarning, "declared more than once") {
 		t.Fatalf("mutation warning = %q, want duplicate-key warning", doc.MutationWarning)
 	}
+	if got := doc.ExistingValues["GITHUB_TOKEN"]; got != "literal" {
+		t.Fatalf("existing value = %q, want last duplicate assignment", got)
+	}
+	if got := len(doc.Entries); got != 0 {
+		t.Fatalf("entries len = %d, want 0 after later literal override", got)
+	}
+}
+
+func TestLoadTemplateFilePreservesLastDuplicatePlaceholderAssignment(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".env.kontext")
+	if err := os.WriteFile(path, []byte("GITHUB_TOKEN=literal\nGITHUB_TOKEN={{kontext:github}}\n"), 0o600); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	doc, err := LoadTemplateFile(path)
+	if err != nil {
+		t.Fatalf("LoadTemplateFile() error = %v", err)
+	}
+	if doc.SafeToMutate {
+		t.Fatal("LoadTemplateFile() SafeToMutate = true, want false")
+	}
+	if got := doc.ExistingValues["GITHUB_TOKEN"]; got != "{{kontext:github}}" {
+		t.Fatalf("existing value = %q, want last duplicate assignment", got)
+	}
+	if got, want := len(doc.Entries), 1; got != want {
+		t.Fatalf("entries len = %d, want %d", got, want)
+	}
+	if got := doc.Entries[0].Raw; got != "{{kontext:github}}" {
+		t.Fatalf("entry raw = %q, want %q", got, "{{kontext:github}}")
+	}
 }
 
 func TestLoadTemplateFileCollectsInvalidPlaceholders(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -50,8 +51,16 @@ func LoadTemplateFile(path string) (*TemplateFile, error) {
 		SafeToMutate:   true,
 	}
 
+	type effectiveAssignment struct {
+		entry     *Entry
+		invalid   *InvalidPlaceholder
+		lastIndex int
+	}
+
+	assignments := make(map[string]effectiveAssignment)
 	seenKeys := make(map[string]struct{})
 	scanner := bufio.NewScanner(f)
+	lineIndex := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		trimmed := strings.TrimSpace(line)
@@ -76,45 +85,68 @@ func LoadTemplateFile(path string) (*TemplateFile, error) {
 				"Skipping env file sync because %s is declared more than once.",
 				envVar,
 			)
-			continue
+		} else {
+			seenKeys[envVar] = struct{}{}
 		}
-		seenKeys[envVar] = struct{}{}
 
 		value := strings.TrimSpace(parts[1])
 		normalizedValue := normalizePlaceholderValue(value)
 		result.ExistingValues[envVar] = value
+		assignment := effectiveAssignment{lastIndex: lineIndex}
+		lineIndex++
 
 		matches := placeholder.FindStringSubmatch(normalizedValue)
 		if matches != nil {
 			providerSpec := matches[1]
 			provider, resource, _ := strings.Cut(providerSpec, "/")
 			if strings.TrimSpace(provider) == "" {
-				result.InvalidPlaceholders = append(result.InvalidPlaceholders, InvalidPlaceholder{
+				assignment.invalid = &InvalidPlaceholder{
 					EnvVar: envVar,
 					Value:  value,
-				})
+				}
+				assignments[envVar] = assignment
 				continue
 			}
-			result.HasManagedPlaceholds = true
-			result.Entries = append(result.Entries, Entry{
+			assignment.entry = &Entry{
 				EnvVar:   envVar,
 				Provider: provider,
 				Resource: resource,
 				Raw:      normalizedValue,
-			})
+			}
+			assignments[envVar] = assignment
 			continue
 		}
 
 		if strings.Contains(normalizedValue, "{{kontext:") {
-			result.InvalidPlaceholders = append(result.InvalidPlaceholders, InvalidPlaceholder{
+			assignment.invalid = &InvalidPlaceholder{
 				EnvVar: envVar,
 				Value:  value,
-			})
+			}
 		}
+		assignments[envVar] = assignment
 	}
 
 	if err := scanner.Err(); err != nil {
 		return nil, err
+	}
+
+	keys := make([]string, 0, len(assignments))
+	for envVar := range assignments {
+		keys = append(keys, envVar)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return assignments[keys[i]].lastIndex < assignments[keys[j]].lastIndex
+	})
+	for _, envVar := range keys {
+		assignment := assignments[envVar]
+		if assignment.invalid != nil {
+			result.InvalidPlaceholders = append(result.InvalidPlaceholders, *assignment.invalid)
+			continue
+		}
+		if assignment.entry != nil {
+			result.HasManagedPlaceholds = true
+			result.Entries = append(result.Entries, *assignment.entry)
+		}
 	}
 
 	return result, nil
