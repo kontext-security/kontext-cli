@@ -48,6 +48,8 @@ The first run opens your browser for login and provider connection. After that, 
 
 Prefer a direct binary? Download the latest build from [GitHub Releases](https://github.com/kontext-security/kontext-cli/releases).
 
+Need more detail while debugging startup? Run `kontext start --verbose` or set `KONTEXT_DEBUG=1` to print redacted diagnostics to stderr.
+
 ## Managed Credentials
 
 The CLI creates `.env.kontext` locally on first run:
