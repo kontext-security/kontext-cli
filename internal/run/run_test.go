@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -35,6 +39,114 @@ func TestFilterArgs(t *testing.T) {
 	want := []string{"--allowed", "value", "prompt"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("filterArgs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestFindExecutableReturnsExecutablePath(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test-agent")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := findExecutable("test-agent", dir)
+	if err != nil {
+		t.Fatalf("findExecutable() error = %v", err)
+	}
+	if got != path {
+		t.Fatalf("findExecutable() = %q, want %q", got, path)
+	}
+}
+
+func TestFindExecutableDistinguishesNonExecutable(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "test-agent"), []byte("not executable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := findExecutable("test-agent", dir)
+	if err == nil {
+		t.Fatal("findExecutable() error = nil, want non-executable error")
+	}
+	if !strings.Contains(err.Error(), "not executable") {
+		t.Fatalf("findExecutable() error = %q, want not executable", err)
+	}
+}
+
+func TestFindExecutableSkipsNonExecutablePathMatch(t *testing.T) {
+	t.Parallel()
+
+	firstDir := t.TempDir()
+	secondDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(firstDir, "test-agent"), []byte("not executable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Join(secondDir, "test-agent")
+	if err := os.WriteFile(want, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := findExecutable("test-agent", firstDir+string(os.PathListSeparator)+secondDir)
+	if err != nil {
+		t.Fatalf("findExecutable() error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("findExecutable() = %q, want %q", got, want)
+	}
+}
+
+func TestFindExecutableRejectsRelativePathMatch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.Mkdir("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "test-agent"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := findExecutable("test-agent", "bin")
+	if !errors.Is(err, exec.ErrDot) {
+		t.Fatalf("findExecutable() error = %v, want exec.ErrDot", err)
+	}
+}
+
+func TestFindExecutableDistinguishesMissing(t *testing.T) {
+	t.Parallel()
+
+	_, err := findExecutable("test-agent", t.TempDir())
+	if err == nil {
+		t.Fatal("findExecutable() error = nil, want missing error")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("findExecutable() error = %q, want not found", err)
+	}
+}
+
+func TestLaunchAgentWithSettingsReturnsAgentExitError(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script launch test is POSIX-specific")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test-agent")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 42\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := launchAgentWithSettings(context.Background(), "test-agent", path, os.Environ(), nil, "")
+	var exitErr *AgentExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("launchAgentWithSettings() error = %T, want *AgentExitError", err)
+	}
+	if exitErr.ExitCode() != 42 {
+		t.Fatalf("ExitCode() = %d, want 42", exitErr.ExitCode())
 	}
 }
 
