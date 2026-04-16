@@ -443,6 +443,10 @@ func credentialFailureSummary(err error) string {
 }
 
 func connectFailureSummary(err error) string {
+	var mismatch *identityMismatchError
+	if errors.As(err, &mismatch) {
+		return mismatch.Error()
+	}
 	if needsGatewayAccessReauthentication(err) {
 		return "gateway access needs authorization"
 	}
@@ -560,6 +564,9 @@ func fetchConnectURLWithGatewayLoginFallback(
 	if err != nil {
 		return "", fmt.Errorf("authorize gateway access: %w", err)
 	}
+	if err := ensureSameIdentity(session, result.Session); err != nil {
+		return "", err
+	}
 
 	gatewayToken, err := exchangeGatewayToken(ctx, result.Session, credentialClientID)
 	if err != nil {
@@ -567,6 +574,43 @@ func fetchConnectURLWithGatewayLoginFallback(
 	}
 
 	return fetchConnectURLWithGatewayToken(ctx, result.Session.IssuerURL, gatewayToken)
+}
+
+func ensureSameIdentity(active, browser *auth.Session) error {
+	activeKey, err := active.IdentityKey()
+	if err != nil {
+		return err
+	}
+	browserKey, err := browser.IdentityKey()
+	if err != nil {
+		return fmt.Errorf("browser authorization session is missing identity information: %w", err)
+	}
+	if activeKey == browserKey {
+		return nil
+	}
+
+	activeLabel := active.DisplayIdentity()
+	if activeLabel == "" {
+		activeLabel = activeKey
+	}
+	browserLabel := browser.DisplayIdentity()
+	if browserLabel == "" {
+		browserLabel = browserKey
+	}
+	return &identityMismatchError{activeLabel: activeLabel, browserLabel: browserLabel}
+}
+
+type identityMismatchError struct {
+	activeLabel  string
+	browserLabel string
+}
+
+func (e *identityMismatchError) Error() string {
+	return fmt.Sprintf(
+		"browser authorization used a different account (active CLI account: %s; browser account: %s). Run `kontext login` with the account you want to use, then retry",
+		e.activeLabel,
+		e.browserLabel,
+	)
 }
 
 func fetchConnectURL(ctx context.Context, session *auth.Session, clientID string) (string, error) {
