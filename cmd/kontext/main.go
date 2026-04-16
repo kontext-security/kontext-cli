@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -62,7 +61,8 @@ func startCmd() *cobra.Command {
 				ClientID:     auth.DefaultClientID,
 				Args:         args,
 			})
-			if exitErr, ok := err.(*exec.ExitError); ok {
+			if exitErr, ok := err.(*run.AgentExitError); ok {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", exitErr)
 				os.Exit(exitErr.ExitCode())
 			}
 			return err

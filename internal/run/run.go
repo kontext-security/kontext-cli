@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,8 +42,9 @@ type Options struct {
 
 // Start is the main entry point for `kontext start`.
 func Start(ctx context.Context, opts Options) error {
-	if _, ok := agent.Get(opts.Agent); !ok {
-		return fmt.Errorf("unsupported agent %q (supported: %s)", opts.Agent, strings.Join(supportedAgents(), ", "))
+	agentPath, err := preflightAgent(opts.Agent)
+	if err != nil {
+		return err
 	}
 
 	// 1. Auth
@@ -212,10 +214,24 @@ func Start(ctx context.Context, opts Options) error {
 
 	// 9. Launch agent with hooks
 	fmt.Fprintf(os.Stderr, "\nLaunching %s...\n\n", opts.Agent)
-	agentErr := launchAgentWithSettings(ctx, opts.Agent, env, opts.Args, settingsPath)
+	agentErr := launchAgentWithSettings(ctx, opts.Agent, agentPath, env, opts.Args, settingsPath)
 
 	return agentErr
 }
+
+// AgentExitError reports an agent process that launched but exited unsuccessfully.
+type AgentExitError struct {
+	Agent string
+	Err   *exec.ExitError
+}
+
+func (e *AgentExitError) Error() string {
+	return fmt.Sprintf("%s exited with code %d after Kontext setup completed", e.Agent, e.Err.ExitCode())
+}
+
+func (e *AgentExitError) Unwrap() error { return e.Err }
+
+func (e *AgentExitError) ExitCode() int { return e.Err.ExitCode() }
 
 type sessionEnder interface {
 	EndSession(context.Context, string) error
@@ -804,12 +820,68 @@ func newSessionTokenSource(ctx context.Context, session *auth.Session) backend.T
 	}
 }
 
-func launchAgentWithSettings(_ context.Context, agentName string, env, extraArgs []string, settingsPath string) error {
-	binaryPath, err := exec.LookPath(agentName)
-	if err != nil {
-		return fmt.Errorf("agent %q not found in PATH: %w", agentName, err)
+func preflightAgent(agentName string) (string, error) {
+	if _, ok := agent.Get(agentName); !ok {
+		return "", fmt.Errorf("unsupported agent %q (supported: %s)", agentName, strings.Join(supportedAgents(), ", "))
+	}
+	return findExecutable(agentName, os.Getenv("PATH"))
+}
+
+func findExecutable(agentName, pathEnv string) (string, error) {
+	if strings.ContainsRune(agentName, os.PathSeparator) || strings.Contains(agentName, string(os.PathSeparator)) {
+		return validateExecutable(agentName, agentName)
 	}
 
+	var permissionErr error
+	for _, dir := range filepath.SplitList(pathEnv) {
+		var candidate string
+		if dir == "" {
+			candidate = "." + string(os.PathSeparator) + agentName
+		} else {
+			candidate = filepath.Join(dir, agentName)
+		}
+		path, err := validateExecutable(agentName, candidate)
+		if err == nil {
+			if !filepath.IsAbs(path) {
+				return "", fmt.Errorf("agent %q resolved from relative PATH entry at %s: %w", agentName, path, exec.ErrDot)
+			}
+			return path, nil
+		}
+		if errors.Is(err, exec.ErrDot) {
+			return "", err
+		}
+		if errors.Is(err, os.ErrPermission) && permissionErr == nil {
+			permissionErr = err
+		}
+	}
+
+	if permissionErr != nil {
+		return "", permissionErr
+	}
+	return "", fmt.Errorf("agent %q not found in PATH", agentName)
+}
+
+func validateExecutable(agentName, path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", err
+		}
+		return "", fmt.Errorf("inspect agent %q: %w", agentName, err)
+	}
+	if info.IsDir() || info.Mode()&0o111 == 0 {
+		return "", fmt.Errorf("agent %q found at %s but is not executable: %w", agentName, path, os.ErrPermission)
+	}
+	if _, err := exec.LookPath(path); err != nil {
+		if errors.Is(err, exec.ErrDot) {
+			return "", err
+		}
+		return "", fmt.Errorf("agent %q found at %s but is not executable by the current user: %w", agentName, path, os.ErrPermission)
+	}
+	return path, nil
+}
+
+func launchAgentWithSettings(_ context.Context, agentName, binaryPath string, env, extraArgs []string, settingsPath string) error {
 	var args []string
 	if settingsPath != "" {
 		args = append(args, "--settings", settingsPath)
@@ -834,10 +906,14 @@ func launchAgentWithSettings(_ context.Context, agentName string, env, extraArgs
 		}
 	}()
 
-	err = cmd.Wait()
+	err := cmd.Wait()
 	signal.Stop(sigCh)
 	close(sigCh)
 
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return &AgentExitError{Agent: agentName, Err: exitErr}
+	}
 	return err
 }
 
