@@ -53,17 +53,17 @@ func TestNewerThan(t *testing.T) {
 func TestParseSemver(t *testing.T) {
 	tests := []struct {
 		input string
-		want  [3]int
+		want  semver
 		ok    bool
 	}{
-		{"1.2.3", [3]int{1, 2, 3}, true},
-		{"0.1.0", [3]int{0, 1, 0}, true},
-		{"10.20.30", [3]int{10, 20, 30}, true},
-		{"1.2.3-rc.1", [3]int{1, 2, 3}, true},
-		{"1.2", [3]int{}, false},
-		{"abc", [3]int{}, false},
-		{"1.2.x", [3]int{}, false},
-		{"", [3]int{}, false},
+		{"1.2.3", semver{Major: 1, Minor: 2, Patch: 3}, true},
+		{"0.1.0", semver{Major: 0, Minor: 1, Patch: 0}, true},
+		{"10.20.30", semver{Major: 10, Minor: 20, Patch: 30}, true},
+		{"1.2.3-rc.1", semver{Major: 1, Minor: 2, Patch: 3}, true},
+		{"1.2", semver{}, false},
+		{"abc", semver{}, false},
+		{"1.2.x", semver{}, false},
+		{"", semver{}, false},
 	}
 	for _, tt := range tests {
 		got, ok := parseSemver(tt.input)

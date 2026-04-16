@@ -1,4 +1,3 @@
-// Package claude implements the agent adapter for Claude Code.
 package claude
 
 import (
@@ -12,21 +11,18 @@ func init() {
 	agent.Register(&Claude{})
 }
 
-// Claude implements the agent.Agent interface for Claude Code.
 type Claude struct{}
 
 func (c *Claude) Name() string { return "claude" }
 
-// hookInput is the JSON structure Claude Code sends on hook stdin.
 type hookInput struct {
-	SessionID      string         `json:"session_id"`
-	HookEventName  string         `json:"hook_event_name"`
-	ToolName       string         `json:"tool_name"`
-	ToolInput      map[string]any `json:"tool_input"`
-	ToolResponse   map[string]any `json:"tool_response"`
-	ToolUseID      string         `json:"tool_use_id"`
-	CWD            string         `json:"cwd"`
-	PermissionMode string         `json:"permission_mode"`
+	SessionID     string         `json:"session_id"`
+	HookEventName string         `json:"hook_event_name"`
+	ToolName      string         `json:"tool_name"`
+	ToolInput     map[string]any `json:"tool_input"`
+	ToolResponse  map[string]any `json:"tool_response"`
+	ToolUseID     string         `json:"tool_use_id"`
+	CWD           string         `json:"cwd"`
 }
 
 func (c *Claude) DecodeHookInput(input []byte) (*agent.HookEvent, error) {
@@ -45,7 +41,6 @@ func (c *Claude) DecodeHookInput(input []byte) (*agent.HookEvent, error) {
 	}, nil
 }
 
-// hookOutput is the JSON structure Claude Code expects on hook stdout.
 type hookOutput struct {
 	HookSpecificOutput *hookSpecificOutput `json:"hookSpecificOutput,omitempty"`
 }

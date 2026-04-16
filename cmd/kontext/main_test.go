@@ -3,9 +3,14 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"net"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/agent"
 	"github.com/zalando/go-keyring"
 )
 
@@ -49,5 +54,50 @@ func TestLogoutCmdWrapsUnexpectedErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "logout failed: boom") {
 		t.Fatalf("error = %q, want wrapped logout failure", err.Error())
+	}
+}
+
+func TestEvaluateViaSidecarFailsOpenOnMarshalErrors(t *testing.T) {
+	t.Parallel()
+
+	socketPath := fmt.Sprintf("/tmp/kontext-test-%d.sock", time.Now().UnixNano())
+	t.Cleanup(func() { _ = os.Remove(socketPath) })
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer ln.Close()
+
+	tests := []struct {
+		name  string
+		event *agent.HookEvent
+	}{
+		{
+			name: "tool input",
+			event: &agent.HookEvent{
+				ToolInput: map[string]any{"bad": func() {}},
+			},
+		},
+		{
+			name: "tool response",
+			event: &agent.HookEvent{
+				ToolResponse: map[string]any{"bad": func() {}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, reason, err := evaluateViaSidecar(socketPath, "claude", tt.event)
+			if err != nil {
+				t.Fatalf("evaluateViaSidecar() error = %v", err)
+			}
+			if !allowed {
+				t.Fatal("evaluateViaSidecar() allowed = false, want true")
+			}
+			if reason != "sidecar marshal error" {
+				t.Fatalf("evaluateViaSidecar() reason = %q, want sidecar marshal error", reason)
+			}
+		})
 	}
 }

@@ -1,6 +1,3 @@
-// Package sidecar implements the local session server.
-// Hook handlers connect over a Unix socket. The sidecar relays events
-// to the Kontext backend via ConnectRPC and keeps the session alive.
 package sidecar
 
 import (
@@ -15,7 +12,6 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/backend"
 )
 
-// Server is the local sidecar that hook handlers communicate with.
 type Server struct {
 	socketPath string
 	listener   net.Listener
@@ -25,7 +21,6 @@ type Server struct {
 	cancel     context.CancelFunc
 }
 
-// New creates a new sidecar server.
 func New(sessionDir string, client *backend.Client, sessionID, agentName string) (*Server, error) {
 	return &Server{
 		socketPath: filepath.Join(sessionDir, "kontext.sock"),
@@ -35,10 +30,8 @@ func New(sessionDir string, client *backend.Client, sessionID, agentName string)
 	}, nil
 }
 
-// SocketPath returns the Unix socket path.
 func (s *Server) SocketPath() string { return s.socketPath }
 
-// Start begins listening and processing hook events.
 func (s *Server) Start(ctx context.Context) error {
 	os.Remove(s.socketPath)
 
@@ -55,7 +48,6 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop shuts down the sidecar.
 func (s *Server) Stop() {
 	if s.cancel != nil {
 		s.cancel()
@@ -74,7 +66,12 @@ func (s *Server) acceptLoop(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			default:
-				continue
+				if ne, ok := err.(net.Error); ok && ne.Temporary() {
+					log.Printf("sidecar: accept temporary error: %v", err)
+					continue
+				}
+				log.Printf("sidecar: accept: %v", err)
+				return
 			}
 		}
 		go s.handleConn(ctx, conn)
@@ -83,7 +80,10 @@ func (s *Server) acceptLoop(ctx context.Context) {
 
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		log.Printf("sidecar: deadline: %v", err)
+		return
+	}
 
 	var req EvaluateRequest
 	if err := ReadMessage(conn, &req); err != nil {
@@ -91,14 +91,12 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	// Always allow for now — policy evaluation is a future phase
 	result := EvaluateResult{Type: "result", Allowed: true, Reason: "allowed"}
 	if err := WriteMessage(conn, result); err != nil {
 		log.Printf("sidecar: write: %v", err)
 		return
 	}
 
-	// Ingest event asynchronously via ConnectRPC
 	go s.ingestEvent(ctx, &req)
 }
 

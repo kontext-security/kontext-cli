@@ -21,6 +21,16 @@ type hookDef struct {
 	Timeout int    `json:"timeout,omitempty"`
 }
 
+func commandHookGroups(command string) []hookGroup {
+	return []hookGroup{{
+		Hooks: []hookDef{{
+			Type:    "command",
+			Command: command,
+			Timeout: 10,
+		}},
+	}}
+}
+
 // GenerateSettings creates a Claude Code settings.json with Kontext hooks
 // and returns the path to the generated file.
 func GenerateSettings(sessionDir, kontextBinary, agentName string) (string, error) {
@@ -28,15 +38,9 @@ func GenerateSettings(sessionDir, kontextBinary, agentName string) (string, erro
 
 	settings := claudeSettings{
 		Hooks: map[string][]hookGroup{
-			"PreToolUse": {{
-				Hooks: []hookDef{{Type: "command", Command: hookCmd, Timeout: 10}},
-			}},
-			"PostToolUse": {{
-				Hooks: []hookDef{{Type: "command", Command: hookCmd, Timeout: 10}},
-			}},
-			"UserPromptSubmit": {{
-				Hooks: []hookDef{{Type: "command", Command: hookCmd, Timeout: 10}},
-			}},
+			"PreToolUse":       commandHookGroups(hookCmd),
+			"PostToolUse":      commandHookGroups(hookCmd),
+			"UserPromptSubmit": commandHookGroups(hookCmd),
 		},
 	}
 

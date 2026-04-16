@@ -5,7 +5,6 @@ go 1.25.9
 require (
 	connectrpc.com/connect v1.19.1
 	github.com/cli/browser v1.3.0
-	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/oauth2 v0.36.0
