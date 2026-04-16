@@ -2,7 +2,6 @@ package sidecar
 
 import (
 	"context"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 
 	agentv1 "github.com/kontext-security/kontext-cli/gen/kontext/agent/v1"
 	"github.com/kontext-security/kontext-cli/internal/backend"
+	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 )
 
 type Server struct {
@@ -18,15 +18,18 @@ type Server struct {
 	sessionID  string
 	agentName  string
 	client     *backend.Client
+	diagnostic diagnostic.Logger
 	cancel     context.CancelFunc
 }
 
-func New(sessionDir string, client *backend.Client, sessionID, agentName string) (*Server, error) {
+// New creates a new sidecar server.
+func New(sessionDir string, client *backend.Client, sessionID, agentName string, diagnostics diagnostic.Logger) (*Server, error) {
 	return &Server{
 		socketPath: filepath.Join(sessionDir, "kontext.sock"),
 		sessionID:  sessionID,
 		agentName:  agentName,
 		client:     client,
+		diagnostic: diagnostics,
 	}, nil
 }
 
@@ -67,10 +70,10 @@ func (s *Server) acceptLoop(ctx context.Context) {
 				return
 			default:
 				if ne, ok := err.(net.Error); ok && ne.Temporary() {
-					log.Printf("sidecar: accept temporary error: %v", err)
+					s.diagnostic.Printf("sidecar accept temporary error: %v\n", err)
 					continue
 				}
-				log.Printf("sidecar: accept: %v", err)
+				s.diagnostic.Printf("sidecar accept: %v\n", err)
 				return
 			}
 		}
@@ -81,19 +84,19 @@ func (s *Server) acceptLoop(ctx context.Context) {
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		log.Printf("sidecar: deadline: %v", err)
+		s.diagnostic.Printf("sidecar deadline: %v\n", err)
 		return
 	}
 
 	var req EvaluateRequest
 	if err := ReadMessage(conn, &req); err != nil {
-		log.Printf("sidecar: read: %v", err)
+		s.diagnostic.Printf("sidecar read: %v\n", err)
 		return
 	}
 
-	result := EvaluateResult{Type: "result", Allowed: true, Reason: "allowed"}
+	result := defaultAllowResult()
 	if err := WriteMessage(conn, result); err != nil {
-		log.Printf("sidecar: write: %v", err)
+		s.diagnostic.Printf("sidecar write: %v\n", err)
 		return
 	}
 
@@ -101,9 +104,20 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 }
 
 func (s *Server) ingestEvent(ctx context.Context, req *EvaluateRequest) {
+	hookEvent := buildHookEventRequest(s.sessionID, s.agentName, req)
+	if err := s.client.IngestEvent(ctx, hookEvent); err != nil {
+		s.diagnostic.Printf("sidecar ingest: %v\n", err)
+	}
+}
+
+func defaultAllowResult() EvaluateResult {
+	return EvaluateResult{Type: "result", Allowed: true}
+}
+
+func buildHookEventRequest(sessionID, agentName string, req *EvaluateRequest) *agentv1.ProcessHookEventRequest {
 	hookEvent := &agentv1.ProcessHookEventRequest{
-		SessionId: s.sessionID,
-		Agent:     s.agentName,
+		SessionId: sessionID,
+		Agent:     agentName,
 		HookEvent: req.HookEvent,
 		ToolName:  req.ToolName,
 		ToolUseId: req.ToolUseID,
@@ -117,9 +131,7 @@ func (s *Server) ingestEvent(ctx context.Context, req *EvaluateRequest) {
 		hookEvent.ToolResponse = req.ToolResponse
 	}
 
-	if err := s.client.IngestEvent(ctx, hookEvent); err != nil {
-		log.Printf("sidecar: ingest: %v", err)
-	}
+	return hookEvent
 }
 
 func (s *Server) heartbeatLoop(ctx context.Context) {
@@ -131,7 +143,7 @@ func (s *Server) heartbeatLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := s.client.Heartbeat(ctx, s.sessionID); err != nil {
-				log.Printf("sidecar: heartbeat: %v", err)
+				s.diagnostic.Printf("sidecar heartbeat: %v\n", err)
 			}
 		}
 	}
