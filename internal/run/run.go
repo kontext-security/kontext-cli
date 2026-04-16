@@ -80,9 +80,6 @@ func Start(ctx context.Context, opts Options) error {
 	}
 
 	sessionID := createResp.SessionId
-	credentialClientID := resolveCredentialClientID(createResp.AgentId, opts.ClientID)
-	fmt.Fprintf(os.Stderr, "✓ Session: %s (%s)\n", createResp.SessionName, truncateID(sessionID))
-
 	var sessionDir string
 	defer func() {
 		endManagedSession(client, sessionID, os.Stderr)
@@ -90,6 +87,12 @@ func Start(ctx context.Context, opts Options) error {
 			os.RemoveAll(sessionDir)
 		}
 	}()
+
+	credentialClientID, err := credentialClientIDForAgent(createResp.AgentId)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "✓ Session: %s (%s)\n", createResp.SessionName, truncateID(sessionID))
 
 	// 4. Bootstrap the shared CLI application and sync the local env file.
 	templateExists := false
@@ -559,27 +562,20 @@ func fetchConnectURLWithGatewayToken(ctx context.Context, issuerURL, gatewayToke
 	return result.ConnectURL, nil
 }
 
-func agentOAuthClientID(agentID string) string {
-	return "app_" + agentID
-}
-
-func resolveCredentialClientID(agentID, fallback string) string {
+func credentialClientIDForAgent(agentID string) (string, error) {
 	if strings.TrimSpace(agentID) == "" {
-		return fallback
+		return "", fmt.Errorf("create managed session returned empty agent ID")
 	}
-	return agentOAuthClientID(agentID)
+	return "app_" + agentID, nil
 }
 
 type tokenExchangeResponse struct {
-	AccessToken           string `json:"access_token"`
-	TokenType             string `json:"token_type"`
-	ProviderKind          string `json:"provider_kind"`
-	Error                 string `json:"error"`
-	ErrorDesc             string `json:"error_description"`
-	FailureReason         string `json:"failure_reason"`
-	ProviderName          string `json:"provider_name"`
-	ProviderID            string `json:"provider_id"`
-	ReauthorizationReason string `json:"reauthorization_reason"`
+	AccessToken   string `json:"access_token"`
+	Error         string `json:"error"`
+	ErrorDesc     string `json:"error_description"`
+	FailureReason string `json:"failure_reason"`
+	ProviderName  string `json:"provider_name"`
+	ProviderID    string `json:"provider_id"`
 }
 
 type credentialFailureReason string

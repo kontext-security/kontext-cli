@@ -3,11 +3,13 @@ package run
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -473,149 +475,84 @@ func TestExchangeCredentialReturnsTypedFailureReason(t *testing.T) {
 	}
 }
 
-func TestExchangeCredentialClassifiesLegacyProviderRequired(t *testing.T) {
+func TestClassifyCredentialFailureSupportsLegacyTokenErrors(t *testing.T) {
 	t.Parallel()
 
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/oauth-authorization-server":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"issuer":"%s","authorization_endpoint":"%s/oauth2/auth","token_endpoint":"%s/oauth2/token","jwks_uri":"%s/.well-known/jwks.json"}`, server.URL, server.URL, server.URL, server.URL)))
-		case "/oauth2/token":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"error":"provider_required","error_description":"User has not configured provider 'Linear Stub'","provider_name":"Linear Stub","provider_id":"provider-linear"}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	session := &auth.Session{
-		IssuerURL:   server.URL,
-		AccessToken: "test-access-token",
+	tests := []struct {
+		name   string
+		result *tokenExchangeResponse
+		want   credentialFailureReason
+	}{
+		{
+			name: "provider required",
+			result: &tokenExchangeResponse{
+				Error: "provider_required",
+			},
+			want: failureDisconnected,
+		},
+		{
+			name: "provider not configured",
+			result: &tokenExchangeResponse{
+				Error: "provider_not_configured",
+			},
+			want: failureDisconnected,
+		},
+		{
+			name: "reauthorization required",
+			result: &tokenExchangeResponse{
+				Error: "provider_reauthorization_required",
+			},
+			want: failureDisconnected,
+		},
+		{
+			name: "invalid target not connected",
+			result: &tokenExchangeResponse{
+				Error:     "invalid_target",
+				ErrorDesc: "provider is not connected",
+			},
+			want: failureDisconnected,
+		},
+		{
+			name: "invalid target not allowed",
+			result: &tokenExchangeResponse{
+				Error:     "invalid_target",
+				ErrorDesc: "provider is not allowed for this application",
+			},
+			want: failureDisconnected,
+		},
+		{
+			name: "unknown legacy error",
+			result: &tokenExchangeResponse{
+				Error: "invalid_target",
+			},
+			want: "",
+		},
 	}
 
-	_, err := exchangeCredential(
-		context.Background(),
-		session,
-		credential.Entry{EnvVar: "LINEAR_API_KEY", Provider: "linear"},
-		"app_agent-123",
-	)
-	if err == nil {
-		t.Fatal("exchangeCredential() error = nil, want non-nil")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	resolutionErr, ok := err.(*credentialResolutionError)
-	if !ok {
-		t.Fatalf("exchangeCredential() error type = %T, want *credentialResolutionError", err)
-	}
-	if resolutionErr.Reason != failureDisconnected {
-		t.Fatalf("resolutionErr.Reason = %q, want %q", resolutionErr.Reason, failureDisconnected)
+			if got := classifyCredentialFailure(tt.result); got != tt.want {
+				t.Fatalf("classifyCredentialFailure() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
-func TestExchangeCredentialClassifiesLegacyProviderReauthorizationRequired(t *testing.T) {
+func TestCredentialClientIDForAgent(t *testing.T) {
 	t.Parallel()
 
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/oauth-authorization-server":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"issuer":"%s","authorization_endpoint":"%s/oauth2/auth","token_endpoint":"%s/oauth2/token","jwks_uri":"%s/.well-known/jwks.json"}`, server.URL, server.URL, server.URL, server.URL)))
-		case "/oauth2/token":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"error":"provider_reauthorization_required","error_description":"User must reconnect provider 'Linear Stub'","provider_name":"Linear Stub","provider_id":"provider-linear","reauthorization_reason":"missing_scopes"}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	session := &auth.Session{
-		IssuerURL:   server.URL,
-		AccessToken: "test-access-token",
+	got, err := credentialClientIDForAgent("agent-123")
+	if err != nil {
+		t.Fatalf("credentialClientIDForAgent() error = %v", err)
+	}
+	if got != "app_agent-123" {
+		t.Fatalf("credentialClientIDForAgent() = %q, want %q", got, "app_agent-123")
 	}
 
-	_, err := exchangeCredential(
-		context.Background(),
-		session,
-		credential.Entry{EnvVar: "LINEAR_API_KEY", Provider: "linear"},
-		"app_agent-123",
-	)
-	if err == nil {
-		t.Fatal("exchangeCredential() error = nil, want non-nil")
-	}
-
-	resolutionErr, ok := err.(*credentialResolutionError)
-	if !ok {
-		t.Fatalf("exchangeCredential() error type = %T, want *credentialResolutionError", err)
-	}
-	if resolutionErr.Reason != failureDisconnected {
-		t.Fatalf("resolutionErr.Reason = %q, want %q", resolutionErr.Reason, failureDisconnected)
-	}
-}
-
-func TestExchangeCredentialClassifiesLegacyInvalidTargetNotAllowed(t *testing.T) {
-	t.Parallel()
-
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/oauth-authorization-server":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"issuer":"%s","authorization_endpoint":"%s/oauth2/auth","token_endpoint":"%s/oauth2/token","jwks_uri":"%s/.well-known/jwks.json"}`, server.URL, server.URL, server.URL, server.URL)))
-		case "/oauth2/token":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"error":"invalid_target","error_description":"Resource 'linear' is not allowed for this application"}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	session := &auth.Session{
-		IssuerURL:   server.URL,
-		AccessToken: "test-access-token",
-	}
-
-	_, err := exchangeCredential(
-		context.Background(),
-		session,
-		credential.Entry{EnvVar: "LINEAR_API_KEY", Provider: "linear"},
-		"app_agent-123",
-	)
-	if err == nil {
-		t.Fatal("exchangeCredential() error = nil, want non-nil")
-	}
-
-	resolutionErr, ok := err.(*credentialResolutionError)
-	if !ok {
-		t.Fatalf("exchangeCredential() error type = %T, want *credentialResolutionError", err)
-	}
-	if resolutionErr.Reason != failureDisconnected {
-		t.Fatalf("resolutionErr.Reason = %q, want %q", resolutionErr.Reason, failureDisconnected)
-	}
-}
-
-func TestAgentOAuthClientID(t *testing.T) {
-	t.Parallel()
-
-	if got := agentOAuthClientID("agent-123"); got != "app_agent-123" {
-		t.Fatalf("agentOAuthClientID() = %q, want %q", got, "app_agent-123")
-	}
-}
-
-func TestResolveCredentialClientID(t *testing.T) {
-	t.Parallel()
-
-	if got := resolveCredentialClientID("agent-123", "bootstrap-client"); got != "app_agent-123" {
-		t.Fatalf("resolveCredentialClientID() = %q, want %q", got, "app_agent-123")
-	}
-
-	if got := resolveCredentialClientID("", "bootstrap-client"); got != "bootstrap-client" {
-		t.Fatalf("resolveCredentialClientID() empty agent = %q, want %q", got, "bootstrap-client")
+	if _, err := credentialClientIDForAgent(""); err == nil {
+		t.Fatal("credentialClientIDForAgent() empty agent error = nil, want non-nil")
 	}
 }
 
@@ -774,5 +711,55 @@ func TestEndManagedSessionEndsTheManagedSession(t *testing.T) {
 	}
 	if got := output.String(); !strings.Contains(got, "Session ended") {
 		t.Fatalf("output = %q, want session-ended message", got)
+	}
+}
+
+func TestGenerateSettingsWritesClaudeHooks(t *testing.T) {
+	t.Parallel()
+
+	sessionDir := t.TempDir()
+	settingsPath, err := GenerateSettings(sessionDir, "/usr/local/bin/kontext", "claude")
+	if err != nil {
+		t.Fatalf("GenerateSettings() error = %v", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var settings claudeSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	wantEvents := []string{"PreToolUse", "PostToolUse", "UserPromptSubmit"}
+	if len(settings.Hooks) != len(wantEvents) {
+		t.Fatalf("settings.Hooks len = %d, want %d", len(settings.Hooks), len(wantEvents))
+	}
+
+	wantCommand := "/usr/local/bin/kontext hook --agent claude"
+	for _, event := range wantEvents {
+		groups, ok := settings.Hooks[event]
+		if !ok {
+			t.Fatalf("settings.Hooks missing %q", event)
+		}
+		if len(groups) != 1 {
+			t.Fatalf("%s groups len = %d, want 1", event, len(groups))
+		}
+		if len(groups[0].Hooks) != 1 {
+			t.Fatalf("%s hooks len = %d, want 1", event, len(groups[0].Hooks))
+		}
+
+		hook := groups[0].Hooks[0]
+		if hook.Type != "command" {
+			t.Fatalf("%s hook type = %q, want %q", event, hook.Type, "command")
+		}
+		if hook.Command != wantCommand {
+			t.Fatalf("%s hook command = %q, want %q", event, hook.Command, wantCommand)
+		}
+		if hook.Timeout != 10 {
+			t.Fatalf("%s hook timeout = %d, want 10", event, hook.Timeout)
+		}
 	}
 }

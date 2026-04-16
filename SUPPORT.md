@@ -1,6 +1,6 @@
 # Support
 
-Use the right channel so we can help quickly:
+Use the right channel:
 
 - Bug reports and feature requests: open a GitHub issue.
 - Security reports: use private vulnerability reporting or follow [SECURITY.md](SECURITY.md).

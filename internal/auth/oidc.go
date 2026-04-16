@@ -152,7 +152,7 @@ func Login(ctx context.Context, issuerURL, clientID string, scopes ...string) (*
 		return nil, fmt.Errorf("token exchange: %w", err)
 	}
 
-	// 9. Extract user info from ID token (if present) or use token endpoint response
+	// 9. Extract user info from the ID token.
 	session := &Session{
 		IssuerURL:    issuerURL,
 		AccessToken:  token.AccessToken,
@@ -164,21 +164,11 @@ func Login(ctx context.Context, issuerURL, clientID string, scopes ...string) (*
 	if rawIDToken, ok := token.Extra("id_token").(string); ok {
 		session.IDToken = rawIDToken
 		if claims, err := decodeJWTClaims(rawIDToken); err == nil {
-			if name, _ := claims["name"].(string); name != "" {
-				session.User.Name = name
-			}
-			if email, _ := claims["email"].(string); email != "" {
-				session.User.Email = email
-			}
+			session.User.Name = claims.Name
+			session.User.Email = claims.Email
 		}
 	}
-
-	// Fallback: if no email from ID token, try to get from userinfo or token claims
-	if session.User.Email == "" {
-		if email, _ := token.Extra("email").(string); email != "" {
-			session.User.Email = email
-		}
-	}
+	applyTokenExtraEmailFallback(session, token)
 
 	return &LoginResult{Session: session}, nil
 }
@@ -189,6 +179,15 @@ func resolveLoginScopes(scopes []string) []string {
 	}
 
 	return append([]string(nil), defaultLoginScopes...)
+}
+
+func applyTokenExtraEmailFallback(session *Session, token *oauth2.Token) {
+	if session.User.Email != "" {
+		return
+	}
+	if email, _ := token.Extra("email").(string); email != "" {
+		session.User.Email = email
+	}
 }
 
 // RefreshSession attempts to refresh an expired session using the refresh token.
@@ -254,12 +253,17 @@ func Preflight(ctx context.Context) (*Session, error) {
 
 // --- helpers ---
 
+type jwtClaims struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
 // decodeJWTClaims decodes the payload of a JWT without verification.
 // Used only for extracting user display info — not for security decisions.
-func decodeJWTClaims(rawToken string) (map[string]any, error) {
+func decodeJWTClaims(rawToken string) (jwtClaims, error) {
 	parts := strings.Split(rawToken, ".")
 	if len(parts) != 3 {
-		return nil, fmt.Errorf("invalid JWT format")
+		return jwtClaims{}, fmt.Errorf("invalid JWT format")
 	}
 
 	// Add padding if needed
@@ -270,12 +274,12 @@ func decodeJWTClaims(rawToken string) (map[string]any, error) {
 
 	decoded, err := base64.URLEncoding.DecodeString(payload)
 	if err != nil {
-		return nil, err
+		return jwtClaims{}, err
 	}
 
-	var claims map[string]any
+	var claims jwtClaims
 	if err := json.Unmarshal(decoded, &claims); err != nil {
-		return nil, err
+		return jwtClaims{}, err
 	}
 
 	return claims, nil

@@ -20,7 +20,6 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/sidecar"
 	"github.com/kontext-security/kontext-cli/internal/update"
 
-	// Register agent adapters
 	_ "github.com/kontext-security/kontext-cli/internal/agent/claude"
 )
 
@@ -142,17 +141,16 @@ func hookCmd() *cobra.Command {
 
 			socketPath := os.Getenv("KONTEXT_SOCKET")
 			if socketPath == "" {
-				// No sidecar — fail-open
 				hook.Run(a, func(e *agent.HookEvent) (bool, string, error) {
 					return true, "no sidecar", nil
 				})
-				return nil // unreachable
+				return nil
 			}
 
 			hook.Run(a, func(e *agent.HookEvent) (bool, string, error) {
 				return evaluateViaSidecar(socketPath, agentName, e)
 			})
-			return nil // unreachable (hook.Run calls os.Exit)
+			return nil
 		},
 	}
 
@@ -164,11 +162,12 @@ func hookCmd() *cobra.Command {
 func evaluateViaSidecar(socketPath, agentName string, e *agent.HookEvent) (bool, string, error) {
 	conn, err := net.DialTimeout("unix", socketPath, 5*time.Second)
 	if err != nil {
-		// Sidecar unreachable — fail-open
 		return true, "sidecar unreachable", nil
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return true, "sidecar deadline error", nil
+	}
 
 	req := sidecar.EvaluateRequest{
 		Type:      "evaluate",
@@ -179,13 +178,18 @@ func evaluateViaSidecar(socketPath, agentName string, e *agent.HookEvent) (bool,
 		CWD:       e.CWD,
 	}
 
-	// Marshal tool input/response to JSON
 	if e.ToolInput != nil {
-		data, _ := marshalJSON(e.ToolInput)
+		data, err := marshalJSON(e.ToolInput)
+		if err != nil {
+			return true, "sidecar marshal error", nil
+		}
 		req.ToolInput = data
 	}
 	if e.ToolResponse != nil {
-		data, _ := marshalJSON(e.ToolResponse)
+		data, err := marshalJSON(e.ToolResponse)
+		if err != nil {
+			return true, "sidecar marshal error", nil
+		}
 		req.ToolResponse = data
 	}
 

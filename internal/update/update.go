@@ -26,6 +26,12 @@ type cachedVersion struct {
 	CheckedAt     time.Time `json:"checked_at"`
 }
 
+type semver struct {
+	Major int
+	Minor int
+	Patch int
+}
+
 // CheckAsync spawns a background goroutine that checks for a newer release.
 // It prints a one-liner to stderr if an update is available, and does nothing
 // on any error. The check is fully fire-and-forget — it never blocks the caller.
@@ -73,20 +79,25 @@ func newerThan(a, b string) bool {
 	if !aOK || !bOK {
 		return false
 	}
-	for i := 0; i < 3; i++ {
-		if aParts[i] != bParts[i] {
-			return aParts[i] > bParts[i]
-		}
-	}
-	return false
+	return aParts.greaterThan(bParts)
 }
 
-func parseSemver(v string) ([3]int, bool) {
+func (v semver) greaterThan(other semver) bool {
+	if v.Major != other.Major {
+		return v.Major > other.Major
+	}
+	if v.Minor != other.Minor {
+		return v.Minor > other.Minor
+	}
+	return v.Patch > other.Patch
+}
+
+func parseSemver(v string) (semver, bool) {
 	parts := strings.SplitN(v, ".", 3)
 	if len(parts) != 3 {
-		return [3]int{}, false
+		return semver{}, false
 	}
-	var out [3]int
+	var out semver
 	for i, p := range parts {
 		// Strip pre-release suffix (e.g. "1-rc.1" → "1")
 		if idx := strings.IndexByte(p, '-'); idx != -1 {
@@ -94,9 +105,16 @@ func parseSemver(v string) ([3]int, bool) {
 		}
 		n, err := strconv.Atoi(p)
 		if err != nil {
-			return [3]int{}, false
+			return semver{}, false
 		}
-		out[i] = n
+		switch i {
+		case 0:
+			out.Major = n
+		case 1:
+			out.Minor = n
+		case 2:
+			out.Patch = n
+		}
 	}
 	return out, true
 }
