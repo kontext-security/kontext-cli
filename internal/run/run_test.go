@@ -146,6 +146,58 @@ func TestCredentialFailureSummaryHidesRawDetails(t *testing.T) {
 	}
 }
 
+func TestPrintHostedConnectInstructionsNonInteractiveDoesNotPrompt(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	var opened bool
+	prompt := printHostedConnectInstructions(
+		&output,
+		"linear",
+		"https://app.kontext.security/providers/connect#handshake=test",
+		false,
+		func(string) error {
+			opened = true
+			return nil
+		},
+	)
+	if prompt {
+		t.Fatal("prompt = true, want false")
+	}
+	if opened {
+		t.Fatal("browser opener was called for non-interactive flow")
+	}
+	got := output.String()
+	if !strings.Contains(got, "Open this URL") || strings.Count(got, "https://app.kontext.security") != 1 {
+		t.Fatalf("output = %q, want one fallback URL", got)
+	}
+}
+
+func TestPrintHostedConnectInstructionsShowsFallbackWhenBrowserOpenFails(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	prompt := printHostedConnectInstructions(
+		&output,
+		"linear, slack",
+		"https://app.kontext.security/providers/connect#handshake=test",
+		true,
+		func(string) error {
+			return fmt.Errorf("browser unavailable")
+		},
+	)
+	if !prompt {
+		t.Fatal("prompt = false, want true")
+	}
+	got := output.String()
+	if !strings.Contains(got, "Could not open the browser automatically") {
+		t.Fatalf("output = %q, want browser fallback", got)
+	}
+	if strings.Count(got, "https://app.kontext.security") != 1 {
+		t.Fatalf("output = %q, want one fallback URL", got)
+	}
+}
+
 func TestLaunchAgentWithSettingsReturnsAgentExitError(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
