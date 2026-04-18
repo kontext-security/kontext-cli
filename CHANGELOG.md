@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0](https://github.com/kontext-security/kontext-cli/compare/v0.3.0...v0.4.0) (2026-04-18)
+
+
+### Features
+
+* **cli:** add verbose diagnostics mode ([#68](https://github.com/kontext-security/kontext-cli/issues/68)) ([8de7536](https://github.com/kontext-security/kontext-cli/commit/8de75362722d35a2853e468036f2cf4ae34adf83))
+* **cli:** prompt to upgrade when a new version is available ([#73](https://github.com/kontext-security/kontext-cli/issues/73)) ([85c791e](https://github.com/kontext-security/kontext-cli/commit/85c791e422d23db929eacaec5cbacf3cc2bb568b))
+* **hooks:** quiet default allow reasons ([#71](https://github.com/kontext-security/kontext-cli/issues/71)) ([43d07a2](https://github.com/kontext-security/kontext-cli/commit/43d07a263ba1f05ba53d90bb9591fbc70968c503))
+
+
+### Bug Fixes
+
+* **auth:** reject gateway reauth account mismatch ([#69](https://github.com/kontext-security/kontext-cli/issues/69)) ([c000223](https://github.com/kontext-security/kontext-cli/commit/c000223230b300f89d2dcac0d19b5bfa0a8c3885))
+* **auth:** use stable session identity ([#66](https://github.com/kontext-security/kontext-cli/issues/66)) ([60ba8f3](https://github.com/kontext-security/kontext-cli/commit/60ba8f351a3e37c1ed7b8aac8a030fda214b8198))
+* **ci:** run release please with app token ([#74](https://github.com/kontext-security/kontext-cli/issues/74)) ([bba527b](https://github.com/kontext-security/kontext-cli/commit/bba527bc2ad2934e0b5fbf9a7188afc274d98f30))
+* **cli:** harden hook and credential error handling ([#64](https://github.com/kontext-security/kontext-cli/issues/64)) ([bf33df7](https://github.com/kontext-security/kontext-cli/commit/bf33df74d204f89f4ff04a389755f26610344592))
+* **start:** preflight agent launch setup ([#67](https://github.com/kontext-security/kontext-cli/issues/67)) ([c40cbeb](https://github.com/kontext-security/kontext-cli/commit/c40cbebaa6b522f1a0c27544249419df49356a63))
+* **start:** summarize missing provider setup ([#70](https://github.com/kontext-security/kontext-cli/issues/70)) ([faab6fc](https://github.com/kontext-security/kontext-cli/commit/faab6fc0dcf956e184cd29a9eeceeb251688b375))
+
 ## [0.3.0](https://github.com/kontext-security/kontext-cli/compare/v0.2.2...v0.3.0) (2026-04-14)
 
 
