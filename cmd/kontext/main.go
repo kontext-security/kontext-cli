@@ -53,7 +53,16 @@ func startCmd() *cobra.Command {
 		Use:   "start [flags] [-- extra-agent-args...]",
 		Short: "Launch an agent with Kontext governance",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			update.CheckAsync(version)
+			if isInteractiveStdin() {
+				if latest := update.Available(version); latest != "" {
+					upgraded, _ := update.PromptAndUpgrade(os.Stdin, os.Stderr, version, latest)
+					if upgraded {
+						return nil
+					}
+				}
+			} else {
+				update.CheckAsync(version)
+			}
 			ctx := context.Background()
 			err := run.Start(ctx, run.Options{
 				Agent:        agentName,
@@ -217,4 +226,12 @@ func marshalJSON(v any) ([]byte, error) {
 		return nil, nil
 	}
 	return json.Marshal(v)
+}
+
+func isInteractiveStdin() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
