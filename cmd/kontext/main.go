@@ -93,7 +93,11 @@ func loginCmd() *cobra.Command {
 				return fmt.Errorf("save session: %w", err)
 			}
 
-			fmt.Fprintf(os.Stderr, "Logged in as %s (%s)\n", result.Session.User.Name, result.Session.User.Email)
+			if display := result.Session.DisplayIdentity(); display != "" {
+				fmt.Fprintf(os.Stderr, "Logged in as %s\n", display)
+			} else {
+				fmt.Fprintln(os.Stderr, "Logged in.")
+			}
 			return nil
 		},
 	}

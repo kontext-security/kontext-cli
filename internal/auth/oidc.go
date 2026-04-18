@@ -32,6 +32,12 @@ var defaultLoginScopes = []string{
 	"offline_access",
 }
 
+var identityLoginScopes = []string{
+	"openid",
+	"email",
+	"profile",
+}
+
 // LoginResult is the output of a successful login flow.
 type LoginResult struct {
 	Session *Session
@@ -162,23 +168,57 @@ func Login(ctx context.Context, issuerURL, clientID string, scopes ...string) (*
 
 	// Try to decode ID token for user claims
 	if rawIDToken, ok := token.Extra("id_token").(string); ok {
-		session.IDToken = rawIDToken
-		if claims, err := decodeJWTClaims(rawIDToken); err == nil {
-			session.User.Name = claims.Name
-			session.User.Email = claims.Email
+		if err := applyIDTokenClaims(session, rawIDToken); err != nil {
+			return nil, err
 		}
 	}
+	if session.Subject == "" {
+		return nil, fmt.Errorf("id token missing subject claim")
+	}
+
 	applyTokenExtraEmailFallback(session, token)
 
 	return &LoginResult{Session: session}, nil
 }
 
-func resolveLoginScopes(scopes []string) []string {
-	if len(scopes) > 0 {
-		return append([]string(nil), scopes...)
+func applyIDTokenClaims(session *Session, rawIDToken string) error {
+	session.IDToken = rawIDToken
+	claims, err := decodeJWTClaims(rawIDToken)
+	if err != nil {
+		return err
 	}
 
-	return append([]string(nil), defaultLoginScopes...)
+	if claims.Subject == "" {
+		return fmt.Errorf("id token missing subject claim")
+	}
+	session.Subject = claims.Subject
+	session.User.Name = claims.Name
+	session.User.Email = claims.Email
+	return nil
+}
+
+func resolveLoginScopes(scopes []string) []string {
+	baseScopes := defaultLoginScopes
+	if len(scopes) > 0 {
+		baseScopes = identityLoginScopes
+	}
+
+	resolved := append([]string(nil), baseScopes...)
+	for _, scope := range scopes {
+		if !hasScope(resolved, scope) {
+			resolved = append(resolved, scope)
+		}
+	}
+	return resolved
+}
+
+func hasScope(scopes []string, scope string) bool {
+	for _, existing := range scopes {
+		if existing == scope {
+			return true
+		}
+	}
+	return false
 }
 
 func applyTokenExtraEmailFallback(session *Session, token *oauth2.Token) {
@@ -234,6 +274,9 @@ func Preflight(ctx context.Context) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, err := session.IdentityKey(); err != nil {
+		return nil, err
+	}
 
 	if !session.IsExpired() {
 		return session, nil
@@ -254,8 +297,9 @@ func Preflight(ctx context.Context) (*Session, error) {
 // --- helpers ---
 
 type jwtClaims struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	Subject string `json:"sub"`
+	Name    string `json:"name"`
+	Email   string `json:"email"`
 }
 
 // decodeJWTClaims decodes the payload of a JWT without verification.

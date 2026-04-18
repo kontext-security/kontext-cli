@@ -50,14 +50,15 @@ func Start(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	identity := session.User.Email
-	if identity == "" {
-		identity = session.User.Name
+	identityKey, err := session.IdentityKey()
+	if err != nil {
+		return err
 	}
-	if identity == "" {
-		identity = "authenticated"
+	if display := session.DisplayIdentity(); display != "" {
+		fmt.Fprintf(os.Stderr, "✓ Authenticated as %s\n", display)
+	} else {
+		fmt.Fprintln(os.Stderr, "✓ Authenticated")
 	}
-	fmt.Fprintf(os.Stderr, "✓ Authenticated as %s\n", identity)
 
 	// 2. Backend client — token source refreshes automatically on expiry
 	client := backend.NewClient(backend.BaseURL(), newSessionTokenSource(ctx, session))
@@ -66,7 +67,7 @@ func Start(ctx context.Context, opts Options) error {
 	hostname, _ := os.Hostname()
 	cwd, _ := os.Getwd()
 	createResp, err := client.CreateSession(ctx, &agentv1.CreateSessionRequest{
-		UserId:   identity,
+		UserId:   identityKey,
 		Agent:    opts.Agent,
 		Hostname: hostname,
 		Cwd:      cwd,
