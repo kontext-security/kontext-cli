@@ -2,10 +2,6 @@ version: 2
 
 project_name: kontext
 
-before:
-  hooks:
-    - go mod tidy
-
 builds:
   - main: ./cmd/kontext
     binary: kontext
@@ -34,17 +30,3 @@ changelog:
       - "^docs:"
       - "^ci:"
       - "^chore:"
-
-brews:
-  - repository:
-      owner: kontext-dev
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
-    homepage: "https://kontext.security"
-    description: "Identity, credentials, and governance for AI agents"
-    license: "MIT"
-    install: |
-      bin.install "kontext"
-    test: |
-      system "#{bin}/kontext", "--version"

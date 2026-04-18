@@ -8,9 +8,8 @@ import (
 	"net"
 )
 
-// EvaluateRequest is sent from kontext hook → sidecar over Unix socket.
 type EvaluateRequest struct {
-	Type         string          `json:"type"` // "evaluate"
+	Type         string          `json:"type"`
 	Agent        string          `json:"agent"`
 	HookEvent    string          `json:"hook_event"`
 	ToolName     string          `json:"tool_name"`
@@ -20,15 +19,12 @@ type EvaluateRequest struct {
 	CWD          string          `json:"cwd"`
 }
 
-// EvaluateResult is sent from sidecar → kontext hook.
 type EvaluateResult struct {
-	Type    string `json:"type"` // "result"
+	Type    string `json:"type"`
 	Allowed bool   `json:"allowed"`
 	Reason  string `json:"reason"`
 }
 
-// WriteMessage writes a length-prefixed JSON message to a connection.
-// Wire format: 4-byte big-endian length + JSON payload.
 func WriteMessage(conn net.Conn, v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -45,14 +41,13 @@ func WriteMessage(conn net.Conn, v any) error {
 	return nil
 }
 
-// ReadMessage reads a length-prefixed JSON message from a connection.
 func ReadMessage(conn net.Conn, v any) error {
 	var length uint32
 	if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
 		return fmt.Errorf("read length: %w", err)
 	}
 
-	if length > 10*1024*1024 { // 10MB safety limit
+	if length > 10*1024*1024 {
 		return fmt.Errorf("message too large: %d bytes", length)
 	}
 

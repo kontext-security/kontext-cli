@@ -12,8 +12,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	agentv1 "github.com/kontext-dev/kontext-cli/gen/kontext/agent/v1"
-	"github.com/kontext-dev/kontext-cli/gen/kontext/agent/v1/agentv1connect"
+	agentv1 "github.com/kontext-security/kontext-cli/gen/kontext/agent/v1"
+	"github.com/kontext-security/kontext-cli/gen/kontext/agent/v1/agentv1connect"
 )
 
 // TokenSource returns a valid access token, refreshing if necessary.
@@ -57,6 +57,15 @@ func (c *Client) CreateSession(ctx context.Context, req *agentv1.CreateSessionRe
 	resp, err := c.rpc.CreateSession(ctx, connect.NewRequest(req))
 	if err != nil {
 		return nil, fmt.Errorf("CreateSession: %w", err)
+	}
+	return resp.Msg, nil
+}
+
+// BootstrapCli prepares the shared CLI application for env template sync.
+func (c *Client) BootstrapCli(ctx context.Context, req *agentv1.BootstrapCliRequest) (*agentv1.BootstrapCliResponse, error) {
+	resp, err := c.rpc.BootstrapCli(ctx, connect.NewRequest(req))
+	if err != nil {
+		return nil, fmt.Errorf("BootstrapCli: %w", err)
 	}
 	return resp.Msg, nil
 }

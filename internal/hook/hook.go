@@ -1,6 +1,3 @@
-// Package hook handles the hook event lifecycle.
-// It reads hook events from stdin, evaluates them against the sidecar
-// (or directly against the backend), and writes decisions to stdout.
 package hook
 
 import (
@@ -8,41 +5,57 @@ import (
 	"io"
 	"os"
 
-	"github.com/kontext-dev/kontext-cli/internal/agent"
+	"github.com/kontext-security/kontext-cli/internal/agent"
 )
 
-// Run processes a single hook event. Called by `kontext hook --agent <name>`.
-// Reads JSON from stdin, decodes via the agent adapter, evaluates the event,
-// and writes the decision to stdout/stderr with the appropriate exit code.
 func Run(a agent.Agent, evaluate func(*agent.HookEvent) (bool, string, error)) {
-	input, err := io.ReadAll(os.Stdin)
+	os.Exit(run(os.Stdin, os.Stdout, os.Stderr, a, evaluate))
+}
+
+func run(stdin io.Reader, stdout, stderr io.Writer, a agent.Agent, evaluate func(*agent.HookEvent) (bool, string, error)) int {
+	input, err := io.ReadAll(stdin)
 	if err != nil {
-		// Fail-closed: deny on read error
-		fmt.Fprintf(os.Stderr, "kontext: failed to read stdin: %v", err)
-		os.Exit(2)
+		fmt.Fprintf(stderr, "kontext: failed to read stdin: %v\n", err)
+		return 2
 	}
 
 	event, err := a.DecodeHookInput(input)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "kontext: failed to decode hook input: %v", err)
-		os.Exit(2)
+		fmt.Fprintf(stderr, "kontext: failed to decode hook input: %v\n", err)
+		return 2
 	}
 
 	allowed, reason, err := evaluate(event)
 	if err != nil {
-		// Fail-closed: deny on evaluation error
-		fmt.Fprintf(os.Stderr, "kontext: evaluation error: %v", err)
-		os.Exit(2)
+		fmt.Fprintf(stderr, "kontext: evaluation error: %v\n", err)
+		return 2
 	}
 
 	if !allowed {
-		out, _ := a.EncodeDeny(event, reason)
-		os.Stderr.Write([]byte(fmt.Sprintf("Blocked by Kontext: %s", reason)))
-		os.Stdout.Write(out)
-		os.Exit(2)
+		out, err := a.EncodeDeny(event, reason)
+		if err != nil {
+			fmt.Fprintf(stderr, "kontext: failed to encode deny output: %v\n", err)
+			return 2
+		}
+		if _, err := fmt.Fprintf(stderr, "Blocked by Kontext: %s\n", reason); err != nil {
+			fmt.Fprintf(stderr, "kontext: failed to write deny message: %v\n", err)
+			return 2
+		}
+		if _, err := stdout.Write(out); err != nil {
+			fmt.Fprintf(stderr, "kontext: failed to write hook output: %v\n", err)
+			return 2
+		}
+		return 2
 	}
 
-	out, _ := a.EncodeAllow(event, reason)
-	os.Stdout.Write(out)
-	os.Exit(0)
+	out, err := a.EncodeAllow(event, reason)
+	if err != nil {
+		fmt.Fprintf(stderr, "kontext: failed to encode allow output: %v\n", err)
+		return 2
+	}
+	if _, err := stdout.Write(out); err != nil {
+		fmt.Fprintf(stderr, "kontext: failed to write hook output: %v\n", err)
+		return 2
+	}
+	return 0
 }

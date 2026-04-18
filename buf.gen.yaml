@@ -3,10 +3,11 @@ managed:
   enabled: true
   override:
     - file_option: go_package_prefix
-      value: github.com/kontext-dev/kontext-cli/gen
+      value: github.com/kontext-security/kontext-cli/gen
 inputs:
-  - git_repo: https://github.com/kontext-dev/proto.git
+  - git_repo: https://github.com/kontext-security/proto.git
     branch: main
+    ref: ba2b704abfde23ec2c30bfd2b5c540a91a674f41
 plugins:
   - local: protoc-gen-go
     out: gen
