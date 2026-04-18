@@ -20,6 +20,7 @@ import (
 
 	"github.com/kontext-security/kontext-cli/internal/auth"
 	"github.com/kontext-security/kontext-cli/internal/credential"
+	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 )
 
 func TestFilterArgs(t *testing.T) {
@@ -516,6 +517,60 @@ func TestFetchConnectURLWithGatewayLoginFallbackRejectsAccountMismatch(t *testin
 	}
 	if tokenExchangeCalls != 1 {
 		t.Fatalf("tokenExchangeCalls = %d, want only stale-token attempt", tokenExchangeCalls)
+	}
+}
+
+func TestResolveCredentialsReturnsIdentityMismatchError(t *testing.T) {
+	t.Parallel()
+
+	fakeFetcher := func(
+		ctx context.Context,
+		session *auth.Session,
+		credentialClientID string,
+		interactive bool,
+		login loginFunc,
+	) (string, error) {
+		return "", &identityMismatchError{
+			activeLabel:  "active@example.com",
+			browserLabel: "browser@example.com",
+		}
+	}
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"issuer":"%s","authorization_endpoint":"%s/oauth2/auth","token_endpoint":"%s/oauth2/token","jwks_uri":"%s/.well-known/jwks.json"}`, server.URL, server.URL, server.URL, server.URL)))
+		case "/oauth2/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"error":"provider_required","error_description":"User has not configured provider 'Linear Stub'","failure_reason":"disconnected_or_reauth_required","provider_name":"Linear Stub","provider_id":"provider-linear"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	session := &auth.Session{
+		IssuerURL:   server.URL,
+		AccessToken: "test-access-token",
+	}
+
+	_, err := resolveCredentials(
+		context.Background(),
+		session,
+		[]credential.Entry{{EnvVar: "LINEAR_API_KEY", Provider: "linear"}},
+		"app_agent-123",
+		diagnostic.New(io.Discard, false),
+		fakeFetcher,
+	)
+	if err == nil {
+		t.Fatal("resolveCredentials() error = nil, want mismatch")
+	}
+
+	var mismatch *identityMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("resolveCredentials() error = %T, want *identityMismatchError", err)
 	}
 }
 
