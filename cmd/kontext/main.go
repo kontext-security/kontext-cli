@@ -53,7 +53,7 @@ func startCmd() *cobra.Command {
 		Use:   "start [flags] [-- extra-agent-args...]",
 		Short: "Launch an agent with Kontext governance",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if isInteractiveStdin() {
+			if isInteractivePrompt() {
 				if latest := update.Available(version); latest != "" {
 					upgraded, _ := update.PromptAndUpgrade(os.Stdin, os.Stderr, version, latest)
 					if upgraded {
@@ -228,8 +228,16 @@ func marshalJSON(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-func isInteractiveStdin() bool {
-	info, err := os.Stdin.Stat()
+// isInteractivePrompt reports whether both stdin (where the answer is read)
+// and stderr (where the prompt is written) are terminals. If either is
+// redirected, the user cannot meaningfully answer the prompt, so we fall
+// back to the passive async notification.
+func isInteractivePrompt() bool {
+	return isCharDevice(os.Stdin) && isCharDevice(os.Stderr)
+}
+
+func isCharDevice(f *os.File) bool {
+	info, err := f.Stat()
 	if err != nil {
 		return false
 	}
