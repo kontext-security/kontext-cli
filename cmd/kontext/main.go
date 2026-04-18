@@ -46,6 +46,7 @@ func startCmd() *cobra.Command {
 	var (
 		agentName    string
 		templateFile string
+		verbose      bool
 	)
 
 	cmd := &cobra.Command{
@@ -59,6 +60,7 @@ func startCmd() *cobra.Command {
 				TemplateFile: templateFile,
 				IssuerURL:    auth.DefaultIssuerURL,
 				ClientID:     auth.DefaultClientID,
+				Verbose:      verbose,
 				Args:         args,
 			})
 			if exitErr, ok := err.(*run.AgentExitError); ok {
@@ -71,6 +73,7 @@ func startCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&agentName, "agent", "claude", "Agent to launch (currently: claude)")
 	cmd.Flags().StringVar(&templateFile, "env-template", ".env.kontext", "Path to env template file")
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "Show redacted diagnostic output")
 
 	return cmd
 }

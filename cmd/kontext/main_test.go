@@ -29,6 +29,17 @@ func TestLogoutCmdSuccess(t *testing.T) {
 	}
 }
 
+func TestStartCmdHasVerboseFlag(t *testing.T) {
+	cmd := startCmd()
+	flag := cmd.Flags().Lookup("verbose")
+	if flag == nil {
+		t.Fatal("start command missing --verbose flag")
+	}
+	if flag.DefValue != "false" {
+		t.Fatalf("--verbose default = %q, want false", flag.DefValue)
+	}
+}
+
 func TestLogoutCmdAlreadyLoggedOut(t *testing.T) {
 	cmd := newLogoutCmd(func() error { return keyring.ErrNotFound })
 

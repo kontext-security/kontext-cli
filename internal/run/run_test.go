@@ -128,6 +128,23 @@ func TestFindExecutableDistinguishesMissing(t *testing.T) {
 	}
 }
 
+func TestCredentialFailureSummaryHidesRawDetails(t *testing.T) {
+	t.Parallel()
+
+	err := &credentialResolutionError{
+		Reason:  failureTransient,
+		Message: "Authorization: Bearer secret-token",
+	}
+	if got := credentialFailureSummary(err); got != "temporary exchange error" {
+		t.Fatalf("credentialFailureSummary() = %q, want temporary exchange error", got)
+	}
+
+	rawErr := errors.New("code=secret-code")
+	if got := credentialFailureSummary(rawErr); got != "run with --verbose for details" {
+		t.Fatalf("credentialFailureSummary(raw) = %q, want verbose hint", got)
+	}
+}
+
 func TestLaunchAgentWithSettingsReturnsAgentExitError(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {

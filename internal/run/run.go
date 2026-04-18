@@ -28,6 +28,7 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/auth"
 	"github.com/kontext-security/kontext-cli/internal/backend"
 	"github.com/kontext-security/kontext-cli/internal/credential"
+	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/sidecar"
 )
 
@@ -37,15 +38,20 @@ type Options struct {
 	TemplateFile string
 	IssuerURL    string
 	ClientID     string
+	Verbose      bool
 	Args         []string
 }
 
 // Start is the main entry point for `kontext start`.
 func Start(ctx context.Context, opts Options) error {
+	diagnostics := diagnostic.New(os.Stderr, opts.Verbose || diagnostic.EnabledFromEnv())
+	diagnostics.Printf("start: agent=%s env_template=%s\n", opts.Agent, opts.TemplateFile)
+
 	agentPath, err := preflightAgent(opts.Agent)
 	if err != nil {
 		return err
 	}
+	diagnostics.Printf("agent preflight: %s -> %s\n", opts.Agent, agentPath)
 
 	// 1. Auth
 	session, err := ensureSession(ctx, opts.IssuerURL, opts.ClientID)
@@ -63,7 +69,7 @@ func Start(ctx context.Context, opts Options) error {
 	}
 
 	// 2. Backend client — token source refreshes automatically on expiry
-	client := backend.NewClient(backend.BaseURL(), newSessionTokenSource(ctx, session))
+	client := backend.NewClient(backend.BaseURL(), newSessionTokenSource(ctx, session, diagnostics))
 
 	// 3. Create session via ConnectRPC
 	hostname, _ := os.Hostname()
@@ -114,7 +120,8 @@ func Start(ctx context.Context, opts Options) error {
 
 	var templateDoc *credential.TemplateFile
 	if bootstrapErr != nil {
-		fmt.Fprintf(os.Stderr, "⚠ Provider sync skipped (%v)\n", bootstrapErr)
+		diagnostics.Printf("provider sync skipped: %v\n", bootstrapErr)
+		fmt.Fprintln(os.Stderr, "⚠ Provider sync skipped; using the local env template.")
 		templateDoc, err = credential.LoadTemplateFile(opts.TemplateFile)
 		if err != nil {
 			return fmt.Errorf("load env template: %w", err)
@@ -177,7 +184,7 @@ func Start(ctx context.Context, opts Options) error {
 	//    so reading session fields is safe without synchronization)
 	var resolved []credential.Resolved
 	if len(templateDoc.Entries) > 0 {
-		resolved, err = resolveCredentials(ctx, session, templateDoc.Entries, credentialClientID)
+		resolved, err = resolveCredentials(ctx, session, templateDoc.Entries, credentialClientID, diagnostics)
 		if err != nil {
 			return err
 		}
@@ -266,7 +273,7 @@ func ensureSession(ctx context.Context, issuerURL, clientID string) (*auth.Sessi
 }
 
 // resolveCredentials exchanges each template entry for a live credential.
-func resolveCredentials(ctx context.Context, session *auth.Session, entries []credential.Entry, credentialClientID string) ([]credential.Resolved, error) {
+func resolveCredentials(ctx context.Context, session *auth.Session, entries []credential.Entry, credentialClientID string, diagnostics diagnostic.Logger) ([]credential.Resolved, error) {
 	fmt.Fprintln(os.Stderr, "\nResolving credentials...")
 	resolved := make([]credential.Resolved, 0, len(entries))
 	failures := make(map[string]error)
@@ -277,7 +284,8 @@ func resolveCredentials(ctx context.Context, session *auth.Session, entries []cr
 		fmt.Fprintf(os.Stderr, "  %s (%s)... ", entry.EnvVar, entry.Target())
 		value, err := exchangeCredential(ctx, session, entry, credentialClientID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "⚠ skipped (%v)\n", err)
+			diagnostics.Printf("credential %s exchange failed: %v\n", entry.EnvVar, err)
+			fmt.Fprintf(os.Stderr, "⚠ skipped (%s)\n", credentialFailureSummary(err))
 			failures[entry.EnvVar] = err
 			continue
 		}
@@ -287,7 +295,7 @@ func resolveCredentials(ctx context.Context, session *auth.Session, entries []cr
 
 	connectable := unresolvedConnectableEntries(entryByEnvVar, failures)
 	if len(connectable) == 0 {
-		printLaunchWarnings(entryByEnvVar, failures)
+		printLaunchWarnings(entryByEnvVar, failures, diagnostics)
 		return resolved, nil
 	}
 
@@ -300,11 +308,12 @@ func resolveCredentials(ctx context.Context, session *auth.Session, entries []cr
 		auth.Login,
 	)
 	if connectErr != nil {
+		diagnostics.Printf("hosted connect session failed: %v\n", connectErr)
 		if !interactive && needsGatewayAccessReauthentication(connectErr) {
 			fmt.Fprintln(os.Stderr, "⚠ Non-interactive session detected. Re-run `kontext start` in an interactive terminal to authorize hosted connect.")
 		}
-		fmt.Fprintf(os.Stderr, "⚠ Could not create hosted connect session (%v)\n", connectErr)
-		printLaunchWarnings(entryByEnvVar, failures)
+		fmt.Fprintf(os.Stderr, "⚠ Could not create hosted connect session (%s)\n", connectFailureSummary(connectErr))
+		printLaunchWarnings(entryByEnvVar, failures, diagnostics)
 		return resolved, nil
 	}
 
@@ -314,13 +323,14 @@ func resolveCredentials(ctx context.Context, session *auth.Session, entries []cr
 
 	if !interactive {
 		fmt.Fprintln(os.Stderr, "⚠ Non-interactive session detected. Open this URL in a browser, then rerun `kontext start`.")
-		printLaunchWarnings(entryByEnvVar, failures)
+		printLaunchWarnings(entryByEnvVar, failures, diagnostics)
 		return resolved, nil
 	}
 
 	fmt.Fprintf(os.Stderr, "  Opening browser to connect %s...\n", providerList)
 	if err := browser.OpenURL(connectURL); err != nil {
-		fmt.Fprintf(os.Stderr, "  ⚠ Could not open browser automatically (%v)\n", err)
+		diagnostics.Printf("hosted connect browser open failed: %v\n", err)
+		fmt.Fprintln(os.Stderr, "  ⚠ Could not open browser automatically.")
 		fmt.Fprintln(os.Stderr, "  Open the URL above to continue.")
 	}
 	fmt.Fprint(os.Stderr, "  Press Enter after connecting...")
@@ -331,6 +341,7 @@ func resolveCredentials(ctx context.Context, session *auth.Session, entries []cr
 		session,
 		connectable,
 		credentialClientID,
+		diagnostics,
 	)
 	resolved = append(resolved, retriedResolved...)
 	for _, entry := range connectable {
@@ -341,7 +352,7 @@ func resolveCredentials(ctx context.Context, session *auth.Session, entries []cr
 		delete(failures, entry.EnvVar)
 	}
 
-	printLaunchWarnings(entryByEnvVar, failures)
+	printLaunchWarnings(entryByEnvVar, failures, diagnostics)
 	return resolved, nil
 }
 
@@ -369,6 +380,7 @@ func retryConnectableCredentials(
 	session *auth.Session,
 	entries []credential.Entry,
 	credentialClientID string,
+	diagnostics diagnostic.Logger,
 ) ([]credential.Resolved, map[string]error) {
 	attemptDelays := []time.Duration{0, 3 * time.Second, 7 * time.Second}
 	pending := make(map[string]credential.Entry, len(entries))
@@ -396,7 +408,8 @@ func retryConnectableCredentials(
 			)
 			value, err := exchangeCredential(ctx, session, entry, credentialClientID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "⚠ skipped (%v)\n", err)
+				diagnostics.Printf("credential %s retry failed: %v\n", entry.EnvVar, err)
+				fmt.Fprintf(os.Stderr, "⚠ skipped (%s)\n", credentialFailureSummary(err))
 				failures[envVar] = err
 				continue
 			}
@@ -410,7 +423,33 @@ func retryConnectableCredentials(
 	return resolved, failures
 }
 
-func printLaunchWarnings(entryByEnvVar map[string]credential.Entry, failures map[string]error) {
+func credentialFailureSummary(err error) string {
+	var resolutionErr *credentialResolutionError
+	if errors.As(err, &resolutionErr) {
+		switch resolutionErr.Reason {
+		case failureDisconnected:
+			return "provider needs connection"
+		case failureNotAttached:
+			return "provider is not attached"
+		case failureUnknown:
+			return "unknown provider"
+		case failureInvalid:
+			return "invalid placeholder"
+		case failureTransient:
+			return "temporary exchange error"
+		}
+	}
+	return "run with --verbose for details"
+}
+
+func connectFailureSummary(err error) string {
+	if needsGatewayAccessReauthentication(err) {
+		return "gateway access needs authorization"
+	}
+	return "run with --verbose for details"
+}
+
+func printLaunchWarnings(entryByEnvVar map[string]credential.Entry, failures map[string]error, diagnostics diagnostic.Logger) {
 	if len(failures) == 0 {
 		return
 	}
@@ -445,12 +484,14 @@ func printLaunchWarnings(entryByEnvVar map[string]credential.Entry, failures map
 				)
 				skipped = append(skipped, entry.Provider)
 			default:
-				fmt.Fprintf(os.Stderr, "⚠ %s was skipped (%v)\n", entry.EnvVar, err)
+				diagnostics.Printf("credential %s skipped: %v\n", entry.EnvVar, err)
+				fmt.Fprintf(os.Stderr, "⚠ %s was skipped (%s)\n", entry.EnvVar, credentialFailureSummary(err))
 			}
 			continue
 		}
 
-		fmt.Fprintf(os.Stderr, "⚠ %s was skipped (%v)\n", entry.EnvVar, err)
+		diagnostics.Printf("credential %s skipped: %v\n", entry.EnvVar, err)
+		fmt.Fprintf(os.Stderr, "⚠ %s was skipped (%s)\n", entry.EnvVar, credentialFailureSummary(err))
 	}
 
 	if len(skipped) > 0 {
@@ -794,7 +835,7 @@ func supportedAgents() []string {
 
 // newSessionTokenSource returns a TokenSource that transparently refreshes
 // the OIDC access token when it expires, so long-running sessions keep working.
-func newSessionTokenSource(ctx context.Context, session *auth.Session) backend.TokenSource {
+func newSessionTokenSource(ctx context.Context, session *auth.Session, diagnostics diagnostic.Logger) backend.TokenSource {
 	mu := &sync.Mutex{}
 	return func() (string, error) {
 		mu.Lock()
@@ -811,7 +852,8 @@ func newSessionTokenSource(ctx context.Context, session *auth.Session) backend.T
 
 		// Persist so other processes (and the next `kontext start`) see the new token
 		if saveErr := auth.SaveSession(refreshed); saveErr != nil {
-			fmt.Fprintf(os.Stderr, "⚠ Could not persist refreshed session: %v\n", saveErr)
+			diagnostics.Printf("persist refreshed session failed: %v\n", saveErr)
+			fmt.Fprintln(os.Stderr, "⚠ Could not persist refreshed session.")
 		}
 
 		// Update the shared session pointer for subsequent calls
