@@ -198,7 +198,7 @@ func Start(ctx context.Context, opts Options) error {
 		return fmt.Errorf("create session dir: %w", err)
 	}
 
-	sc, err := sidecar.New(sessionDir, client, sessionID, opts.Agent)
+	sc, err := sidecar.New(sessionDir, client, sessionID, opts.Agent, diagnostics)
 	if err != nil {
 		return fmt.Errorf("sidecar: %w", err)
 	}

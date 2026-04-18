@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/kontext-security/kontext-cli/internal/agent"
 )
@@ -57,7 +58,7 @@ func (c *Claude) EncodeAllow(event *agent.HookEvent, reason string) ([]byte, err
 		HookSpecificOutput: &hookSpecificOutput{
 			HookEventName:            event.HookEventName,
 			PermissionDecision:       "allow",
-			PermissionDecisionReason: reason,
+			PermissionDecisionReason: allowReason(reason),
 		},
 	}
 	return json.Marshal(out)
@@ -72,4 +73,11 @@ func (c *Claude) EncodeDeny(event *agent.HookEvent, reason string) ([]byte, erro
 		},
 	}
 	return json.Marshal(out)
+}
+
+func allowReason(reason string) string {
+	if strings.EqualFold(strings.TrimSpace(reason), "allowed") {
+		return ""
+	}
+	return reason
 }
