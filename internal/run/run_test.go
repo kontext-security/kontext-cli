@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/auth"
 	"github.com/kontext-security/kontext-cli/internal/credential"
@@ -1021,6 +1022,52 @@ func TestEndManagedSessionEndsTheManagedSession(t *testing.T) {
 	}
 	if got := output.String(); !strings.Contains(got, "Session ended") {
 		t.Fatalf("output = %q, want session-ended message", got)
+	}
+}
+
+func TestShouldRefreshSessionUsesProactiveWindow(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		expiresAt    time.Time
+		forceRefresh bool
+		want         bool
+	}{
+		{
+			name:      "outside proactive window",
+			expiresAt: now.Add(proactiveRefreshWindow + time.Second),
+			want:      false,
+		},
+		{
+			name:      "inside proactive window",
+			expiresAt: now.Add(proactiveRefreshWindow - time.Second),
+			want:      true,
+		},
+		{
+			name:      "at proactive window",
+			expiresAt: now.Add(proactiveRefreshWindow),
+			want:      true,
+		},
+		{
+			name:         "forced refresh",
+			expiresAt:    now.Add(time.Hour),
+			forceRefresh: true,
+			want:         true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			session := &auth.Session{ExpiresAt: tt.expiresAt}
+			got := shouldRefreshSession(session, tt.forceRefresh, now)
+			if got != tt.want {
+				t.Fatalf("shouldRefreshSession() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

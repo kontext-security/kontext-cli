@@ -32,6 +32,8 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/sidecar"
 )
 
+const proactiveRefreshWindow = 15 * time.Minute
+
 // Options configures a kontext start run.
 type Options struct {
 	Agent        string
@@ -902,20 +904,24 @@ func supportedAgents() []string {
 
 // newSessionTokenSource returns a TokenSource that transparently refreshes
 // the OIDC access token when it expires, so long-running sessions keep working.
+// If forceRefresh is true, the token is refreshed unconditionally (used by
+// the transport layer after receiving a 401 from the server).
 func newSessionTokenSource(ctx context.Context, session *auth.Session, diagnostics diagnostic.Logger) backend.TokenSource {
 	mu := &sync.Mutex{}
-	return func() (string, error) {
+	return func(forceRefresh bool) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 
-		if !session.IsExpired() {
+		if !shouldRefreshSession(session, forceRefresh, time.Now()) {
 			return session.AccessToken, nil
 		}
 
 		refreshed, err := auth.RefreshSession(ctx, session)
 		if err != nil {
-			return "", fmt.Errorf("token expired and refresh failed: %w", err)
+			return "", fmt.Errorf("token refresh failed: %w", err)
 		}
+
+		fmt.Fprintf(os.Stderr, "✓ Token refreshed\n")
 
 		// Persist so other processes (and the next `kontext start`) see the new token
 		if saveErr := auth.SaveSession(refreshed); saveErr != nil {
@@ -927,6 +933,10 @@ func newSessionTokenSource(ctx context.Context, session *auth.Session, diagnosti
 		*session = *refreshed
 		return session.AccessToken, nil
 	}
+}
+
+func shouldRefreshSession(session *auth.Session, forceRefresh bool, now time.Time) bool {
+	return forceRefresh || !now.Before(session.ExpiresAt.Add(-proactiveRefreshWindow))
 }
 
 func preflightAgent(agentName string) (string, error) {

@@ -17,7 +17,9 @@ import (
 )
 
 // TokenSource returns a valid access token, refreshing if necessary.
-type TokenSource func() (string, error)
+// If forceRefresh is true, the source must obtain a new token regardless of
+// whether the cached one appears valid (used for retry-on-401).
+type TokenSource func(forceRefresh bool) (string, error)
 
 // Client wraps the ConnectRPC AgentService client.
 type Client struct {
@@ -39,7 +41,7 @@ func NewClient(baseURL string, ts TokenSource) *Client {
 // StaticToken returns a TokenSource that always returns the same token.
 // Useful for tests or short-lived commands.
 func StaticToken(token string) TokenSource {
-	return func() (string, error) { return token, nil }
+	return func(_ bool) (string, error) { return token, nil }
 }
 
 // BaseURL returns the API base URL from env or default.
@@ -94,17 +96,47 @@ func (c *Client) IngestEvent(ctx context.Context, req *agentv1.ProcessHookEventR
 }
 
 // bearerTransport fetches a fresh token for every outgoing request.
+// On 401, it forces a token refresh and retries once.
 type bearerTransport struct {
 	tokenSource TokenSource
 	base        http.RoundTripper
 }
 
 func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	token, err := t.tokenSource()
+	token, err := t.tokenSource(false)
 	if err != nil {
 		return nil, fmt.Errorf("token refresh: %w", err)
 	}
+
 	r := req.Clone(req.Context())
 	r.Header.Set("Authorization", "Bearer "+token)
-	return t.base.RoundTrip(r)
+	resp, err := t.base.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+
+	// Retry once with a forced refresh on 401 — the cached token may be
+	// stale even though IsExpired() said it was fine (server-side revocation,
+	// clock skew, Hydra TTL mismatch, etc.).
+	if resp.StatusCode == http.StatusUnauthorized {
+		if req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
+			return resp, nil
+		}
+		resp.Body.Close()
+		token, err = t.tokenSource(true)
+		if err != nil {
+			return nil, fmt.Errorf("token refresh (retry): %w", err)
+		}
+		r2 := req.Clone(req.Context())
+		if req.GetBody != nil {
+			r2.Body, err = req.GetBody()
+			if err != nil {
+				return nil, fmt.Errorf("reset request body for 401 retry: %w", err)
+			}
+		}
+		r2.Header.Set("Authorization", "Bearer "+token)
+		return t.base.RoundTrip(r2)
+	}
+
+	return resp, nil
 }
