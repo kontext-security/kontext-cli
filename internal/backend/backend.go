@@ -119,12 +119,21 @@ func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// stale even though IsExpired() said it was fine (server-side revocation,
 	// clock skew, Hydra TTL mismatch, etc.).
 	if resp.StatusCode == http.StatusUnauthorized {
+		if req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
+			return resp, nil
+		}
 		resp.Body.Close()
 		token, err = t.tokenSource(true)
 		if err != nil {
 			return nil, fmt.Errorf("token refresh (retry): %w", err)
 		}
 		r2 := req.Clone(req.Context())
+		if req.GetBody != nil {
+			r2.Body, err = req.GetBody()
+			if err != nil {
+				return nil, fmt.Errorf("reset request body for 401 retry: %w", err)
+			}
+		}
 		r2.Header.Set("Authorization", "Bearer "+token)
 		return t.base.RoundTrip(r2)
 	}
