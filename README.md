@@ -101,6 +101,7 @@ Provider setup and trace review live in the hosted dashboard at [app.kontext.sec
 | Agent | Flag | Status |
 | --- | --- | --- |
 | Claude Code | `--agent claude` | Active |
+| Hermes Agent | `--agent hermes` | Active |
 
 Cursor and Codex support are planned, but they are not shipped in this repo yet.
 
