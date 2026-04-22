@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/sidecar"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 type handler struct {
@@ -90,4 +92,37 @@ func (h *handler) sendHook(ctx context.Context, eventName string, toolInput, too
 		return false, "read", err
 	}
 	return res.Allowed, res.Reason, nil
+}
+
+// Run starts an MCP server over stdio. Blocks until stdin is closed.
+func Run(ctx context.Context, agentName, socketPath, sessionID string) error {
+	h := newHandler(agentName, socketPath, sessionID)
+
+	s := server.NewMCPServer("kontext", "0.1.0")
+
+	tool := mcp.NewTool("kontext.invoke",
+		mcp.WithDescription("Invoke a kontext provider action through the sidecar governance bridge"),
+		mcp.WithString("provider",
+			mcp.Required(),
+			mcp.Description("The provider to invoke (e.g. github, jira)"),
+		),
+		mcp.WithString("action",
+			mcp.Required(),
+			mcp.Description("The action to perform on the provider"),
+		),
+		mcp.WithObject("params",
+			mcp.Description("Optional parameters for the action"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := req.GetArguments()
+		result, err := h.invoke(ctx, args)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(result), nil
+	})
+
+	return server.ServeStdio(s)
 }
