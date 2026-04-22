@@ -20,6 +20,7 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/update"
 
 	_ "github.com/kontext-security/kontext-cli/internal/agent/claude"
+	_ "github.com/kontext-security/kontext-cli/internal/agent/hermes"
 )
 
 var version = "dev"
@@ -81,7 +82,7 @@ func startCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&agentName, "agent", "claude", "Agent to launch (currently: claude)")
+	cmd.Flags().StringVar(&agentName, "agent", "claude", "Agent to launch (claude, hermes)")
 	cmd.Flags().StringVar(&templateFile, "env-template", ".env.kontext", "Path to env template file")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Show redacted diagnostic output")
 
