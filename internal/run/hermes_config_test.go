@@ -15,7 +15,7 @@ func TestWriteHermesEnv(t *testing.T) {
 		{Entry: credential.Entry{EnvVar: "GITHUB_TOKEN"}, Value: "ghs_abc"},
 		{Entry: credential.Entry{EnvVar: "LINEAR_API_KEY"}, Value: "lin_xyz"},
 	}
-	if err := writeHermesEnv(dir, resolved); err != nil {
+	if err := writeHermesEnv(dir, "", resolved); err != nil {
 		t.Fatalf("writeHermesEnv: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, ".env"))
@@ -29,6 +29,67 @@ func TestWriteHermesEnv(t *testing.T) {
 	if !containsLine(got, `LINEAR_API_KEY=lin_xyz`) {
 		t.Errorf(".env missing LINEAR_API_KEY line: %q", got)
 	}
+}
+
+func TestWriteHermesEnv_MergesBase(t *testing.T) {
+	baseDir := t.TempDir()
+	basePath := filepath.Join(baseDir, ".env")
+	base := []byte("ANTHROPIC_TOKEN=sk-ant-oat01-user\nHERMES_LOG_LEVEL=debug\n")
+	if err := os.WriteFile(basePath, base, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	resolved := []credential.Resolved{
+		{Entry: credential.Entry{EnvVar: "GITHUB_TOKEN"}, Value: "ghs_abc"},
+	}
+	if err := writeHermesEnv(dir, basePath, resolved); err != nil {
+		t.Fatalf("writeHermesEnv: %v", err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, ".env"))
+	got := string(b)
+	if !containsLine(got, `ANTHROPIC_TOKEN=sk-ant-oat01-user`) {
+		t.Errorf("base ANTHROPIC_TOKEN not preserved: %q", got)
+	}
+	if !containsLine(got, `HERMES_LOG_LEVEL=debug`) {
+		t.Errorf("base HERMES_LOG_LEVEL not preserved: %q", got)
+	}
+	if !containsLine(got, `GITHUB_TOKEN=ghs_abc`) {
+		t.Errorf("kontext GITHUB_TOKEN missing: %q", got)
+	}
+}
+
+func TestWriteHermesEnv_KontextWinsOnConflict(t *testing.T) {
+	baseDir := t.TempDir()
+	basePath := filepath.Join(baseDir, ".env")
+	if err := os.WriteFile(basePath, []byte("GITHUB_TOKEN=stale_value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	resolved := []credential.Resolved{
+		{Entry: credential.Entry{EnvVar: "GITHUB_TOKEN"}, Value: "fresh_value"},
+	}
+	if err := writeHermesEnv(dir, basePath, resolved); err != nil {
+		t.Fatalf("writeHermesEnv: %v", err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, ".env"))
+	got := string(b)
+	// Kontext value must appear after the base value so last-wins dotenv semantics apply.
+	baseIdx := indexOfLine(got, "GITHUB_TOKEN=stale_value")
+	freshIdx := indexOfLine(got, "GITHUB_TOKEN=fresh_value")
+	if freshIdx <= baseIdx || freshIdx == -1 {
+		t.Errorf("kontext value should appear after base value; base=%d fresh=%d content=%q", baseIdx, freshIdx, got)
+	}
+}
+
+func indexOfLine(haystack, needle string) int {
+	idx := 0
+	for _, line := range splitLines(haystack) {
+		if line == needle {
+			return idx
+		}
+		idx++
+	}
+	return -1
 }
 
 func containsLine(haystack, needle string) bool {

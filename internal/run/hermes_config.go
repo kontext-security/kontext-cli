@@ -11,17 +11,30 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// writeHermesEnv writes resolved credentials into <dir>/.env in KEY=VALUE form,
-// sorted by env var name for deterministic output. Values that contain
-// whitespace, '#', or quotes are wrapped in double quotes with escaping.
-func writeHermesEnv(dir string, resolved []credential.Resolved) error {
+// writeHermesEnv writes <dir>/.env. If basePath is non-empty and exists, its
+// contents are copied verbatim first (preserving the user's Hermes-managed
+// tokens like ANTHROPIC_TOKEN). Kontext-resolved credentials are appended
+// after, so they take precedence for any overlapping keys under last-wins
+// dotenv semantics. Kontext entries are sorted for deterministic output.
+func writeHermesEnv(dir, basePath string, resolved []credential.Resolved) error {
+	var b strings.Builder
+
+	if basePath != "" {
+		if data, err := os.ReadFile(basePath); err == nil {
+			b.Write(data)
+			if len(data) > 0 && data[len(data)-1] != '\n' {
+				b.WriteByte('\n')
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("read base hermes env: %w", err)
+		}
+	}
+
 	entries := make([]credential.Resolved, len(resolved))
 	copy(entries, resolved)
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].EnvVar < entries[j].EnvVar
 	})
-
-	var b strings.Builder
 	for _, r := range entries {
 		fmt.Fprintf(&b, "%s=%s\n", r.EnvVar, dotenvQuote(r.Value))
 	}
@@ -105,13 +118,15 @@ func BuildHermesHome(parentDir, kontextBin, socketPath, sessionID string, resolv
 		return "", fmt.Errorf("create hermes home: %w", err)
 	}
 
-	if err := writeHermesEnv(dir, resolved); err != nil {
-		return "", err
+	baseEnvPath := ""
+	baseConfigPath := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		baseEnvPath = filepath.Join(home, ".hermes", ".env")
+		baseConfigPath = filepath.Join(home, ".hermes", "config.yaml")
 	}
 
-	basePath := ""
-	if home, err := os.UserHomeDir(); err == nil {
-		basePath = filepath.Join(home, ".hermes", "config.yaml")
+	if err := writeHermesEnv(dir, baseEnvPath, resolved); err != nil {
+		return "", err
 	}
 
 	passthrough := make([]string, 0, len(resolved))
@@ -119,7 +134,7 @@ func BuildHermesHome(parentDir, kontextBin, socketPath, sessionID string, resolv
 		passthrough = append(passthrough, r.EnvVar)
 	}
 
-	if err := writeHermesConfig(dir, basePath, kontextBin, socketPath, sessionID, passthrough); err != nil {
+	if err := writeHermesConfig(dir, baseConfigPath, kontextBin, socketPath, sessionID, passthrough); err != nil {
 		return "", err
 	}
 	return dir, nil
