@@ -15,8 +15,20 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/credential"
 )
 
+const (
+	kontextScheme   = "kontext"
+	bitwardenScheme = "bitwarden"
+)
+
+type credentialResolver interface {
+	Resolve(context.Context, credential.Entry) (string, error)
+	UnresolvedConnectableEntries(map[string]credential.Entry, map[string]error) []credential.Entry
+	ConnectAndRetry(context.Context, []credential.Entry) ([]credential.Resolved, map[string]error)
+	PrintLaunchWarnings(map[string]credential.Entry, map[string]error)
+}
+
 type credentialResolverSet struct {
-	kontext *kontextCredentialResolver
+	resolvers map[string]credentialResolver
 }
 
 func newCredentialResolverSet(
@@ -32,10 +44,13 @@ func newCredentialResolverSetWithFetcher(
 	fetchConnect connectURLFetcher,
 ) *credentialResolverSet {
 	return &credentialResolverSet{
-		kontext: &kontextCredentialResolver{
-			session:            session,
-			credentialClientID: credentialClientID,
-			fetchConnectURL:    fetchConnect,
+		resolvers: map[string]credentialResolver{
+			kontextScheme: &kontextCredentialResolver{
+				session:            session,
+				credentialClientID: credentialClientID,
+				fetchConnectURL:    fetchConnect,
+			},
+			bitwardenScheme: &bitwardenCredentialResolver{},
 		},
 	}
 }
@@ -44,28 +59,74 @@ func (s *credentialResolverSet) resolve(
 	ctx context.Context,
 	entry credential.Entry,
 ) (string, error) {
-	return s.kontext.Resolve(ctx, entry)
+	return s.resolverFor(entry).Resolve(ctx, entry)
 }
 
 func (s *credentialResolverSet) unresolvedConnectableEntries(
 	entryByEnvVar map[string]credential.Entry,
 	failures map[string]error,
 ) []credential.Entry {
-	return s.kontext.UnresolvedConnectableEntries(entryByEnvVar, failures)
+	var entries []credential.Entry
+	for scheme, resolver := range s.resolvers {
+		schemeEntries := filterEntriesByScheme(entryByEnvVar, scheme)
+		schemeFailures := filterFailuresByScheme(entryByEnvVar, failures, scheme)
+		entries = append(entries, resolver.UnresolvedConnectableEntries(schemeEntries, schemeFailures)...)
+	}
+	slices.SortFunc(entries, func(a, b credential.Entry) int {
+		return strings.Compare(a.EnvVar, b.EnvVar)
+	})
+	return entries
 }
 
 func (s *credentialResolverSet) connectAndRetry(
 	ctx context.Context,
 	entries []credential.Entry,
 ) ([]credential.Resolved, map[string]error) {
-	return s.kontext.ConnectAndRetry(ctx, entries)
+	resolved := make([]credential.Resolved, 0, len(entries))
+	failures := make(map[string]error)
+	for scheme, grouped := range groupEntriesByScheme(entries) {
+		groupResolved, groupFailures := s.resolverByScheme(scheme).ConnectAndRetry(ctx, grouped)
+		resolved = append(resolved, groupResolved...)
+		for envVar, err := range groupFailures {
+			failures[envVar] = err
+		}
+	}
+	return resolved, failures
 }
 
 func (s *credentialResolverSet) printLaunchWarnings(
 	entryByEnvVar map[string]credential.Entry,
 	failures map[string]error,
 ) {
-	s.kontext.PrintLaunchWarnings(entryByEnvVar, failures)
+	for scheme, resolver := range s.resolvers {
+		schemeEntries := filterEntriesByScheme(entryByEnvVar, scheme)
+		schemeFailures := filterFailuresByScheme(entryByEnvVar, failures, scheme)
+		resolver.PrintLaunchWarnings(schemeEntries, schemeFailures)
+	}
+	for envVar, err := range failures {
+		entry, ok := entryByEnvVar[envVar]
+		if !ok {
+			continue
+		}
+		if _, known := s.resolvers[entry.Scheme]; known {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "⚠ %s was skipped (%v)\n", envVar, err)
+	}
+}
+
+func (s *credentialResolverSet) resolverFor(entry credential.Entry) credentialResolver {
+	return s.resolverByScheme(entry.Scheme)
+}
+
+func (s *credentialResolverSet) resolverByScheme(scheme string) credentialResolver {
+	if scheme == "" {
+		scheme = kontextScheme
+	}
+	if resolver, ok := s.resolvers[scheme]; ok {
+		return resolver
+	}
+	return &unknownCredentialResolver{scheme: scheme}
 }
 
 type kontextCredentialResolver struct {
@@ -246,4 +307,92 @@ func failureMap(entries []credential.Entry, err error) map[string]error {
 		failures[entry.EnvVar] = err
 	}
 	return failures
+}
+
+type unknownCredentialResolver struct {
+	scheme string
+}
+
+func (r *unknownCredentialResolver) Resolve(_ context.Context, entry credential.Entry) (string, error) {
+	return "", fmt.Errorf("unsupported credential scheme %q for %s", r.scheme, entry.EnvVar)
+}
+
+func (r *unknownCredentialResolver) UnresolvedConnectableEntries(
+	_ map[string]credential.Entry,
+	_ map[string]error,
+) []credential.Entry {
+	return nil
+}
+
+func (r *unknownCredentialResolver) ConnectAndRetry(
+	_ context.Context,
+	entries []credential.Entry,
+) ([]credential.Resolved, map[string]error) {
+	return nil, failureMap(entries, fmt.Errorf("unsupported credential scheme %q", r.scheme))
+}
+
+func (r *unknownCredentialResolver) PrintLaunchWarnings(
+	entryByEnvVar map[string]credential.Entry,
+	failures map[string]error,
+) {
+	for envVar := range failures {
+		entry, ok := entryByEnvVar[envVar]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "⚠ %s uses unsupported credential scheme %q.\n", entry.EnvVar, entry.Scheme)
+	}
+}
+
+func filterEntriesByScheme(
+	entryByEnvVar map[string]credential.Entry,
+	scheme string,
+) map[string]credential.Entry {
+	filtered := make(map[string]credential.Entry)
+	for envVar, entry := range entryByEnvVar {
+		entryScheme := entry.Scheme
+		if entryScheme == "" {
+			entryScheme = kontextScheme
+		}
+		if entryScheme != scheme {
+			continue
+		}
+		filtered[envVar] = entry
+	}
+	return filtered
+}
+
+func filterFailuresByScheme(
+	entryByEnvVar map[string]credential.Entry,
+	failures map[string]error,
+	scheme string,
+) map[string]error {
+	filtered := make(map[string]error)
+	for envVar, err := range failures {
+		entry, ok := entryByEnvVar[envVar]
+		if !ok {
+			continue
+		}
+		entryScheme := entry.Scheme
+		if entryScheme == "" {
+			entryScheme = kontextScheme
+		}
+		if entryScheme != scheme {
+			continue
+		}
+		filtered[envVar] = err
+	}
+	return filtered
+}
+
+func groupEntriesByScheme(entries []credential.Entry) map[string][]credential.Entry {
+	grouped := make(map[string][]credential.Entry)
+	for _, entry := range entries {
+		scheme := entry.Scheme
+		if scheme == "" {
+			scheme = kontextScheme
+		}
+		grouped[scheme] = append(grouped[scheme], entry)
+	}
+	return grouped
 }
