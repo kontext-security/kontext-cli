@@ -15,9 +15,11 @@ import (
 func TestBitwardenResolverFetchesDomainCredential(t *testing.T) {
 	dir := t.TempDir()
 	argsPath := filepath.Join(dir, "args.txt")
+	envPath := filepath.Join(dir, "env.txt")
 	aacPath := filepath.Join(dir, "aac")
 	script := "#!/bin/sh\n" +
 		"printf '%s' \"$*\" > \"" + argsPath + "\"\n" +
+		"env | grep AAC_TOKEN > \"" + envPath + "\" 2>/dev/null || true\n" +
 		"printf '%s' '{\"success\":true,\"domain\":\"github.com\",\"credential\":{\"username\":\"octocat\",\"password\":\"ghp_test\"}}'\n"
 	if err := os.WriteFile(aacPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("WriteFile(aac) error = %v", err)
@@ -53,7 +55,6 @@ func TestBitwardenResolverFetchesDomainCredential(t *testing.T) {
 	for _, want := range []string{
 		"connect",
 		"--output json",
-		"--token-stdin",
 		"--ephemeral-connection",
 		"--domain github.com",
 	} {
@@ -62,7 +63,15 @@ func TestBitwardenResolverFetchesDomainCredential(t *testing.T) {
 		}
 	}
 	if strings.Contains(got, "--token ") {
-		t.Fatalf("aac args = %q, token should be passed via stdin not as cli arg", got)
+		t.Fatalf("aac args = %q, token must not appear as cli arg", got)
+	}
+
+	envData, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("ReadFile(env) error = %v", err)
+	}
+	if !strings.Contains(string(envData), "AAC_TOKEN=") {
+		t.Fatal("AAC_TOKEN env var was not set for aac subprocess")
 	}
 }
 

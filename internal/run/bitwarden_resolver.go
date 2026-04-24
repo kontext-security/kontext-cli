@@ -98,7 +98,6 @@ func (r *bitwardenCredentialResolver) runAAC(
 	token, err := loadBitwardenPairingToken()
 	useToken := err == nil
 	if useToken {
-		args = append(args, "--token-stdin")
 		args = append(args, "--ephemeral-connection")
 	}
 
@@ -112,8 +111,9 @@ func (r *bitwardenCredentialResolver) runAAC(
 	}
 
 	cmd := exec.CommandContext(ctx, aacBin, args...)
+	cmd.Env = os.Environ()
 	if useToken {
-		cmd.Stdin = strings.NewReader(token)
+		cmd.Env = append(cmd.Env, "AAC_TOKEN="+token)
 	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
