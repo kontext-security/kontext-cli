@@ -340,7 +340,7 @@ func printCredentialFailure(entry credential.Entry, err error, diagnostics diagn
 		fmt.Fprintln(os.Stderr, "needs connection")
 		return
 	}
-	fmt.Fprintf(os.Stderr, "⚠ skipped (%v)\n", err)
+	fmt.Fprintf(os.Stderr, "⚠ skipped (%s)\n", credentialFailureSummary(err))
 }
 
 func credentialFailureSummary(err error) string {

@@ -180,7 +180,7 @@ func (r *kontextCredentialResolver) ConnectAndRetry(
 		if !interactive && needsGatewayAccessReauthentication(connectErr) {
 			fmt.Fprintln(os.Stderr, "⚠ Non-interactive session detected. Re-run `kontext start` in an interactive terminal to authorize hosted connect.")
 		}
-		fmt.Fprintf(os.Stderr, "⚠ Could not create hosted connect session (%v)\n", connectErr)
+		fmt.Fprintf(os.Stderr, "⚠ Could not create hosted connect session (%s)\n", connectFailureSummary(connectErr))
 		return nil, failureMap(entries, connectErr)
 	}
 
@@ -234,7 +234,7 @@ func (r *kontextCredentialResolver) retryEntries(
 			)
 			value, err := r.Resolve(ctx, entry)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "⚠ skipped (%v)\n", err)
+				fmt.Fprintf(os.Stderr, "⚠ skipped (%s)\n", credentialFailureSummary(err))
 				failures[envVar] = err
 				continue
 			}

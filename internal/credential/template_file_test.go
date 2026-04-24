@@ -305,3 +305,26 @@ func TestLoadTemplateFileAcceptsAlternativeCredentialSchemes(t *testing.T) {
 		t.Fatalf("entry resource = %q, want %q", got, want)
 	}
 }
+
+func TestLoadTemplateFileLeavesUnknownSchemesLiteral(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".env.kontext")
+	if err := os.WriteFile(path, []byte("PROMPT={{system:foo}}\n"), 0o600); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	doc, err := LoadTemplateFile(path)
+	if err != nil {
+		t.Fatalf("LoadTemplateFile() error = %v", err)
+	}
+	if got := len(doc.Entries); got != 0 {
+		t.Fatalf("entries len = %d, want 0", got)
+	}
+	if got := len(doc.InvalidPlaceholders); got != 0 {
+		t.Fatalf("invalid placeholders len = %d, want 0", got)
+	}
+	if got, want := doc.ExistingValues["PROMPT"], "{{system:foo}}"; got != want {
+		t.Fatalf("existing value = %q, want %q", got, want)
+	}
+}

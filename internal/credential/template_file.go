@@ -99,6 +99,10 @@ func LoadTemplateFile(path string) (*TemplateFile, error) {
 		if matches != nil {
 			scheme := matches[1]
 			providerSpec := matches[2]
+			if !IsSupportedCredentialScheme(scheme) {
+				assignments[envVar] = assignment
+				continue
+			}
 			provider, resource, _ := strings.Cut(providerSpec, "/")
 			if strings.TrimSpace(provider) == "" {
 				assignment.invalid = &InvalidPlaceholder{
@@ -119,7 +123,7 @@ func LoadTemplateFile(path string) (*TemplateFile, error) {
 			continue
 		}
 
-		if strings.HasPrefix(normalizedValue, "{{") && strings.Contains(normalizedValue, ":") {
+		if strings.Contains(normalizedValue, "{{kontext:") || strings.Contains(normalizedValue, "{{bitwarden:") {
 			assignment.invalid = &InvalidPlaceholder{
 				EnvVar: envVar,
 				Value:  value,

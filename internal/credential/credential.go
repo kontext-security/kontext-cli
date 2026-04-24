@@ -10,6 +10,15 @@ import (
 // placeholder matches {{<scheme>:<provider>}} or {{<scheme>:<provider>/<resource>}} patterns.
 var placeholder = regexp.MustCompile(`^\{\{([a-z0-9][a-z0-9_-]*):([^}]+)\}\}$`)
 
+func IsSupportedCredentialScheme(scheme string) bool {
+	switch scheme {
+	case "", "kontext", "bitwarden":
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizePlaceholderValue(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if idx := inlineCommentIndex(trimmed); idx >= 0 {
