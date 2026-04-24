@@ -289,7 +289,7 @@ func resolveCredentials(
 	diagnostics diagnostic.Logger,
 	fetchConnect connectURLFetcher,
 ) ([]credential.Resolved, error) {
-	resolvers := newCredentialResolverSetWithFetcher(session, credentialClientID, fetchConnect)
+	resolvers := newCredentialResolverSetWithFetcher(session, credentialClientID, diagnostics, fetchConnect)
 	fmt.Fprintln(os.Stderr, "\nResolving credentials...")
 	resolved := make([]credential.Resolved, 0, len(entries))
 	failures := make(map[string]error)

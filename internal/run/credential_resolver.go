@@ -13,6 +13,7 @@ import (
 
 	"github.com/kontext-security/kontext-cli/internal/auth"
 	"github.com/kontext-security/kontext-cli/internal/credential"
+	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 )
 
 const (
@@ -34,13 +35,15 @@ type credentialResolverSet struct {
 func newCredentialResolverSet(
 	session *auth.Session,
 	credentialClientID string,
+	diagnostics diagnostic.Logger,
 ) *credentialResolverSet {
-	return newCredentialResolverSetWithFetcher(session, credentialClientID, fetchConnectURLForConnectFlow)
+	return newCredentialResolverSetWithFetcher(session, credentialClientID, diagnostics, fetchConnectURLForConnectFlow)
 }
 
 func newCredentialResolverSetWithFetcher(
 	session *auth.Session,
 	credentialClientID string,
+	diagnostics diagnostic.Logger,
 	fetchConnect connectURLFetcher,
 ) *credentialResolverSet {
 	return &credentialResolverSet{
@@ -49,6 +52,7 @@ func newCredentialResolverSetWithFetcher(
 				session:            session,
 				credentialClientID: credentialClientID,
 				fetchConnectURL:    fetchConnect,
+				diagnostics:        diagnostics,
 			},
 			bitwardenScheme: &bitwardenCredentialResolver{},
 		},
@@ -133,6 +137,7 @@ type kontextCredentialResolver struct {
 	session            *auth.Session
 	credentialClientID string
 	fetchConnectURL    connectURLFetcher
+	diagnostics        diagnostic.Logger
 }
 
 func (r *kontextCredentialResolver) Resolve(
@@ -177,6 +182,7 @@ func (r *kontextCredentialResolver) ConnectAndRetry(
 		auth.Login,
 	)
 	if connectErr != nil {
+		r.diagnostics.Printf("hosted connect session failed: %v\n", connectErr)
 		if !interactive && needsGatewayAccessReauthentication(connectErr) {
 			fmt.Fprintln(os.Stderr, "⚠ Non-interactive session detected. Re-run `kontext start` in an interactive terminal to authorize hosted connect.")
 		}
@@ -185,18 +191,9 @@ func (r *kontextCredentialResolver) ConnectAndRetry(
 	}
 
 	providerList := joinEntryProviders(entries)
-	fmt.Fprintf(os.Stderr, "\nHosted connect is available for: %s\n", providerList)
-	fmt.Fprintf(os.Stderr, "  %s\n", connectURL)
-
-	if !interactive {
-		fmt.Fprintln(os.Stderr, "⚠ Non-interactive session detected. Open this URL in a browser, then rerun `kontext start`.")
+	prompt := printHostedConnectInstructions(os.Stderr, providerList, connectURL, interactive, browser.OpenURL)
+	if !prompt {
 		return nil, failureMap(entries, fmt.Errorf("hosted connect requires browser completion"))
-	}
-
-	fmt.Fprintf(os.Stderr, "  Opening browser to connect %s...\n", providerList)
-	if err := browser.OpenURL(connectURL); err != nil {
-		fmt.Fprintf(os.Stderr, "  ⚠ Could not open browser automatically (%v)\n", err)
-		fmt.Fprintln(os.Stderr, "  Open the URL above to continue.")
 	}
 	fmt.Fprint(os.Stderr, "  Press Enter after connecting...")
 	bufio.NewReader(os.Stdin).ReadString('\n')
@@ -225,8 +222,7 @@ func (r *kontextCredentialResolver) retryEntries(
 		}
 
 		for envVar, entry := range pending {
-			fmt.Fprintf(
-				os.Stderr,
+			r.diagnostics.Printf(
 				"  Retrying %s (%d/%d)... ",
 				entry.EnvVar,
 				attempt+1,
@@ -234,11 +230,11 @@ func (r *kontextCredentialResolver) retryEntries(
 			)
 			value, err := r.Resolve(ctx, entry)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "⚠ skipped (%s)\n", credentialFailureSummary(err))
+				r.diagnostics.Printf("credential %s retry failed: %v\n", entry.EnvVar, err)
 				failures[envVar] = err
 				continue
 			}
-			fmt.Fprintln(os.Stderr, "✓")
+			r.diagnostics.Printf("resolved\n")
 			resolved = append(resolved, credential.Resolved{Entry: entry, Value: value})
 			delete(failures, envVar)
 			delete(pending, envVar)
@@ -257,11 +253,13 @@ func (r *kontextCredentialResolver) PrintLaunchWarnings(
 	}
 
 	var skipped []string
+	var skippedEnvVars []string
 	for envVar, err := range failures {
 		entry, ok := entryByEnvVar[envVar]
 		if !ok {
 			continue
 		}
+		r.diagnostics.Printf("%s launch warning: %v\n", envVar, err)
 		if resolutionErr, ok := err.(*credentialResolutionError); ok {
 			switch resolutionErr.Reason {
 			case failureNotAttached:
@@ -279,25 +277,25 @@ func (r *kontextCredentialResolver) PrintLaunchWarnings(
 			case failureInvalid:
 				fmt.Fprintf(os.Stderr, "⚠ %s contains an invalid Kontext placeholder.\n", entry.EnvVar)
 			case failureDisconnected:
-				fmt.Fprintf(
-					os.Stderr,
-					"⚠ %s was not available for this launch. Connect it in hosted connect and rerun `kontext start`.\n",
-					entry.EnvVar,
-				)
 				skipped = append(skipped, entry.Provider)
+				skippedEnvVars = append(skippedEnvVars, entry.EnvVar)
 			default:
-				fmt.Fprintf(os.Stderr, "⚠ %s was skipped (%v)\n", entry.EnvVar, err)
+				r.diagnostics.Printf("credential %s skipped: %v\n", entry.EnvVar, err)
+				fmt.Fprintf(os.Stderr, "⚠ %s was skipped (%s)\n", entry.EnvVar, credentialFailureSummary(err))
 			}
 			continue
 		}
 
-		fmt.Fprintf(os.Stderr, "⚠ %s was skipped (%v)\n", entry.EnvVar, err)
+		r.diagnostics.Printf("credential %s skipped: %v\n", entry.EnvVar, err)
+		fmt.Fprintf(os.Stderr, "⚠ %s was skipped (%s)\n", entry.EnvVar, credentialFailureSummary(err))
 	}
 
 	if len(skipped) > 0 {
 		slices.Sort(skipped)
-		fmt.Fprintf(os.Stderr, "⚠ Launching without these providers: %s\n", strings.Join(slices.Compact(skipped), ", "))
-		fmt.Fprintln(os.Stderr, "⚠ Providers connected after launch become available on the next `kontext start`.")
+		slices.Sort(skippedEnvVars)
+		fmt.Fprintf(os.Stderr, "⚠ Launching without providers that still need connection: %s\n", strings.Join(slices.Compact(skipped), ", "))
+		fmt.Fprintf(os.Stderr, "⚠ Missing env vars for this launch: %s\n", strings.Join(skippedEnvVars, ", "))
+		fmt.Fprintln(os.Stderr, "⚠ Connect providers in hosted connect, then rerun `kontext start`.")
 	}
 }
 

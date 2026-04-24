@@ -53,13 +53,16 @@ func TestBitwardenResolverFetchesDomainCredential(t *testing.T) {
 	for _, want := range []string{
 		"connect",
 		"--output json",
-		"--token aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"--token-stdin",
 		"--ephemeral-connection",
 		"--domain github.com",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("aac args = %q, want substring %q", got, want)
 		}
+	}
+	if strings.Contains(got, "--token ") {
+		t.Fatalf("aac args = %q, token should be passed via stdin not as cli arg", got)
 	}
 }
 

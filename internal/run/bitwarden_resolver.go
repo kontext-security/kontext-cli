@@ -67,6 +67,10 @@ func (r *bitwardenCredentialResolver) Resolve(
 		}
 	}
 
+	if mismatch := validateBitwardenResponse(entry, result); mismatch != "" {
+		fmt.Fprintf(os.Stderr, "⚠ %s: %s\n", entry.EnvVar, mismatch)
+	}
+
 	value, err := selectBitwardenField(entry, result)
 	if err != nil {
 		return "", err
@@ -92,13 +96,10 @@ func (r *bitwardenCredentialResolver) runAAC(
 
 	args := []string{"connect", "--output", "json"}
 	token, err := loadBitwardenPairingToken()
-	if err == nil {
-		args = append(args, "--token", token)
+	useToken := err == nil
+	if useToken {
+		args = append(args, "--token-stdin")
 		args = append(args, "--ephemeral-connection")
-	} else {
-		// Fall back to Agent Access's own cached connection behavior when no
-		// reusable PSK pairing has been configured in kontext-cli yet or the
-		// local keyring is unavailable in this environment.
 	}
 
 	switch {
@@ -111,7 +112,12 @@ func (r *bitwardenCredentialResolver) runAAC(
 	}
 
 	cmd := exec.CommandContext(ctx, aacBin, args...)
-	output, err := cmd.CombinedOutput()
+	if useToken {
+		cmd.Stdin = strings.NewReader(token)
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
 	if err == nil {
 		return output, nil
 	}
@@ -124,7 +130,10 @@ func (r *bitwardenCredentialResolver) runAAC(
 		}
 	}
 
-	msg := strings.TrimSpace(string(output))
+	msg := strings.TrimSpace(stderr.String())
+	if msg == "" {
+		msg = strings.TrimSpace(string(output))
+	}
 	if msg == "" {
 		msg = err.Error()
 	}
@@ -204,4 +213,25 @@ func selectBitwardenField(
 			Message: fmt.Sprintf("unsupported bitwarden field %q", entry.Resource),
 		}
 	}
+}
+
+func validateBitwardenResponse(entry credential.Entry, result bitwardenConnectResponse) string {
+	selector := entry.Provider
+	switch {
+	case strings.HasPrefix(selector, "domain:"):
+		want := strings.TrimPrefix(selector, "domain:")
+		if result.Domain != "" && result.Domain != want {
+			return fmt.Sprintf("requested domain %q but aac returned domain %q", want, result.Domain)
+		}
+	case strings.HasPrefix(selector, "id:"):
+		want := strings.TrimPrefix(selector, "id:")
+		got := result.CredentialID
+		if got == "" {
+			got = result.Credential.ID
+		}
+		if got != "" && got != want {
+			return fmt.Sprintf("requested credential id %q but aac returned id %q", want, got)
+		}
+	}
+	return ""
 }
