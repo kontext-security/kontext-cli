@@ -3,13 +3,13 @@
 This worktree includes an experimental local-direct Bitwarden resolver for `kontext-cli`.
 
 It keeps the normal Kontext session and hook-governance flow, but resolves selected env vars
-through `aac connect --output json` instead of Kontext RFC 8693 token exchange.
+through `aac connect --output json` using a stored reusable PSK instead of a fresh rendezvous
+code on every launch.
 
 ## Status
 
 - Experimental
 - Local-only
-- Not pushed
 - Intended for partnership and DX evaluation
 
 ## Placeholder Syntax
@@ -31,19 +31,25 @@ Rules:
 
 ## Environment
 
+Pair once locally:
+
+```bash
+kontext bitwarden pair --token "<reusable-psk-token>"
+```
+
 Optional environment variables:
 
 ```bash
 export KONTEXT_BITWARDEN_AAC_BIN=aac
-export KONTEXT_BITWARDEN_PROVIDER=bitwarden
-export KONTEXT_BITWARDEN_TOKEN="<pairing-token>"
 ```
 
 Notes:
 
-- `KONTEXT_BITWARDEN_TOKEN` lets the CLI pair and fetch in one step.
-- If your `aac` setup already has an active connection, the token may not be needed.
-- `KONTEXT_BITWARDEN_PROVIDER` is passed through to `aac` when set.
+- The reusable PSK token should come from `aac listen --reusable-psk`.
+- Once stored, the CLI reuses it automatically for Bitwarden placeholders.
+- `KONTEXT_BITWARDEN_AAC_BIN` overrides the `aac` binary path.
+- `aac` still needs to be installed and usable at `kontext start` time.
+- The Bitwarden listener still needs to be running and unlocked when credentials are resolved.
 
 ## Local Tryout
 
@@ -51,13 +57,17 @@ Notes:
 2. Start the local Bitwarden side:
 
 ```bash
-aac listen
+aac listen --reusable-psk
 ```
 
-3. Copy the pairing token if your setup requires one.
+3. Store the PSK token once:
+
+```bash
+kontext bitwarden pair --token "<reusable-psk-token>"
+```
+
 4. Add `bitwarden` placeholders to `.env.kontext`.
-5. Export `KONTEXT_BITWARDEN_TOKEN` if needed.
-6. Run:
+5. Run:
 
 ```bash
 kontext start --agent claude

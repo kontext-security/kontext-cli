@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
+	bwpair "github.com/kontext-security/kontext-cli/internal/bitwarden"
 	"github.com/kontext-security/kontext-cli/internal/credential"
 )
 
@@ -17,6 +18,8 @@ const (
 )
 
 type bitwardenCredentialResolver struct{}
+
+var loadBitwardenPairingToken = bwpair.LoadReusablePSKToken
 
 type bitwardenConnectResponse struct {
 	Success      bool   `json:"success"`
@@ -88,11 +91,14 @@ func (r *bitwardenCredentialResolver) runAAC(
 	}
 
 	args := []string{"connect", "--output", "json"}
-	if token := strings.TrimSpace(os.Getenv("KONTEXT_BITWARDEN_TOKEN")); token != "" {
+	token, err := loadBitwardenPairingToken()
+	if err == nil {
 		args = append(args, "--token", token)
-	}
-	if provider := strings.TrimSpace(os.Getenv("KONTEXT_BITWARDEN_PROVIDER")); provider != "" {
-		args = append(args, "--provider", provider)
+		args = append(args, "--ephemeral-connection")
+	} else {
+		// Fall back to Agent Access's own cached connection behavior when no
+		// reusable PSK pairing has been configured in kontext-cli yet or the
+		// local keyring is unavailable in this environment.
 	}
 
 	switch {
@@ -151,7 +157,12 @@ func (r *bitwardenCredentialResolver) PrintLaunchWarnings(
 		if !ok || entry.Scheme != bitwardenScheme {
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "⚠ %s could not be resolved from Bitwarden (%v)\n", entry.EnvVar, err)
+		fmt.Fprintf(
+			os.Stderr,
+			"⚠ %s could not be resolved from Bitwarden (%v). Ensure `aac` is installed and `aac listen --reusable-psk` is running and unlocked.\n",
+			entry.EnvVar,
+			err,
+		)
 	}
 }
 

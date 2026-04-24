@@ -14,6 +14,7 @@ import (
 
 	"github.com/kontext-security/kontext-cli/internal/agent"
 	"github.com/kontext-security/kontext-cli/internal/auth"
+	bwpair "github.com/kontext-security/kontext-cli/internal/bitwarden"
 	"github.com/kontext-security/kontext-cli/internal/hook"
 	"github.com/kontext-security/kontext-cli/internal/run"
 	"github.com/kontext-security/kontext-cli/internal/sidecar"
@@ -34,6 +35,7 @@ func main() {
 	root.AddCommand(startCmd())
 	root.AddCommand(loginCmd())
 	root.AddCommand(logoutCmd())
+	root.AddCommand(bitwardenCmd())
 	root.AddCommand(hookCmd())
 
 	if err := root.Execute(); err != nil {
@@ -122,6 +124,78 @@ func loginCmd() *cobra.Command {
 
 func logoutCmd() *cobra.Command {
 	return newLogoutCmd(auth.ClearSession)
+}
+
+func bitwardenCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "bitwarden",
+		Short: "Manage local Bitwarden Agent Access pairing",
+	}
+	cmd.AddCommand(bitwardenPairCmd())
+	cmd.AddCommand(bitwardenStatusCmd())
+	cmd.AddCommand(bitwardenUnpairCmd())
+	return cmd
+}
+
+func bitwardenPairCmd() *cobra.Command {
+	var token string
+
+	cmd := &cobra.Command{
+		Use:   "pair --token <reusable-psk-token>",
+		Short: "Store a reusable Bitwarden PSK token locally",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := bwpair.SaveReusablePSKToken(token); err != nil {
+				return fmt.Errorf("store Bitwarden pairing: %w", err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Stored Bitwarden reusable PSK pairing.")
+			fmt.Fprintln(cmd.OutOrStdout(), "Use `aac listen --reusable-psk` on the Bitwarden side when testing.")
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&token, "token", "", "Reusable PSK token from Agent Access")
+	_ = cmd.MarkFlagRequired("token")
+
+	return cmd
+}
+
+func bitwardenStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show whether a reusable Bitwarden PSK pairing is stored locally",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			token, err := bwpair.LoadReusablePSKToken()
+			switch {
+			case err == nil:
+				fmt.Fprintf(cmd.OutOrStdout(), "Bitwarden reusable PSK stored locally (%d chars).\n", len(token))
+				fmt.Fprintln(cmd.OutOrStdout(), "This does not verify that `aac` is installed or that the Bitwarden listener is running and unlocked.")
+				return nil
+			case errors.Is(err, keyring.ErrNotFound):
+				fmt.Fprintln(cmd.OutOrStdout(), "Bitwarden pairing not configured.")
+				return nil
+			default:
+				return fmt.Errorf("load Bitwarden pairing: %w", err)
+			}
+		},
+	}
+}
+
+func bitwardenUnpairCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unpair",
+		Short: "Remove the locally stored Bitwarden PSK pairing",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := bwpair.ClearReusablePSKToken(); err != nil {
+				if errors.Is(err, keyring.ErrNotFound) {
+					fmt.Fprintln(cmd.OutOrStdout(), "Bitwarden pairing already cleared.")
+					return nil
+				}
+				return fmt.Errorf("clear Bitwarden pairing: %w", err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Cleared Bitwarden pairing.")
+			return nil
+		},
+	}
 }
 
 func newLogoutCmd(clearSession func() error) *cobra.Command {

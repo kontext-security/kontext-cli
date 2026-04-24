@@ -2,12 +2,14 @@ package run
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/kontext-security/kontext-cli/internal/credential"
+	"github.com/zalando/go-keyring"
 )
 
 func TestBitwardenResolverFetchesDomainCredential(t *testing.T) {
@@ -22,8 +24,13 @@ func TestBitwardenResolverFetchesDomainCredential(t *testing.T) {
 	}
 
 	t.Setenv("KONTEXT_BITWARDEN_AAC_BIN", aacPath)
-	t.Setenv("KONTEXT_BITWARDEN_TOKEN", "pair-token")
-	t.Setenv("KONTEXT_BITWARDEN_PROVIDER", "bitwarden")
+	previousLoader := loadBitwardenPairingToken
+	loadBitwardenPairingToken = func() (string, error) {
+		return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", nil
+	}
+	t.Cleanup(func() {
+		loadBitwardenPairingToken = previousLoader
+	})
 
 	resolver := &bitwardenCredentialResolver{}
 	value, err := resolver.Resolve(context.Background(), credential.Entry{
@@ -46,8 +53,8 @@ func TestBitwardenResolverFetchesDomainCredential(t *testing.T) {
 	for _, want := range []string{
 		"connect",
 		"--output json",
-		"--token pair-token",
-		"--provider bitwarden",
+		"--token aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"--ephemeral-connection",
 		"--domain github.com",
 	} {
 		if !strings.Contains(got, want) {
@@ -66,6 +73,13 @@ func TestBitwardenResolverSupportsIDAndFieldSelection(t *testing.T) {
 	}
 
 	t.Setenv("KONTEXT_BITWARDEN_AAC_BIN", aacPath)
+	previousLoader := loadBitwardenPairingToken
+	loadBitwardenPairingToken = func() (string, error) {
+		return "", keyring.ErrNotFound
+	}
+	t.Cleanup(func() {
+		loadBitwardenPairingToken = previousLoader
+	})
 
 	resolver := &bitwardenCredentialResolver{}
 	value, err := resolver.Resolve(context.Background(), credential.Entry{
@@ -79,6 +93,49 @@ func TestBitwardenResolverSupportsIDAndFieldSelection(t *testing.T) {
 	}
 	if value != "db-user" {
 		t.Fatalf("Resolve() = %q, want %q", value, "db-user")
+	}
+}
+
+func TestBitwardenResolverFallsBackWhenStoredPairingCannotBeRead(t *testing.T) {
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args.txt")
+	aacPath := filepath.Join(dir, "aac")
+	script := "#!/bin/sh\n" +
+		"printf '%s' \"$*\" > \"" + argsPath + "\"\n" +
+		"printf '%s' '{\"success\":true,\"credential\":{\"password\":\"fallback-pass\"}}'\n"
+	if err := os.WriteFile(aacPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(aac) error = %v", err)
+	}
+
+	t.Setenv("KONTEXT_BITWARDEN_AAC_BIN", aacPath)
+	previousLoader := loadBitwardenPairingToken
+	loadBitwardenPairingToken = func() (string, error) {
+		return "", errors.New("keyring unavailable")
+	}
+	t.Cleanup(func() {
+		loadBitwardenPairingToken = previousLoader
+	})
+
+	resolver := &bitwardenCredentialResolver{}
+	value, err := resolver.Resolve(context.Background(), credential.Entry{
+		Scheme:   bitwardenScheme,
+		EnvVar:   "DB_PASSWORD",
+		Provider: "domain:github.com",
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if value != "fallback-pass" {
+		t.Fatalf("Resolve() = %q, want %q", value, "fallback-pass")
+	}
+
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("ReadFile(args) error = %v", err)
+	}
+	got := string(args)
+	if strings.Contains(got, "--token ") {
+		t.Fatalf("aac args = %q, token should not be passed when stored pairing is unavailable", got)
 	}
 }
 

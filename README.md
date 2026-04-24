@@ -61,6 +61,38 @@ LINEAR_API_KEY={{kontext:linear}}
 
 Keep `.env.kontext` out of source control in repos that do not already ignore it. The CLI may append more preset provider placeholders later if your org attaches them to the shared Kontext CLI application. Literal values you add stay untouched. Providers connected after the agent has already started become available on the next `kontext start`.
 
+## Local Bitwarden Credentials
+
+In addition to backend-governed `{{kontext:...}}` placeholders, the CLI can resolve
+local-direct Bitwarden credentials through Agent Access.
+
+This path is experimental and best-effort. It shells out to `aac` at `kontext start`
+time, so `aac` must still be installed locally and the Bitwarden listener must be
+running and unlocked when credentials are resolved.
+
+Pair Bitwarden once:
+
+```bash
+aac listen --reusable-psk
+# In the Agent Access TUI, run /unlock before testing requests.
+
+kontext bitwarden pair --token "<reusable-psk-token>"
+```
+
+Then reference Bitwarden items in `.env.kontext`:
+
+```dotenv
+DB_USER={{bitwarden:id:YOUR_ITEM_ID/username}}
+DB_PASSWORD={{bitwarden:id:YOUR_ITEM_ID/password}}
+GITHUB_2FA={{bitwarden:id:YOUR_ITEM_ID/totp}}
+ANTHROPIC_API_KEY={{bitwarden:domain:api.anthropic.com/password}}
+```
+
+On `kontext start`, the CLI uses the stored reusable PSK to call `aac connect` and inject
+the selected Bitwarden fields into the launched agent process. This is a local-direct trust
+path, not the same as Kontext-managed provider exchange. Supported Bitwarden fields are
+`username`, `password`, `totp`, `uri`, `notes`, `domain`, and `credential_id`.
+
 ## Providers and Traces
 
 Provider setup and trace review live in the hosted dashboard at [app.kontext.security](https://app.kontext.security). Use the same account you used for `kontext login`.
