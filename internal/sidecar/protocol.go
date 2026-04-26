@@ -9,14 +9,18 @@ import (
 )
 
 type EvaluateRequest struct {
-	Type         string          `json:"type"`
-	Agent        string          `json:"agent"`
-	HookEvent    string          `json:"hook_event"`
-	ToolName     string          `json:"tool_name"`
-	ToolInput    json.RawMessage `json:"tool_input,omitempty"`
-	ToolResponse json.RawMessage `json:"tool_response,omitempty"`
-	ToolUseID    string          `json:"tool_use_id"`
-	CWD          string          `json:"cwd"`
+	Type           string          `json:"type"`
+	Agent          string          `json:"agent"`
+	HookEvent      string          `json:"hook_event"`
+	ToolName       string          `json:"tool_name"`
+	ToolInput      json.RawMessage `json:"tool_input,omitempty"`
+	ToolResponse   json.RawMessage `json:"tool_response,omitempty"`
+	ToolUseID      string          `json:"tool_use_id"`
+	CWD            string          `json:"cwd"`
+	PermissionMode string          `json:"permission_mode,omitempty"`
+	DurationMs     *int64          `json:"duration_ms,omitempty"`
+	Error          string          `json:"error,omitempty"`
+	IsInterrupt    *bool           `json:"is_interrupt,omitempty"`
 }
 
 type EvaluateResult struct {
