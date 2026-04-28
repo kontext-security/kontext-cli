@@ -49,13 +49,19 @@ func TestBuildHookEventRequestPreservesTelemetryPayload(t *testing.T) {
 
 	toolInput := json.RawMessage(`{"command":"pwd"}`)
 	toolResponse := json.RawMessage(`{"stdout":"/tmp/project"}`)
+	isInterrupt := true
+	durationMs := int64(42)
 	req := &EvaluateRequest{
-		HookEvent:    "PostToolUse",
-		ToolName:     "Bash",
-		ToolInput:    toolInput,
-		ToolResponse: toolResponse,
-		ToolUseID:    "toolu_123",
-		CWD:          "/tmp/project",
+		HookEvent:      "PostToolUse",
+		ToolName:       "Bash",
+		ToolInput:      toolInput,
+		ToolResponse:   toolResponse,
+		ToolUseID:      "toolu_123",
+		CWD:            "/tmp/project",
+		PermissionMode: "acceptEdits",
+		DurationMs:     &durationMs,
+		Error:          "failed",
+		IsInterrupt:    &isInterrupt,
 	}
 
 	got := buildHookEventRequest("session-123", "claude", req)
@@ -67,11 +73,61 @@ func TestBuildHookEventRequestPreservesTelemetryPayload(t *testing.T) {
 		got.Cwd != req.CWD {
 		t.Fatalf("buildHookEventRequest() = %+v, want copied metadata", got)
 	}
+	if got.GetPermissionMode() != req.PermissionMode {
+		t.Fatalf("PermissionMode = %q, want %q", got.GetPermissionMode(), req.PermissionMode)
+	}
+	if got.GetDurationMs() != *req.DurationMs {
+		t.Fatalf("DurationMs = %d, want %d", got.GetDurationMs(), *req.DurationMs)
+	}
+	if got.GetError() != req.Error {
+		t.Fatalf("Error = %q, want %q", got.GetError(), req.Error)
+	}
+	if got.GetIsInterrupt() != *req.IsInterrupt {
+		t.Fatalf("IsInterrupt = %t, want %t", got.GetIsInterrupt(), *req.IsInterrupt)
+	}
 	if string(got.ToolInput) != string(toolInput) {
 		t.Fatalf("ToolInput = %s, want %s", got.ToolInput, toolInput)
 	}
 	if string(got.ToolResponse) != string(toolResponse) {
 		t.Fatalf("ToolResponse = %s, want %s", got.ToolResponse, toolResponse)
+	}
+}
+
+func TestBuildHookEventRequestPreservesExplicitFalseInterrupt(t *testing.T) {
+	t.Parallel()
+
+	isInterrupt := false
+	got := buildHookEventRequest("session-123", "claude", &EvaluateRequest{
+		HookEvent:   "PostToolUseFailure",
+		ToolName:    "Bash",
+		ToolUseID:   "toolu_123",
+		IsInterrupt: &isInterrupt,
+	})
+
+	if got.IsInterrupt == nil {
+		t.Fatal("IsInterrupt = nil, want explicit false")
+	}
+	if got.GetIsInterrupt() {
+		t.Fatal("IsInterrupt = true, want false")
+	}
+}
+
+func TestBuildHookEventRequestPreservesExplicitZeroDuration(t *testing.T) {
+	t.Parallel()
+
+	durationMs := int64(0)
+	got := buildHookEventRequest("session-123", "claude", &EvaluateRequest{
+		HookEvent:  "PostToolUse",
+		ToolName:   "Bash",
+		ToolUseID:  "toolu_123",
+		DurationMs: &durationMs,
+	})
+
+	if got.DurationMs == nil {
+		t.Fatal("DurationMs = nil, want explicit zero")
+	}
+	if got.GetDurationMs() != 0 {
+		t.Fatalf("DurationMs = %d, want 0", got.GetDurationMs())
 	}
 }
 

@@ -123,6 +123,18 @@ func buildHookEventRequest(sessionID, agentName string, req *EvaluateRequest) *a
 		ToolUseId: req.ToolUseID,
 		Cwd:       req.CWD,
 	}
+	if req.PermissionMode != "" {
+		hookEvent.PermissionMode = &req.PermissionMode
+	}
+	if req.DurationMs != nil {
+		hookEvent.DurationMs = req.DurationMs
+	}
+	if req.Error != "" {
+		hookEvent.Error = &req.Error
+	}
+	if req.IsInterrupt != nil {
+		hookEvent.IsInterrupt = req.IsInterrupt
+	}
 
 	if len(req.ToolInput) > 0 {
 		hookEvent.ToolInput = req.ToolInput

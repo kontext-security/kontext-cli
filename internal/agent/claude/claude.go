@@ -17,13 +17,17 @@ type Claude struct{}
 func (c *Claude) Name() string { return "claude" }
 
 type hookInput struct {
-	SessionID     string         `json:"session_id"`
-	HookEventName string         `json:"hook_event_name"`
-	ToolName      string         `json:"tool_name"`
-	ToolInput     map[string]any `json:"tool_input"`
-	ToolResponse  map[string]any `json:"tool_response"`
-	ToolUseID     string         `json:"tool_use_id"`
-	CWD           string         `json:"cwd"`
+	SessionID      string         `json:"session_id"`
+	HookEventName  string         `json:"hook_event_name"`
+	ToolName       string         `json:"tool_name"`
+	ToolInput      map[string]any `json:"tool_input"`
+	ToolResponse   map[string]any `json:"tool_response"`
+	ToolUseID      string         `json:"tool_use_id"`
+	CWD            string         `json:"cwd"`
+	PermissionMode *string        `json:"permission_mode"`
+	DurationMs     *int64         `json:"duration_ms"`
+	Error          *string        `json:"error"`
+	IsInterrupt    *bool          `json:"is_interrupt"`
 }
 
 func (c *Claude) DecodeHookInput(input []byte) (*agent.HookEvent, error) {
@@ -32,14 +36,25 @@ func (c *Claude) DecodeHookInput(input []byte) (*agent.HookEvent, error) {
 		return nil, fmt.Errorf("claude: decode hook input: %w", err)
 	}
 	return &agent.HookEvent{
-		SessionID:     h.SessionID,
-		HookEventName: h.HookEventName,
-		ToolName:      h.ToolName,
-		ToolInput:     h.ToolInput,
-		ToolResponse:  h.ToolResponse,
-		ToolUseID:     h.ToolUseID,
-		CWD:           h.CWD,
+		SessionID:      h.SessionID,
+		HookEventName:  h.HookEventName,
+		ToolName:       h.ToolName,
+		ToolInput:      h.ToolInput,
+		ToolResponse:   h.ToolResponse,
+		ToolUseID:      h.ToolUseID,
+		CWD:            h.CWD,
+		PermissionMode: stringValue(h.PermissionMode),
+		DurationMs:     h.DurationMs,
+		Error:          stringValue(h.Error),
+		IsInterrupt:    h.IsInterrupt,
 	}, nil
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 type hookOutput struct {

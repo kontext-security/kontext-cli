@@ -74,17 +74,21 @@ func (Decision) EnumDescriptor() ([]byte, []int) {
 }
 
 type ProcessHookEventRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Agent         string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`                          // "claude", "cursor", "codex"
-	HookEvent     string                 `protobuf:"bytes,3,opt,name=hook_event,json=hookEvent,proto3" json:"hook_event,omitempty"` // "PreToolUse", "PostToolUse", "UserPromptSubmit"
-	ToolName      string                 `protobuf:"bytes,4,opt,name=tool_name,json=toolName,proto3" json:"tool_name,omitempty"`
-	ToolInput     []byte                 `protobuf:"bytes,5,opt,name=tool_input,json=toolInput,proto3" json:"tool_input,omitempty"`          // JSON-encoded tool input
-	ToolResponse  []byte                 `protobuf:"bytes,6,opt,name=tool_response,json=toolResponse,proto3" json:"tool_response,omitempty"` // JSON-encoded tool response (PostToolUse only)
-	ToolUseId     string                 `protobuf:"bytes,7,opt,name=tool_use_id,json=toolUseId,proto3" json:"tool_use_id,omitempty"`
-	Cwd           string                 `protobuf:"bytes,8,opt,name=cwd,proto3" json:"cwd,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	SessionId      string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Agent          string                 `protobuf:"bytes,2,opt,name=agent,proto3" json:"agent,omitempty"`                          // "claude", "cursor", "codex"
+	HookEvent      string                 `protobuf:"bytes,3,opt,name=hook_event,json=hookEvent,proto3" json:"hook_event,omitempty"` // "PreToolUse", "PostToolUse", "UserPromptSubmit"
+	ToolName       string                 `protobuf:"bytes,4,opt,name=tool_name,json=toolName,proto3" json:"tool_name,omitempty"`
+	ToolInput      []byte                 `protobuf:"bytes,5,opt,name=tool_input,json=toolInput,proto3" json:"tool_input,omitempty"`          // JSON-encoded tool input
+	ToolResponse   []byte                 `protobuf:"bytes,6,opt,name=tool_response,json=toolResponse,proto3" json:"tool_response,omitempty"` // JSON-encoded tool response (PostToolUse only)
+	ToolUseId      string                 `protobuf:"bytes,7,opt,name=tool_use_id,json=toolUseId,proto3" json:"tool_use_id,omitempty"`
+	Cwd            string                 `protobuf:"bytes,8,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	PermissionMode *string                `protobuf:"bytes,9,opt,name=permission_mode,json=permissionMode,proto3,oneof" json:"permission_mode,omitempty"`
+	DurationMs     *int64                 `protobuf:"varint,10,opt,name=duration_ms,json=durationMs,proto3,oneof" json:"duration_ms,omitempty"`
+	Error          *string                `protobuf:"bytes,11,opt,name=error,proto3,oneof" json:"error,omitempty"`
+	IsInterrupt    *bool                  `protobuf:"varint,12,opt,name=is_interrupt,json=isInterrupt,proto3,oneof" json:"is_interrupt,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ProcessHookEventRequest) Reset() {
@@ -171,6 +175,34 @@ func (x *ProcessHookEventRequest) GetCwd() string {
 		return x.Cwd
 	}
 	return ""
+}
+
+func (x *ProcessHookEventRequest) GetPermissionMode() string {
+	if x != nil && x.PermissionMode != nil {
+		return *x.PermissionMode
+	}
+	return ""
+}
+
+func (x *ProcessHookEventRequest) GetDurationMs() int64 {
+	if x != nil && x.DurationMs != nil {
+		return *x.DurationMs
+	}
+	return 0
+}
+
+func (x *ProcessHookEventRequest) GetError() string {
+	if x != nil && x.Error != nil {
+		return *x.Error
+	}
+	return ""
+}
+
+func (x *ProcessHookEventRequest) GetIsInterrupt() bool {
+	if x != nil && x.IsInterrupt != nil {
+		return *x.IsInterrupt
+	}
+	return false
 }
 
 type ProcessHookEventResponse struct {
@@ -713,7 +745,7 @@ var File_kontext_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_kontext_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x1ckontext/agent/v1/agent.proto\x12\x10kontext.agent.v1\"\x80\x02\n" +
+	"\x1ckontext/agent/v1/agent.proto\x12\x10kontext.agent.v1\"\xd6\x03\n" +
 	"\x17ProcessHookEventRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
@@ -725,7 +757,17 @@ const file_kontext_agent_v1_agent_proto_rawDesc = "" +
 	"tool_input\x18\x05 \x01(\fR\ttoolInput\x12#\n" +
 	"\rtool_response\x18\x06 \x01(\fR\ftoolResponse\x12\x1e\n" +
 	"\vtool_use_id\x18\a \x01(\tR\ttoolUseId\x12\x10\n" +
-	"\x03cwd\x18\b \x01(\tR\x03cwd\"\x85\x01\n" +
+	"\x03cwd\x18\b \x01(\tR\x03cwd\x12,\n" +
+	"\x0fpermission_mode\x18\t \x01(\tH\x00R\x0epermissionMode\x88\x01\x01\x12$\n" +
+	"\vduration_ms\x18\n" +
+	" \x01(\x03H\x01R\n" +
+	"durationMs\x88\x01\x01\x12\x19\n" +
+	"\x05error\x18\v \x01(\tH\x02R\x05error\x88\x01\x01\x12&\n" +
+	"\fis_interrupt\x18\f \x01(\bH\x03R\visInterrupt\x88\x01\x01B\x12\n" +
+	"\x10_permission_modeB\x0e\n" +
+	"\f_duration_msB\b\n" +
+	"\x06_errorB\x0f\n" +
+	"\r_is_interrupt\"\x85\x01\n" +
 	"\x18ProcessHookEventResponse\x126\n" +
 	"\bdecision\x18\x01 \x01(\x0e2\x1a.kontext.agent.v1.DecisionR\bdecision\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x19\n" +
@@ -836,6 +878,7 @@ func file_kontext_agent_v1_agent_proto_init() {
 	if File_kontext_agent_v1_agent_proto != nil {
 		return
 	}
+	file_kontext_agent_v1_agent_proto_msgTypes[0].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

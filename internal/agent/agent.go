@@ -11,13 +11,17 @@ type Agent interface {
 }
 
 type HookEvent struct {
-	SessionID     string
-	HookEventName string
-	ToolName      string
-	ToolInput     map[string]any
-	ToolResponse  map[string]any
-	ToolUseID     string
-	CWD           string
+	SessionID      string
+	HookEventName  string
+	ToolName       string
+	ToolInput      map[string]any
+	ToolResponse   map[string]any
+	ToolUseID      string
+	CWD            string
+	PermissionMode string
+	DurationMs     *int64
+	Error          string
+	IsInterrupt    *bool
 }
 
 var registry = map[string]Agent{}

@@ -186,12 +186,16 @@ func evaluateViaSidecar(socketPath, agentName string, e *agent.HookEvent) (bool,
 	}
 
 	req := sidecar.EvaluateRequest{
-		Type:      "evaluate",
-		Agent:     agentName,
-		HookEvent: e.HookEventName,
-		ToolName:  e.ToolName,
-		ToolUseID: e.ToolUseID,
-		CWD:       e.CWD,
+		Type:           "evaluate",
+		Agent:          agentName,
+		HookEvent:      e.HookEventName,
+		ToolName:       e.ToolName,
+		ToolUseID:      e.ToolUseID,
+		CWD:            e.CWD,
+		PermissionMode: e.PermissionMode,
+		DurationMs:     e.DurationMs,
+		Error:          e.Error,
+		IsInterrupt:    e.IsInterrupt,
 	}
 
 	if e.ToolInput != nil {
