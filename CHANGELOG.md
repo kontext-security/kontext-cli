@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/kontext-security/kontext-cli/compare/v0.4.0...v0.5.0) (2026-04-29)
+
+
+### Features
+
+* add local Guard mode ([#82](https://github.com/kontext-security/kontext-cli/issues/82)) ([d957510](https://github.com/kontext-security/kontext-cli/commit/d957510dda4361f9a333a7697e11154b9f0c9fcf))
+* **cli:** forward Claude hook metadata ([#81](https://github.com/kontext-security/kontext-cli/issues/81)) ([fb254b3](https://github.com/kontext-security/kontext-cli/commit/fb254b3500b3e77d0b27bb93ab53dfb23741e580))
+* **run:** require successful BootstrapCli before launching runtime ([#78](https://github.com/kontext-security/kontext-cli/issues/78)) ([a0ce263](https://github.com/kontext-security/kontext-cli/commit/a0ce263129faed71e4e1920e230ad9e015d73900))
+
+
+### Bug Fixes
+
+* auto-refresh OIDC token with proactive + reactive strategy ([#17](https://github.com/kontext-security/kontext-cli/issues/17)) ([c5492d3](https://github.com/kontext-security/kontext-cli/commit/c5492d36a14acc5b412a41f0a9815c706255218b))
+
 ## [0.4.0](https://github.com/kontext-security/kontext-cli/compare/v0.3.0...v0.4.0) (2026-04-18)
 
 
