@@ -16,7 +16,8 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 type DecisionRecord struct {
@@ -71,12 +72,16 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	store := &Store{db: db}
+	store := &Store{db: db, path: path}
 	if err := store.migrate(context.Background()); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return store, nil
+}
+
+func (s *Store) Path() string {
+	return s.path
 }
 
 func (s *Store) Close() error {

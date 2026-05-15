@@ -1,12 +1,18 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
+	"github.com/kontext-security/kontext-cli/internal/guard/policy"
+	"github.com/kontext-security/kontext-cli/internal/guard/policyconfig"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 )
@@ -25,6 +31,15 @@ func newTestServerWithPolicy(t *testing.T, store *sqlite.Store, policy PolicyPro
 	server, err := NewServerWithPolicy(store, policy)
 	if err != nil {
 		t.Fatalf("NewServerWithPolicy() error = %v", err)
+	}
+	return server
+}
+
+func newTestServerWithPolicyConfig(t *testing.T, store *sqlite.Store, policyStore *policyconfig.Store) *Server {
+	t.Helper()
+	server, err := NewServerWithPolicyConfig(store, NewRiskPolicyProvider(risk.NoopScorer{}), policyStore)
+	if err != nil {
+		t.Fatalf("NewServerWithPolicyConfig() error = %v", err)
 	}
 	return server
 }
@@ -119,6 +134,195 @@ func TestProcessHookEventUsesPolicyProvider(t *testing.T) {
 	}
 	if summary.Actions != 1 || summary.Warnings != 1 {
 		t.Fatalf("summary = %+v", summary)
+	}
+}
+
+func TestPolicyProfileGetReturnsLoadedDefault(t *testing.T) {
+	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	policyStore, err := policyconfig.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServerWithPolicyConfig(t, store, policyStore)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/policy/profile", nil)
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response PolicyProfileResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Profile != policy.ProfileBalanced || response.RecommendedProfile != policy.ProfileBalanced {
+		t.Fatalf("response = %+v, want default balanced profile", response)
+	}
+	if response.Version != policy.DefaultPolicyVersion || response.RulePack != policy.DefaultRulePackID || response.ActivationID == "" {
+		t.Fatalf("response metadata = %+v", response)
+	}
+}
+
+func TestPolicyProfilePostActivatesProfile(t *testing.T) {
+	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	policyStore, err := policyconfig.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServerWithPolicyConfig(t, store, policyStore)
+
+	body := bytes.NewBufferString(`{"profile":"strict"}`)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/policy/profile", body)
+	request.Header.Set("Content-Type", "application/json")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response PolicyProfileResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Profile != policy.ProfileStrict {
+		t.Fatalf("profile = %q, want strict", response.Profile)
+	}
+	if policyStore.Current().Config.Profile != policy.ProfileStrict {
+		t.Fatalf("current profile = %q, want strict", policyStore.Current().Config.Profile)
+	}
+}
+
+func TestPolicyProfilePostRejectsInvalidProfile(t *testing.T) {
+	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	policyStore, err := policyconfig.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServerWithPolicyConfig(t, store, policyStore)
+	initial := policyStore.Current()
+
+	body := bytes.NewBufferString(`{"profile":"paranoid"}`)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/policy/profile", body)
+	request.Header.Set("Content-Type", "application/json")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	current := policyStore.Current()
+	if current.Config.Profile != initial.Config.Profile || current.ConfigDigest != initial.ConfigDigest {
+		t.Fatalf("current = %+v, want unchanged %+v", current, initial)
+	}
+}
+
+func TestPolicyProfilePostRejectsCrossOriginRequest(t *testing.T) {
+	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	policyStore, err := policyconfig.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServerWithPolicyConfig(t, store, policyStore)
+	initial := policyStore.Current()
+
+	body := bytes.NewBufferString(`{"profile":"relaxed"}`)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/policy/profile", body)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "https://example.test")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+	current := policyStore.Current()
+	if current.Config.Profile != initial.Config.Profile || current.ConfigDigest != initial.ConfigDigest {
+		t.Fatalf("current = %+v, want unchanged %+v", current, initial)
+	}
+}
+
+func TestPolicyProfilePostAllowsTrustedDashboardOrigins(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		origin string
+	}{
+		{name: "same origin", target: "http://127.0.0.1:4765/api/policy/profile", origin: "http://127.0.0.1:4765"},
+		{name: "vite dev", target: "http://127.0.0.1:4765/api/policy/profile", origin: devDashboardOrigin},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			policyStore, err := policyconfig.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := newTestServerWithPolicyConfig(t, store, policyStore)
+
+			body := bytes.NewBufferString(`{"profile":"strict"}`)
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, tt.target, body)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Origin", tt.origin)
+			server.Handler().ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+			if policyStore.Current().Config.Profile != policy.ProfileStrict {
+				t.Fatalf("current profile = %q, want strict", policyStore.Current().Config.Profile)
+			}
+		})
+	}
+}
+
+func TestPolicyProfilePostRejectsSimpleContentType(t *testing.T) {
+	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	policyStore, err := policyconfig.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServerWithPolicyConfig(t, store, policyStore)
+	initial := policyStore.Current()
+
+	body := bytes.NewBufferString(`{"profile":"relaxed"}`)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/policy/profile", body)
+	request.Header.Set("Content-Type", "text/plain")
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusUnsupportedMediaType, recorder.Body.String())
+	}
+	current := policyStore.Current()
+	if current.Config.Profile != initial.Config.Profile || current.ConfigDigest != initial.ConfigDigest {
+		t.Fatalf("current = %+v, want unchanged %+v", current, initial)
 	}
 }
 
