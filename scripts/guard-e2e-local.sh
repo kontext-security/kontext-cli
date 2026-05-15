@@ -122,6 +122,22 @@ assert_telemetry_hook \
   "{\"session_id\":\"${SESSION_ID}\",\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git status\"}}"
 
 echo "==> checking API summary and persisted events"
+for _ in $(seq 1 40); do
+  if curl -fsS "${BASE_URL}/api/summary" | node -e '
+let raw = "";
+process.stdin.on("data", (chunk) => raw += chunk);
+process.stdin.on("end", () => {
+  const summary = JSON.parse(raw);
+  if (summary.critical !== 1 || summary.warnings !== 1 || summary.actions !== 4 || summary.sessions !== 1) {
+    throw new Error(`unexpected summary ${JSON.stringify(summary)}`);
+  }
+});
+' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.25
+done
+
 curl -fsS "${BASE_URL}/api/summary" | node -e '
 let raw = "";
 process.stdin.on("data", (chunk) => raw += chunk);
