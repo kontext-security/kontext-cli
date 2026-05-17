@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -154,6 +156,38 @@ func TestHookCmdModeDoesNotDefaultFromEnv(t *testing.T) {
 	}
 	if flag.DefValue != "" {
 		t.Fatalf("--mode default = %q, want empty", flag.DefValue)
+	}
+}
+
+func TestHookCmdHermesAliasModeFailsClosedThroughRootHandler(t *testing.T) {
+	cmd := hookCmd()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetIn(strings.NewReader(`{"hook_event_name":"pre_tool_call","tool_name":"terminal","tool_input":{"command":"cat .env"}}`))
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	if err := cmd.Flags().Set("agent", "hermes-agent"); err != nil {
+		t.Fatalf("Set agent error = %v", err)
+	}
+	if err := cmd.Flags().Set("mode", "enforce"); err != nil {
+		t.Fatalf("Set mode error = %v", err)
+	}
+	if err := cmd.Flags().Set("socket", filepath.Join(t.TempDir(), "missing.sock")); err != nil {
+		t.Fatalf("Set socket error = %v", err)
+	}
+
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v, stderr = %q", err, stderr.String())
+	}
+	var output map[string]string
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("Unmarshal(stdout) error = %v, stdout = %q", err, stdout.String())
+	}
+	if output["action"] != "block" {
+		t.Fatalf("action = %q, want block; stdout = %q", output["action"], stdout.String())
+	}
+	if output["message"] != "sidecar unreachable" {
+		t.Fatalf("message = %q, want sidecar unreachable", output["message"])
 	}
 }
 

@@ -56,11 +56,20 @@ func StartManaged(ctx context.Context, opts Options) error {
 	diagnostics := diagnostic.New(os.Stderr, opts.Verbose || diagnostic.EnabledFromEnv())
 	diagnostics.Printf("start managed: agent=%s env_template=%s\n", opts.Agent, opts.TemplateFile)
 
-	agentPath, err := preflightAgent(opts.Agent)
+	a, err := resolveAgent(opts.Agent)
 	if err != nil {
 		return err
 	}
-	diagnostics.Printf("agent preflight: %s -> %s\n", opts.Agent, agentPath)
+	agentName := a.Name()
+	if agentName != "claude" {
+		return fmt.Errorf("managed sessions currently support Claude Code only; use `kontext start --agent %s` for local mode", agentName)
+	}
+
+	agentPath, err := findAgentExecutable(opts.Agent, a)
+	if err != nil {
+		return err
+	}
+	diagnostics.Printf("agent preflight: %s -> %s\n", agentName, agentPath)
 
 	// 1. Auth
 	session, err := ensureSession(ctx, opts.IssuerURL, opts.ClientID)
@@ -86,7 +95,7 @@ func StartManaged(ctx context.Context, opts Options) error {
 	cwd, _ := os.Getwd()
 	createResp, err := client.CreateSession(ctx, &agentv1.CreateSessionRequest{
 		UserId:   identityKey,
-		Agent:    opts.Agent,
+		Agent:    agentName,
 		Hostname: hostname,
 		Cwd:      cwd,
 		ClientInfo: map[string]string{
@@ -209,7 +218,7 @@ func StartManaged(ctx context.Context, opts Options) error {
 		sessionDir,
 		client,
 		sessionID,
-		opts.Agent,
+		agentName,
 		bootstrapResult.AccessMode,
 		diagnostics,
 	)
@@ -222,7 +231,7 @@ func StartManaged(ctx context.Context, opts Options) error {
 	defer sc.Stop()
 	if _, err := sc.RuntimeCore().OpenSession(ctx, runtimecore.Session{
 		ID:         sessionID,
-		Agent:      opts.Agent,
+		Agent:      agentName,
 		CWD:        cwd,
 		Source:     runtimecore.SessionSourceWrapperOwned,
 		ExternalID: sessionID,
@@ -237,7 +246,7 @@ func StartManaged(ctx context.Context, opts Options) error {
 		SocketPath:  sc.SocketPath(),
 		Core:        sc.RuntimeCore(),
 		SessionID:   sessionID,
-		AgentName:   opts.Agent,
+		AgentName:   agentName,
 		AsyncIngest: true,
 		OnFailure:   sc.RuntimeFailureResult,
 		Diagnostic:  diagnostics,
@@ -255,12 +264,12 @@ func StartManaged(ctx context.Context, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("resolve kontext executable: %w", err)
 	}
-	settingsPath, err := GenerateSettings(sessionDir, kontextBin, opts.Agent)
+	settingsPath, err := GenerateSettings(sessionDir, kontextBin, agentName)
 	if err != nil {
 		return fmt.Errorf("generate settings: %w", err)
 	}
 	if bootstrapResult.AccessMode == backend.HostedAccessModeEnforce {
-		if err := VerifyBlockingHookSettings(settingsPath, kontextBin, opts.Agent); err != nil {
+		if err := VerifyBlockingHookSettings(settingsPath, kontextBin, agentName); err != nil {
 			return fmt.Errorf("verify enforce hook settings: %w", err)
 		}
 	}
@@ -273,8 +282,8 @@ func StartManaged(ctx context.Context, opts Options) error {
 	env = append(env, "KONTEXT_ACCESS_MODE_PATH="+sc.AccessModePath())
 
 	// 9. Launch agent with hooks
-	fmt.Fprintf(os.Stderr, "\nLaunching %s...\n\n", opts.Agent)
-	agentErr := launchAgentWithSettings(ctx, opts.Agent, agentPath, env, opts.Args, settingsPath)
+	fmt.Fprintf(os.Stderr, "\nLaunching %s...\n\n", agentName)
+	agentErr := launchAgentWithSettings(ctx, agentName, agentPath, env, opts.Args, settingsPath)
 
 	return agentErr
 }
@@ -1032,11 +1041,56 @@ func shouldRefreshSession(session *auth.Session, forceRefresh bool, now time.Tim
 	return forceRefresh || !now.Before(session.ExpiresAt.Add(-proactiveRefreshWindow))
 }
 
-func preflightAgent(agentName string) (string, error) {
-	if _, ok := agent.Get(agentName); !ok {
-		return "", fmt.Errorf("unsupported agent %q (supported: %s)", agentName, strings.Join(supportedAgents(), ", "))
+type agentPreflight struct {
+	Agent      agent.Agent
+	Name       string
+	BinaryPath string
+}
+
+func resolveAgent(agentName string) (agent.Agent, error) {
+	a, ok := agent.Get(agentName)
+	if !ok {
+		return nil, fmt.Errorf("unsupported agent %q (supported: %s)", agentName, strings.Join(supportedAgents(), ", "))
 	}
-	return findExecutable(agentName, os.Getenv("PATH"))
+	return a, nil
+}
+
+func preflightAgent(agentName string) (agentPreflight, error) {
+	a, err := resolveAgent(agentName)
+	if err != nil {
+		return agentPreflight{}, err
+	}
+	binaryPath, err := findAgentExecutable(agentName, a)
+	if err != nil {
+		return agentPreflight{}, err
+	}
+	return agentPreflight{Agent: a, Name: a.Name(), BinaryPath: binaryPath}, nil
+}
+
+func findAgentExecutable(requestedName string, a agent.Agent) (string, error) {
+	pathEnv := os.Getenv("PATH")
+	path, err := findExecutable(requestedName, pathEnv)
+	if err == nil {
+		return path, nil
+	}
+	if strings.Contains(requestedName, string(os.PathSeparator)) {
+		return "", err
+	}
+
+	names := []string{a.Name()}
+	if aliaser, ok := a.(agent.Aliaser); ok {
+		names = append(names, aliaser.Aliases()...)
+	}
+	for _, name := range names {
+		if name == requestedName {
+			continue
+		}
+		path, candidateErr := findExecutable(name, pathEnv)
+		if candidateErr == nil {
+			return path, nil
+		}
+	}
+	return "", err
 }
 
 func findExecutable(agentName, pathEnv string) (string, error) {
@@ -1093,13 +1147,16 @@ func validateExecutable(agentName, path string) (string, error) {
 	return path, nil
 }
 
-func launchAgentWithSettings(_ context.Context, agentName, binaryPath string, env, extraArgs []string, settingsPath string) error {
+func launchAgentWithSettings(ctx context.Context, agentName, binaryPath string, env, extraArgs []string, settingsPath string) error {
 	var args []string
 	if settingsPath != "" {
 		args = append(args, "--settings", settingsPath)
 	}
 	args = append(args, filterArgs(extraArgs)...)
+	return launchAgent(ctx, agentName, binaryPath, env, args)
+}
 
+func launchAgent(_ context.Context, agentName, binaryPath string, env, args []string) error {
 	cmd := exec.Command(binaryPath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

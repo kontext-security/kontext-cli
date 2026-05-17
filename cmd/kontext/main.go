@@ -23,6 +23,7 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/update"
 
 	_ "github.com/kontext-security/kontext-cli/internal/agent/claude"
+	_ "github.com/kontext-security/kontext-cli/internal/agent/hermes"
 )
 
 var version = "dev"
@@ -128,7 +129,7 @@ func startCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&agentName, "agent", "claude", "Agent to launch (currently: claude)")
+	cmd.Flags().StringVar(&agentName, "agent", "claude", "Agent to launch (supported: claude, hermes)")
 	cmd.Flags().StringVar(&templateFile, "env-template", ".env.kontext", "Path to env template file for --managed sessions")
 	cmd.Flags().BoolVar(&managed, "managed", false, "Launch with hosted managed credentials and shared traces")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Show redacted diagnostic output")
@@ -214,7 +215,7 @@ func hookCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				adapter := guardhookruntime.AgentAdapter{Agent: a, AgentName: agentName}
+				adapter := guardhookruntime.AgentAdapter{Agent: a, AgentName: a.Name()}
 				processor := rootHookProcessor{socketPath: resolvedSocketPath, mode: hookMode}
 				return guardhookruntime.Run(context.Background(), adapter, processor, hookMode, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}

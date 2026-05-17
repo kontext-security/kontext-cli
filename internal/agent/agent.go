@@ -10,6 +10,25 @@ type Agent interface {
 	EncodeHookResult(event hook.Event, result hook.Result) ([]byte, error)
 }
 
+type LocalLaunch struct {
+	Env  []string
+	Args []string
+}
+
+type LocalLaunchOptions struct {
+	SessionDir    string
+	KontextBinary string
+	AgentName     string
+	SocketPath    string
+	Mode          string
+	BaseEnv       []string
+	ExtraArgs     []string
+}
+
+type LocalLauncher interface {
+	PrepareLocalLaunch(LocalLaunchOptions) (LocalLaunch, error)
+}
+
 type Aliaser interface {
 	Aliases() []string
 }
