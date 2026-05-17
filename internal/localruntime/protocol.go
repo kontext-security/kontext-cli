@@ -25,18 +25,22 @@ type EvaluateRequest struct {
 }
 
 type EvaluateResult struct {
-	Type         string         `json:"type"`
-	Decision     string         `json:"decision,omitempty"`
-	Allowed      bool           `json:"allowed"`
-	Reason       string         `json:"reason"`
-	ReasonCode   string         `json:"reason_code,omitempty"`
-	RequestID    string         `json:"request_id,omitempty"`
-	Mode         string         `json:"mode,omitempty"`
-	Epoch        string         `json:"epoch,omitempty"`
-	UpdatedInput map[string]any `json:"updated_input,omitempty"`
+	Type         string     `json:"type"`
+	Decision     string     `json:"decision,omitempty"`
+	Allowed      bool       `json:"allowed"`
+	Reason       string     `json:"reason"`
+	ReasonCode   string     `json:"reason_code,omitempty"`
+	RequestID    string     `json:"request_id,omitempty"`
+	Mode         string     `json:"mode,omitempty"`
+	Epoch        string     `json:"epoch,omitempty"`
+	UpdatedInput JSONObject `json:"updated_input,omitempty"`
 }
 
-func WriteMessage(conn net.Conn, v any) error {
+type wireMessage interface {
+	EvaluateRequest | EvaluateResult
+}
+
+func WriteMessage[T wireMessage](conn net.Conn, v T) error {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
@@ -52,7 +56,7 @@ func WriteMessage(conn net.Conn, v any) error {
 	return nil
 }
 
-func ReadMessage(conn net.Conn, v any) error {
+func ReadMessage[T wireMessage](conn net.Conn, v *T) error {
 	var length uint32
 	if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
 		return fmt.Errorf("read length: %w", err)

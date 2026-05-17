@@ -95,7 +95,7 @@ func EvaluateResultFromResult(result hook.Result) EvaluateResult {
 		RequestID:    result.RequestID,
 		Mode:         result.Mode,
 		Epoch:        result.Epoch,
-		UpdatedInput: result.UpdatedInput,
+		UpdatedInput: JSONObject(result.UpdatedInput),
 	}
 }
 
@@ -111,7 +111,7 @@ func ResultFromEvaluateResult(result EvaluateResult) hook.Result {
 		RequestID:    result.RequestID,
 		Mode:         result.Mode,
 		Epoch:        result.Epoch,
-		UpdatedInput: result.UpdatedInput,
+		UpdatedInput: map[string]any(result.UpdatedInput),
 	}
 }
 

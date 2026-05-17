@@ -13,7 +13,7 @@ import (
 
 func TestActivateFromFilePersistsActiveSnapshot(t *testing.T) {
 	source := writeModel(t, t.TempDir(), "model.json", "v1")
-	store := New(t.TempDir())
+	store := NewWithValidator(t.TempDir(), nil)
 
 	snapshot, err := store.ActivateFromFile(source)
 	if err != nil {
@@ -22,15 +22,12 @@ func TestActivateFromFilePersistsActiveSnapshot(t *testing.T) {
 	if snapshot.ID == "" || snapshot.Path == "" || snapshot.SHA256 == "" {
 		t.Fatalf("snapshot missing metadata: %+v", snapshot)
 	}
-	if snapshot.SourcePath != source {
-		t.Fatalf("SourcePath = %q, want %q", snapshot.SourcePath, source)
-	}
 	if _, err := os.Stat(snapshot.Path); err != nil {
 		t.Fatalf("snapshot model file: %v", err)
 	}
-	active, err := store.Active()
+	active, err := store.active()
 	if err != nil {
-		t.Fatalf("Active() error = %v", err)
+		t.Fatalf("active() error = %v", err)
 	}
 	if active.ID != snapshot.ID || active.Path != snapshot.Path {
 		t.Fatalf("active = %+v, want snapshot %+v", active, snapshot)
@@ -44,16 +41,13 @@ func TestActivateBytesPersistsPrivateSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	store := New(root)
+	store := NewWithValidator(root, nil)
 
-	snapshot, err := store.ActivateBytes("embedded:test-model", data)
+	snapshot, err := store.ActivateBytes(data)
 	if err != nil {
 		t.Fatalf("ActivateBytes() error = %v", err)
 	}
-	if snapshot.SourcePath != "embedded:test-model" {
-		t.Fatalf("SourcePath = %q, want embedded source", snapshot.SourcePath)
-	}
-	for _, path := range []string{snapshot.Path, store.activePath(), store.snapshotMetadataPath(snapshot.ID)} {
+	for _, path := range []string{snapshot.Path, store.activePath()} {
 		info, err := os.Stat(path)
 		if err != nil {
 			t.Fatalf("Stat(%s) error = %v", path, err)
@@ -71,7 +65,7 @@ func TestActivateBytesPersistsPrivateSnapshot(t *testing.T) {
 
 func TestActivateFromFileReusesActiveSnapshotForSameModel(t *testing.T) {
 	source := writeModel(t, t.TempDir(), "model.json", "v1")
-	store := New(t.TempDir())
+	store := NewWithValidator(t.TempDir(), nil)
 
 	first, err := store.ActivateFromFile(source)
 	if err != nil {
@@ -86,53 +80,10 @@ func TestActivateFromFileReusesActiveSnapshotForSameModel(t *testing.T) {
 	}
 }
 
-func TestRollbackActivatesPreviousSnapshot(t *testing.T) {
-	dir := t.TempDir()
-	store := New(t.TempDir())
-	firstSource := writeModel(t, dir, "model-v1.json", "v1")
-	secondSource := writeModel(t, dir, "model-v2.json", "v2")
-
-	first, err := store.ActivateFromFile(firstSource)
-	if err != nil {
-		t.Fatalf("first ActivateFromFile() error = %v", err)
-	}
-	second, err := store.ActivateFromFile(secondSource)
-	if err != nil {
-		t.Fatalf("second ActivateFromFile() error = %v", err)
-	}
-	if second.PreviousID != first.ID {
-		t.Fatalf("PreviousID = %q, want %q", second.PreviousID, first.ID)
-	}
-	rolledBack, err := store.Rollback()
-	if err != nil {
-		t.Fatalf("Rollback() error = %v", err)
-	}
-	if rolledBack.ID != first.ID {
-		t.Fatalf("rolledBack ID = %q, want %q", rolledBack.ID, first.ID)
-	}
-	active, err := store.Active()
-	if err != nil {
-		t.Fatalf("Active() error = %v", err)
-	}
-	if active.ID != first.ID || active.PreviousID != second.ID {
-		t.Fatalf("active after rollback = %+v, want first with previous second", active)
-	}
-	persisted, err := store.readSnapshot(first.ID)
-	if err != nil {
-		t.Fatalf("readSnapshot() error = %v", err)
-	}
-	if persisted.ID != first.ID || persisted.PreviousID != second.ID {
-		t.Fatalf("persisted snapshot after rollback = %+v, want first with previous second", persisted)
-	}
-	if !persisted.ActivatedAt.Equal(rolledBack.ActivatedAt) {
-		t.Fatalf("persisted ActivatedAt = %s, want returned rollback activation time %s", persisted.ActivatedAt, rolledBack.ActivatedAt)
-	}
-}
-
 func TestActiveReturnsNoActiveSnapshot(t *testing.T) {
-	_, err := New(t.TempDir()).Active()
-	if !errors.Is(err, ErrNoActiveSnapshot) {
-		t.Fatalf("Active() error = %v, want ErrNoActiveSnapshot", err)
+	_, err := NewWithValidator(t.TempDir(), nil).active()
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("active() error = %v, want os.ErrNotExist", err)
 	}
 }
 
@@ -142,7 +93,7 @@ func TestActivateFromFileRejectsInvalidModel(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"states":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(t.TempDir()).ActivateFromFile(path); err == nil {
+	if _, err := NewWithValidator(t.TempDir(), nil).ActivateFromFile(path); err == nil {
 		t.Fatal("ActivateFromFile() error = nil, want invalid model error")
 	}
 }
@@ -156,8 +107,8 @@ func TestActivateFromFileRejectsValidatorError(t *testing.T) {
 	if _, err := store.ActivateFromFile(source); err == nil {
 		t.Fatal("ActivateFromFile() error = nil, want validator error")
 	}
-	if _, err := store.Active(); !errors.Is(err, ErrNoActiveSnapshot) {
-		t.Fatalf("Active() error = %v, want ErrNoActiveSnapshot", err)
+	if _, err := store.active(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("active() error = %v, want os.ErrNotExist", err)
 	}
 }
 

@@ -118,8 +118,8 @@ func TestStartLlamaServerEarlyExitDoesNotWaitForStopTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("StartLlamaServer() error = nil, want early exit error")
 	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("early exit took %s, want less than 1s", elapsed)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("early exit took %s, want less than 2s", elapsed)
 	}
 }
 

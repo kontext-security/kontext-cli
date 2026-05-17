@@ -26,9 +26,8 @@ import (
 )
 
 const (
-	defaultModelSource = "embedded:models/guard/coding-agent-v0.json"
-	defaultThreshold   = 0.5
-	defaultHorizon     = 5
+	defaultThreshold = 0.5
+	defaultHorizon   = 5
 )
 
 type Options struct {
@@ -100,9 +99,17 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	closeStoreOrJoin := func(primary error) error {
+		if closeStore == nil {
+			return primary
+		}
+		if err := closeStore(); err != nil {
+			return errors.Join(primary, fmt.Errorf("close runtime store: %w", err))
+		}
+		return primary
+	}
 	if err := os.Chmod(dbPath, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
-		_ = closeStore()
-		return nil, fmt.Errorf("secure runtime database: %w", err)
+		return nil, closeStoreOrJoin(fmt.Errorf("secure runtime database: %w", err))
 	}
 
 	sessionID := strings.TrimSpace(opts.SessionID)
@@ -110,13 +117,11 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		sessionID = NewSessionID()
 	}
 	if err := validateSessionID(sessionID); err != nil {
-		_ = closeStore()
-		return nil, err
+		return nil, closeStoreOrJoin(err)
 	}
 	sessionDir := filepath.Join("/tmp", "kontext", sessionID)
 	if err := createSessionDir(sessionDir); err != nil {
-		_ = closeStore()
-		return nil, err
+		return nil, closeStoreOrJoin(err)
 	}
 	socketPath := strings.TrimSpace(opts.SocketPath)
 	if socketPath == "" {
@@ -133,6 +138,12 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		server:          localServer,
 		closeStore:      closeStore,
 	}
+	cleanupOrJoin := func(primary error) error {
+		if err := host.Close(context.Background()); err != nil {
+			return errors.Join(primary, fmt.Errorf("cleanup runtime host: %w", err))
+		}
+		return primary
+	}
 
 	runtimeService, err := localruntime.NewService(localruntime.Options{
 		SocketPath:  socketPath,
@@ -143,18 +154,20 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		Diagnostic:  opts.Diagnostic,
 	})
 	if err != nil {
-		_ = host.Close(context.Background())
-		return nil, fmt.Errorf("local runtime: %w", err)
+		return nil, cleanupOrJoin(fmt.Errorf("local runtime: %w", err))
 	}
 	if err := runtimeService.Start(ctx); err != nil {
-		_ = host.Close(context.Background())
-		return nil, fmt.Errorf("local runtime start: %w", err)
+		return nil, cleanupOrJoin(fmt.Errorf("local runtime start: %w", err))
 	}
 	host.runtimeService = runtimeService
 
 	cwd := opts.CWD
 	if cwd == "" {
-		cwd, _ = os.Getwd()
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil, cleanupOrJoin(fmt.Errorf("get working directory: %w", err))
+		}
+		cwd = wd
 	}
 	if _, err := localServer.RuntimeCore().OpenSession(ctx, runtimecore.Session{
 		ID:         sessionID,
@@ -163,16 +176,14 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		Source:     runtimecore.SessionSourceWrapperOwned,
 		ExternalID: sessionID,
 	}); err != nil {
-		_ = host.Close(context.Background())
-		return nil, fmt.Errorf("open runtime session: %w", err)
+		return nil, cleanupOrJoin(fmt.Errorf("open runtime session: %w", err))
 	}
 	host.sessionOpened = true
 
 	if opts.StartDashboard {
 		addr, err := DashboardAddr(opts.DashboardAddr, opts.AllowNonLoopbackDashboard)
 		if err != nil {
-			_ = host.Close(context.Background())
-			return nil, err
+			return nil, cleanupOrJoin(err)
 		}
 		dashboardServer, dashboardURL, err := startDashboard(addr, localServer.Handler())
 		if err != nil {
@@ -296,7 +307,7 @@ func loadScorer(opts loadScorerOptions) (risk.Scorer, string, error) {
 	}
 	var snapshot modelsnapshot.Snapshot
 	if modelPath == "" {
-		snapshot, err = store.ActivateBytes(defaultModelSource, guardmodels.CodingAgentV0)
+		snapshot, err = store.ActivateBytes(guardmodels.CodingAgentV0)
 	} else {
 		snapshot, err = store.ActivateFromFile(modelPath)
 	}

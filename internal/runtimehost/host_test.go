@@ -65,7 +65,9 @@ func TestStartRejectsUnsafeSessionID(t *testing.T) {
 				DBPath:    filepath.Join(t.TempDir(), "guard.db"),
 			})
 			if err == nil {
-				_ = host.Close(context.Background())
+				if closeErr := host.Close(context.Background()); closeErr != nil {
+					t.Fatalf("unexpected Start() success; Close() error = %v", closeErr)
+				}
 				t.Fatal("Start() error = nil, want unsafe session ID error")
 			}
 		})

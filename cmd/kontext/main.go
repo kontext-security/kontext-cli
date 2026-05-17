@@ -219,7 +219,7 @@ func hookCmd() *cobra.Command {
 				return guardhookruntime.Run(context.Background(), adapter, processor, hookMode, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}
 			hookcmd.Run(a, func(e hook.Event) (hook.Result, error) {
-				return evaluateHookWithSidecar(resolvedSocketPath, e)
+				return evaluateHookWithSidecarForMode(resolvedSocketPath, e, "")
 			})
 			return nil
 		},
@@ -251,19 +251,11 @@ func resolveHookSocketPath(flagValue string) string {
 	return localruntime.DefaultSocketPath()
 }
 
-func evaluateHookWithSidecar(socketPath string, event hook.Event) (hook.Result, error) {
-	return evaluateHookWithSidecarForMode(socketPath, event, "")
-}
-
 func evaluateHookWithSidecarForMode(socketPath string, event hook.Event, mode string) (hook.Result, error) {
 	if socketPath == "" {
 		return sidecarFailureResult(event, "sidecar socket missing", mode), nil
 	}
 	return evaluateViaSidecarForMode(socketPath, event, mode)
-}
-
-func evaluateViaSidecar(socketPath string, event hook.Event) (hook.Result, error) {
-	return evaluateViaSidecarForMode(socketPath, event, "")
 }
 
 func evaluateViaSidecarForMode(socketPath string, event hook.Event, mode string) (hook.Result, error) {
@@ -310,9 +302,10 @@ func sidecarFailureResult(event hook.Event, reason, mode string) hook.Result {
 }
 
 func normalizedHookMode(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
 	case "observe", "enforce":
-		return strings.ToLower(strings.TrimSpace(value))
+		return normalized
 	default:
 		return ""
 	}
