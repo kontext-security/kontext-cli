@@ -19,8 +19,6 @@ func Decision(decision risk.RiskDecision) {
 	}
 	title := "Kontext would allow"
 	switch decision.Decision {
-	case risk.DecisionAsk:
-		title = "Kontext would ask"
 	case risk.DecisionDeny:
 		title = "Kontext would deny"
 	}

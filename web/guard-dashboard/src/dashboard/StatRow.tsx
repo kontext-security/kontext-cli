@@ -6,13 +6,11 @@ import type { Counts, Decision, Tab } from "./types";
 
 const DECISION_TILES: { id: Decision; label: string }[] = [
   { id: "deny", label: "Would deny" },
-  { id: "ask", label: "Needs ask" },
   { id: "allow", label: "Allowed" },
 ];
 
 const RATIO_KINDS: { kind: Decision; label: string }[] = [
   { kind: "deny", label: "Would deny" },
-  { kind: "ask", label: "Ask" },
   { kind: "allow", label: "Allow" },
 ];
 
@@ -35,7 +33,7 @@ export function StatRow({
         loading={loading}
         onClick={() => onSelect("all")}
       />
-      <div className="grid divide-y md:grid-cols-3 md:divide-x md:divide-y-0">
+      <div className="grid divide-y md:grid-cols-2 md:divide-x md:divide-y-0">
         {DECISION_TILES.map((t) => (
           <StatTile
             key={t.id}

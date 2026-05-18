@@ -52,19 +52,19 @@ func TestAgentAdapterEncodeObserveModeAllowsWouldDeny(t *testing.T) {
 	}
 }
 
-func TestAgentAdapterEncodeEnforceModeAsksAsk(t *testing.T) {
+func TestAgentAdapterEncodeEnforceModeDenies(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
 	err := AgentAdapter{Agent: &claude.Claude{}, AgentName: "claude-code"}.Encode(
 		&out,
 		hook.Event{HookName: hook.HookPreToolUse},
-		hook.Result{Decision: hook.DecisionAsk, Reason: "needs review", Mode: string(ModeEnforce)},
+		hook.Result{Decision: hook.DecisionDeny, Reason: "blocked", Mode: string(ModeEnforce)},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"permissionDecision":"ask"`) {
+	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
 		t.Fatalf("output = %s", out.String())
 	}
 }
