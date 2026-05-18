@@ -32,7 +32,6 @@ type Decision string
 
 const (
 	DecisionAllow Decision = "allow"
-	DecisionAsk   Decision = "ask"
 	DecisionDeny  Decision = "deny"
 )
 

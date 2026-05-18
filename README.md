@@ -36,7 +36,7 @@ kontext start
 
 This starts the currently supported adapter, Claude Code, with a local Kontext runtime. No hosted login is required.
 
-By default, Kontext runs in observe mode: the agent keeps running, while Kontext records `would allow`, `would ask`, and `would deny` decisions in the local dashboard. The dashboard is served on loopback, with the URL printed at startup.
+By default, Kontext runs in observe mode: the agent keeps running, while Kontext records `would allow` and `would deny` decisions in the local dashboard. The dashboard is served on loopback, with the URL printed at startup.
 
 To block supported risky pre-tool actions, start in enforce mode:
 
@@ -46,10 +46,10 @@ KONTEXT_MODE=enforce kontext start
 
 ## Core features
 
-Kontext balances security and utility for AI agents: low-risk actions keep moving, sensitive actions require approval, and unsafe actions can be blocked before they execute.
+Kontext balances security and utility for AI agents: low-risk actions keep moving, and unsafe actions can be blocked before they execute.
 
 - **Audit trails:** Record who instructed which agent to do what, what the agent accessed, which tools it called, what policy decisions were made, and what happened next. Build a chain of custody for security review, incident investigation, and compliance evidence.
-- **Deterministic policy:** Apply `allow`, `ask`, and `deny` rules to agent actions at runtime, before they execute. Use hard policies for known boundaries such as destructive commands, production resources, sensitive files, data exports, and credential access.
+- **Deterministic policy:** Apply `allow` and `deny` rules to agent actions at runtime, before they execute. Use hard policies for known boundaries such as destructive commands, production resources, sensitive files, data exports, and credential access.
 - **Probabilistic risk detection:** Route actions that deterministic policy allows through a local judge for an additional allow/deny decision without sending tool context to hosted services.
 - **Credential injection:** Inject scoped OAuth credentials at runtime using RFC 8693-compliant OAuth 2.0 Token Exchange, so agents can access approved tools without users pasting secrets into chat, config files, or project environments. Credentials can be short-lived, least-privilege, and bound to the current user, session, or workflow.
 
@@ -62,7 +62,7 @@ Agent tool call
   -> action classification
   -> deterministic policy
   -> probabilistic risk score
-  -> allow / ask / deny
+  -> allow / deny
   -> local dashboard
 ```
 
@@ -90,7 +90,7 @@ For enterprise identity, audit retention, organization controls, deployment plan
 | Default | Behavior |
 | --- | --- |
 | Local evaluation | Default `kontext start` does not require hosted login or trace upload. |
-| Observe mode | Decisions are recorded as `would allow`, `would ask`, or `would deny` without blocking the agent. |
+| Observe mode | Decisions are recorded as `would allow` or `would deny` without blocking the agent. |
 | Loopback dashboard | The local dashboard binds to loopback by default. |
 | Redacted storage | Tool events and decisions are stored locally with redaction. |
 | No reasoning capture | Kontext captures tool events and outcomes, not LLM reasoning, token usage, or full conversation history. |
@@ -118,7 +118,7 @@ kontext start
   |-- Local runtime: Unix socket service + RuntimeCore
   |-- Local dashboard: 127.0.0.1:4765
   |-- Deterministic policy: curated rule categories + active profile
-  |-- Probabilistic risk: score + ask escalation for ambiguous actions
+  |-- Probabilistic risk: localhost allow/deny decision after deterministic allow
   |-- Store: local SQLite with redacted events and decision metadata
 ```
 

@@ -14,20 +14,17 @@ import type { Decision, Event, EventGroups, Tab } from "./types";
 const TITLES: Record<Tab, string> = {
   all: "All actions",
   deny: "Denied · this session",
-  ask: "Needs ask · this session",
   allow: "Allowed · this session",
 };
 
 const GROUP_LABELS: Record<Decision, string> = {
   deny: "Would deny",
-  ask: "Needs ask",
   allow: "Allow",
 };
 
 const VISIBLE_KINDS: Record<Tab, Decision[]> = {
-  all: ["deny", "ask", "allow"],
+  all: ["deny", "allow"],
   deny: ["deny"],
-  ask: ["ask"],
   allow: ["allow"],
 };
 

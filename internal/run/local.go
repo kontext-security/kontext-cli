@@ -75,8 +75,8 @@ func StartLocal(ctx context.Context, opts Options) error {
 
 func printLocalMode(out *os.File, mode string) {
 	if mode == "enforce" {
-		fmt.Fprintln(out, "Mode: enforce (ask and deny decisions block supported pre-tool actions).")
+		fmt.Fprintln(out, "Mode: enforce (deny decisions block supported pre-tool actions).")
 		return
 	}
-	fmt.Fprintln(out, "Mode: observe (agent actions run normally; decisions are recorded as would allow / would ask / would deny).")
+	fmt.Fprintln(out, "Mode: observe (agent actions run normally; decisions are recorded as would allow / would deny).")
 }

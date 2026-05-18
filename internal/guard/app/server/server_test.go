@@ -79,7 +79,7 @@ func TestProcessHookEventUsesPolicyProvider(t *testing.T) {
 	defer store.Close()
 	policy := recordingPolicy{
 		decision: risk.RiskDecision{
-			Decision:   risk.DecisionAsk,
+			Decision:   risk.DecisionDeny,
 			Reason:     "custom policy",
 			ReasonCode: "custom_policy",
 			RiskEvent: risk.RiskEvent{
@@ -100,14 +100,14 @@ func TestProcessHookEventUsesPolicyProvider(t *testing.T) {
 	if !policy.called {
 		t.Fatal("policy provider was not called")
 	}
-	if decision.Decision != risk.DecisionAsk || decision.ReasonCode != "custom_policy" || decision.EventID == "" {
+	if decision.Decision != risk.DecisionDeny || decision.ReasonCode != "custom_policy" || decision.EventID == "" {
 		t.Fatalf("decision = %+v", decision)
 	}
 	summary, err := store.Summary(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Actions != 1 || summary.Warnings != 1 {
+	if summary.Actions != 1 || summary.Warnings != 0 || summary.Critical != 1 {
 		t.Fatalf("summary = %+v", summary)
 	}
 }
