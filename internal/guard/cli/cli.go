@@ -598,13 +598,7 @@ func uninstallClaudeHooks(out io.Writer) error {
 		if !ok {
 			continue
 		}
-		filtered := make([]any, 0, len(list))
-		for _, entry := range list {
-			if !isGuardHookEntry(entry) {
-				filtered = append(filtered, entry)
-			}
-		}
-		hooks[hookName] = filtered
+		hooks[hookName] = filterGuardHookEntries(list)
 	}
 	if err := writeJSONFile(settingsPath, settings); err != nil {
 		return err
@@ -666,11 +660,7 @@ func mergeHooks(raw any, hookCommand string) map[string]any {
 	for _, hookName := range []string{"PreToolUse", "PostToolUse", "UserPromptSubmit"} {
 		var list []any
 		if existing, ok := hooks[hookName].([]any); ok {
-			for _, entry := range existing {
-				if !isGuardHookEntry(entry) {
-					list = append(list, entry)
-				}
-			}
+			list = filterGuardHookEntries(existing)
 		}
 		if len(list) == 0 {
 			delete(hooks, hookName)
@@ -695,6 +685,49 @@ func mergeHooks(raw any, hookCommand string) map[string]any {
 		hooks[hookName] = list
 	}
 	return hooks
+}
+
+func filterGuardHookEntries(entries []any) []any {
+	filtered := make([]any, 0, len(entries))
+	for _, entry := range entries {
+		filteredEntry, ok := filterGuardHookEntry(entry)
+		if ok {
+			filtered = append(filtered, filteredEntry)
+		}
+	}
+	return filtered
+}
+
+func filterGuardHookEntry(entry any) (any, bool) {
+	group, ok := entry.(map[string]any)
+	if !ok {
+		return entry, !isGuardHookEntry(entry)
+	}
+	rawHooks, ok := group["hooks"].([]any)
+	if !ok {
+		return entry, true
+	}
+	filteredHooks := make([]any, 0, len(rawHooks))
+	for _, rawHook := range rawHooks {
+		hookMap, ok := rawHook.(map[string]any)
+		if !ok {
+			filteredHooks = append(filteredHooks, rawHook)
+			continue
+		}
+		command, ok := hookMap["command"].(string)
+		if !ok || !isGuardHookCommand(command) {
+			filteredHooks = append(filteredHooks, rawHook)
+		}
+	}
+	if len(filteredHooks) == 0 {
+		return nil, false
+	}
+	filteredGroup := make(map[string]any, len(group))
+	for key, value := range group {
+		filteredGroup[key] = value
+	}
+	filteredGroup["hooks"] = filteredHooks
+	return filteredGroup, true
 }
 
 func isGuardHookEntry(entry any) bool {

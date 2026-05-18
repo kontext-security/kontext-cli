@@ -108,6 +108,123 @@ func TestMergeHooksInstallsOnlyToolHooks(t *testing.T) {
 	}
 }
 
+func TestMergeHooksPreservesUnrelatedHookInMixedMatcherGroup(t *testing.T) {
+	t.Parallel()
+
+	hooks := mergeHooks(map[string]any{
+		"PreToolUse": []any{
+			map[string]any{
+				"matcher": "*",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": "/usr/local/bin/kontext guard hook claude-code",
+					},
+					map[string]any{
+						"type":    "command",
+						"command": "echo keep-me",
+					},
+				},
+			},
+		},
+	}, `/usr/local/bin/kontext hook --agent claude --mode "${KONTEXT_MODE:-observe}" --socket /tmp/kontext.sock`)
+
+	entries := hooks["PreToolUse"].([]any)
+	if len(entries) != 2 {
+		t.Fatalf("PreToolUse entries = %d, want preserved group plus installed group", len(entries))
+	}
+	commands := hookCommands(entries)
+	if !containsString(commands, "echo keep-me") {
+		t.Fatalf("commands = %v, want unrelated hook preserved", commands)
+	}
+	for _, command := range commands {
+		if command == "/usr/local/bin/kontext guard hook claude-code" {
+			t.Fatalf("commands = %v, want legacy Guard hook removed", commands)
+		}
+	}
+}
+
+func TestUninstallClaudeHooksPreservesUnrelatedHookInMixedMatcherGroup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	settings := map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				map[string]any{
+					"matcher": "*",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "/usr/local/bin/kontext guard hook claude-code",
+						},
+						map[string]any{
+							"type":    "command",
+							"command": "echo keep-me",
+						},
+					},
+				},
+			},
+		},
+	}
+	writeJSON(t, settingsPath, settings)
+
+	var stdout bytes.Buffer
+	if err := uninstallClaudeHooks(&stdout); err != nil {
+		t.Fatal(err)
+	}
+
+	var updated map[string]any
+	readJSON(t, settingsPath, &updated)
+	hooks := updated["hooks"].(map[string]any)
+	entries := hooks["PreToolUse"].([]any)
+	commands := hookCommands(entries)
+	if !containsString(commands, "echo keep-me") {
+		t.Fatalf("commands = %v, want unrelated hook preserved", commands)
+	}
+	for _, command := range commands {
+		if isGuardHookCommand(command) {
+			t.Fatalf("commands = %v, want Guard hooks removed", commands)
+		}
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func writeJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	bytes, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytes = append(bytes, '\n')
+	if err := os.WriteFile(path, bytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(bytes, value); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStartRejectsInvalidNumericEnvironment(t *testing.T) {
 	t.Setenv("KONTEXT_THRESHOLD", "high")
 
