@@ -287,10 +287,21 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, events)
+		writeJSON(w, http.StatusOK, dashboardDecisionRecords(events))
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
+}
+
+func dashboardDecisionRecords(records []sqlite.DecisionRecord) []sqlite.DecisionRecord {
+	out := make([]sqlite.DecisionRecord, len(records))
+	for i, record := range records {
+		out[i] = record
+		out[i].ModelVersion = ""
+		out[i].RiskEvent.ModelVersion = ""
+		out[i].RiskEvent.JudgeModel = ""
+	}
+	return out
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {

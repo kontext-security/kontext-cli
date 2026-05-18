@@ -25,11 +25,15 @@ export type RiskEvent = {
   signals?: string[];
   guard_id?: string;
   confidence?: number;
+  policy_version?: string;
   policy_profile?: string;
+  policy_rule_pack?: string;
   policy_rule_id?: string;
   policy_rule_category?: string;
+  policy_signals?: string[];
   judge_runtime?: string;
   judge_model?: string;
+  judge_duration_ms?: number;
   judge_failure_kind?: string;
   judge_risk_level?: string;
   judge_categories?: string[];
@@ -42,6 +46,7 @@ export type Event = {
   decision: Decision;
   reason?: string;
   reason_code?: string;
+  created_at?: string;
   risk_event?: RiskEvent;
 };
 

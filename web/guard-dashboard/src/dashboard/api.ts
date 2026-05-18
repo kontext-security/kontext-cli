@@ -95,11 +95,15 @@ function parseRiskEvent(value: unknown): RiskEvent | undefined {
     signals: stringList(value.signals),
     guard_id: optionalString(value.guard_id),
     confidence: optionalNumber(value.confidence),
+    policy_version: optionalString(value.policy_version),
     policy_profile: optionalString(value.policy_profile),
+    policy_rule_pack: optionalString(value.policy_rule_pack),
     policy_rule_id: optionalString(value.policy_rule_id),
     policy_rule_category: optionalString(value.policy_rule_category),
+    policy_signals: stringList(value.policy_signals),
     judge_runtime: optionalString(value.judge_runtime),
     judge_model: optionalString(value.judge_model),
+    judge_duration_ms: optionalNumber(value.judge_duration_ms),
     judge_failure_kind: optionalString(value.judge_failure_kind),
     judge_risk_level: optionalString(value.judge_risk_level),
     judge_categories: stringList(value.judge_categories),
@@ -131,6 +135,7 @@ function parseEvent(value: unknown): Event | undefined {
     decision: parsedDecision,
     reason: optionalString(value.reason),
     reason_code: optionalString(value.reason_code),
+    created_at: optionalString(value.created_at),
     risk_event: parseRiskEvent(value.risk_event),
   };
 }

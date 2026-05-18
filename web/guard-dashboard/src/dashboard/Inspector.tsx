@@ -3,6 +3,7 @@ import { SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import {
   actionSummary,
+  dateTime,
   decisionLabel,
   decisionSource,
   decisionTone,
@@ -18,6 +19,16 @@ import type { Event } from "./types";
 export function Inspector({ event }: { event: Event }) {
   const r = event.risk_event ?? {};
   const tone = decisionTone[event.decision];
+  const timestamp = dateTime(event.created_at);
+  const judgeResult =
+    r.decision_stage === "judge_allow"
+      ? "allow"
+      : r.decision_stage === "judge_deny"
+        ? "deny"
+        : r.decision_stage === "judge_fail_open"
+          ? "fail open"
+          : "";
+  const judgeLatency = formatDurationMs(r.judge_duration_ms);
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -37,9 +48,6 @@ export function Inspector({ event }: { event: Event }) {
             <pre className="whitespace-pre-wrap break-words font-mono text-[15px] font-medium leading-snug tracking-tight text-foreground">
               {summaryOf(event)}
             </pre>
-            <p className="text-[13.5px] leading-relaxed text-foreground/75">
-              {humanReason(event)}
-            </p>
           </div>
 
           <dl className="grid grid-cols-[120px_1fr] gap-y-3 text-[13px]">
@@ -53,10 +61,28 @@ export function Inspector({ event }: { event: Event }) {
             <Dd>
               <span className="font-mono text-[12.5px]">{r.environment || "unknown"}</span>
             </Dd>
-            {r.judge_model && (
+            {timestamp && (
               <>
-                <Dt>Judge</Dt>
-                <Dd>{r.judge_model}</Dd>
+                <Dt>Timestamp</Dt>
+                <Dd>{timestamp}</Dd>
+              </>
+            )}
+            {r.policy_version && (
+              <>
+                <Dt>Policy version</Dt>
+                <Dd>{r.policy_version}</Dd>
+              </>
+            )}
+            {r.policy_profile && (
+              <>
+                <Dt>Policy profile</Dt>
+                <Dd>{humanize(r.policy_profile)}</Dd>
+              </>
+            )}
+            {r.policy_rule_pack && (
+              <>
+                <Dt>Rule pack</Dt>
+                <Dd>{r.policy_rule_pack}</Dd>
               </>
             )}
             {r.policy_rule_id && (
@@ -65,7 +91,35 @@ export function Inspector({ event }: { event: Event }) {
                 <Dd>{r.policy_rule_id}</Dd>
               </>
             )}
+            {r.policy_rule_category && (
+              <>
+                <Dt>Rule category</Dt>
+                <Dd>{humanize(r.policy_rule_category)}</Dd>
+              </>
+            )}
+            {judgeResult && (
+              <>
+                <Dt>Judge result</Dt>
+                <Dd>{judgeResult}</Dd>
+              </>
+            )}
+            {r.judge_risk_level && (
+              <>
+                <Dt>Judge risk</Dt>
+                <Dd>{humanize(r.judge_risk_level)}</Dd>
+              </>
+            )}
+            {judgeLatency && (
+              <>
+                <Dt>Judge latency</Dt>
+                <Dd>{judgeLatency}</Dd>
+              </>
+            )}
           </dl>
+
+          <Section title="Reason">
+            <p className="text-[13px] leading-relaxed text-foreground/80">{humanReason(event)}</p>
+          </Section>
 
           <Section title="Analysis">
             <p className="text-[13px] leading-relaxed text-foreground/80">
@@ -95,15 +149,40 @@ export function Inspector({ event }: { event: Event }) {
             </Section>
           )}
 
+          {(r.policy_signals ?? []).length > 0 && (
+            <Section title="Policy Signals">
+              <div className="flex flex-wrap gap-1.5">
+                {(r.policy_signals ?? []).map((s) => (
+                  <SignalChip key={s} signal={s} toneClass={tone.bg} />
+                ))}
+              </div>
+            </Section>
+          )}
+
           {event.reason_code && (
             <div className="border-t pt-4 font-mono text-[10.5px] uppercase tracking-[0.2em] text-muted-foreground">
-              reason · <span className="text-foreground/70">{event.reason_code}</span>
+              decision code · <span className="text-foreground/70">{event.reason_code}</span>
             </div>
           )}
         </div>
       </ScrollArea>
     </div>
   );
+}
+
+function SignalChip({ signal, toneClass }: { signal: string; toneClass: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md border bg-card px-2 py-1 font-mono text-[11px] text-foreground/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
+      <span className={cn("h-1 w-1 rounded-full", toneClass)} />
+      {humanize(signal)}
+    </span>
+  );
+}
+
+function formatDurationMs(value?: number): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "";
+  if (value < 1000) return `${Math.round(value)} ms`;
+  return `${(value / 1000).toFixed(1)} s`;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

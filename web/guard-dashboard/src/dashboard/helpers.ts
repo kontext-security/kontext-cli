@@ -62,7 +62,7 @@ export function humanReason(e: Event): string {
   if (e.risk_event?.decision_stage === "judge_fail_open") {
     return "Local judge was unavailable, so Guard allowed by fail-open policy.";
   }
-  return e.reason || e.reason_code || "No explanation captured.";
+  return e.reason || (e.reason_code ? humanize(e.reason_code) : "No explanation captured.");
 }
 
 export function technicalExplanation(e: Event): string {
@@ -71,10 +71,10 @@ export function technicalExplanation(e: Event): string {
     return "Not a live gate. Recorded after execution for local session history.";
   }
   if (r.decision_stage === "judge_allow") {
-    return `Deterministic policy allowed this action, then the local judge allowed it${r.judge_model ? ` using ${r.judge_model}` : ""}.`;
+    return "Deterministic policy allowed this action, then the local judge allowed it.";
   }
   if (r.decision_stage === "judge_deny") {
-    return `Deterministic policy allowed this action, then the local judge denied it${r.judge_model ? ` using ${r.judge_model}` : ""}.`;
+    return "Deterministic policy allowed this action, then the local judge denied it.";
   }
   if (r.decision_stage === "judge_fail_open") {
     return `Deterministic policy allowed this action, but the local judge failed${r.judge_failure_kind ? ` with ${humanize(r.judge_failure_kind)}` : ""}.`;
@@ -113,6 +113,16 @@ export function relativeTime(value?: string): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+export function dateTime(value?: string): string {
+  if (!value) return "";
+  const ts = Date.parse(value);
+  if (Number.isNaN(ts)) return "";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "medium",
+  }).format(ts);
 }
 
 export function decisionLabel(decision: Event["decision"]): string {
