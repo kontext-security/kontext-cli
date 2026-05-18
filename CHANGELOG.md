@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.7.0](https://github.com/kontext-security/kontext-cli/compare/v0.6.0...v0.7.0) (2026-05-18)
+
+
+### Features
+
+* add local guard judge contract ([#132](https://github.com/kontext-security/kontext-cli/issues/132)) ([ef6a3cd](https://github.com/kontext-security/kontext-cli/commit/ef6a3cd1c1cfba54e3c4e8c645c27b3c7829a5c3))
+* **cli:** make kontext start local-first ([#140](https://github.com/kontext-security/kontext-cli/issues/140)) ([02a34bf](https://github.com/kontext-security/kontext-cli/commit/02a34bfaf553a7d7dd5adf2fa4fba09168bd7667))
+* **dashboard:** show guard diagnostics ([#156](https://github.com/kontext-security/kontext-cli/issues/156)) ([dcbdf4a](https://github.com/kontext-security/kontext-cli/commit/dcbdf4a3925a21c7605a65001617cb75d57f6182))
+* **guard:** add deterministic policy engine ([#131](https://github.com/kontext-security/kontext-cli/issues/131)) ([3a0f16e](https://github.com/kontext-security/kontext-cli/commit/3a0f16e94cb205b317a0f8d8d42e2ba66096f452))
+* **guard:** add policy config store ([#135](https://github.com/kontext-security/kontext-cli/issues/135)) ([520c3b6](https://github.com/kontext-security/kontext-cli/commit/520c3b679421d36ef79fe2430441e7dc10abe057))
+* **guard:** add policy profile dashboard ([#137](https://github.com/kontext-security/kontext-cli/issues/137)) ([0b0e856](https://github.com/kontext-security/kontext-cli/commit/0b0e856c8f63bbf3ee321bf319d789968e1488de))
+* **guard:** connect deterministic policy and judge ([#154](https://github.com/kontext-security/kontext-cli/issues/154)) ([25f0d32](https://github.com/kontext-security/kontext-cli/commit/25f0d32707b2de240d5907d4ca542166c0b074b5))
+* manage local judge runtime ([#136](https://github.com/kontext-security/kontext-cli/issues/136)) ([09f4fc0](https://github.com/kontext-security/kontext-cli/commit/09f4fc070146b0ad1924f82b6ac23b26ade079bd))
+* **runtime service:** Guard now starts a Unix-socket localruntime.Service alongside the existing HTTP daemon ([#122](https://github.com/kontext-security/kontext-cli/issues/122)) ([3e87e12](https://github.com/kontext-security/kontext-cli/commit/3e87e12ae91dd9a2546b816b6b1b38b2cc4a8289))
+* **runtime service:** Introduce runtime service and make existing Unix socket more generic ([#121](https://github.com/kontext-security/kontext-cli/issues/121)) ([2bbaa93](https://github.com/kontext-security/kontext-cli/commit/2bbaa933273dd8f7bd39af03849f5c638db1c974))
+
+
+### Bug Fixes
+
+* **dashboard:** contain command drawer text ([#157](https://github.com/kontext-security/kontext-cli/issues/157)) ([4107e31](https://github.com/kontext-security/kontext-cli/commit/4107e319b180f85fb936f8b8d6d66a0bf79fb435))
+* **dashboard:** polish activity summary and log groups ([#153](https://github.com/kontext-security/kontext-cli/issues/153)) ([fc79101](https://github.com/kontext-security/kontext-cli/commit/fc7910160ed271e816acf3439eef0d8be48a16e9))
+* harden npm dependency resolution ([#114](https://github.com/kontext-security/kontext-cli/issues/114)) ([86eadf5](https://github.com/kontext-security/kontext-cli/commit/86eadf512d35ddb329f53fb9d24a61e561a260db))
+* optimize judge fixture category matching ([#146](https://github.com/kontext-security/kontext-cli/issues/146)) ([0bad7ab](https://github.com/kontext-security/kontext-cli/commit/0bad7ab17c71be2c2ec8b35b39da79a37b0a2410))
+* **repo:** remove repo-wide codeowners ([#133](https://github.com/kontext-security/kontext-cli/issues/133)) ([73557f0](https://github.com/kontext-security/kontext-cli/commit/73557f0dd0b47f1b6da0a69f36eb8168fa981455))
+
 ## [0.6.0](https://github.com/kontext-security/kontext-cli/compare/v0.5.1...v0.6.0) (2026-05-03)
 
 
