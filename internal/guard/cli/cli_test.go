@@ -108,6 +108,118 @@ func TestMergeHooksInstallsOnlyToolHooks(t *testing.T) {
 	}
 }
 
+func TestPrintHookStatusReportsConflictForMixedHooks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	settings := `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/kontext hook --agent claude --mode observe --socket /tmp/kontext.sock"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/kontext hook --agent claude"
+          }
+        ]
+      }
+    ]
+  }
+}`
+	if err := os.WriteFile(settingsPath, []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	PrintHookStatus(&out)
+
+	output := out.String()
+	for _, want := range []string{
+		"Claude Code Guard hook: /usr/local/bin/kontext hook --agent claude --mode observe --socket /tmp/kontext.sock",
+		"Claude Code hosted hook: /usr/local/bin/kontext hook --agent claude",
+		"Claude Code hook mode: conflict (hosted and Guard hooks are both installed)",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("PrintHookStatus() output = %q, want %q", output, want)
+		}
+	}
+}
+
+func TestUninstallClaudeHooksRemovesGuardEntriesOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	settings := `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/kontext hook --agent claude --mode observe --socket /tmp/kontext.sock"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/kontext hook --agent claude"
+          }
+        ]
+      }
+    ]
+  }
+}`
+	if err := os.WriteFile(settingsPath, []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := uninstallClaudeHooks(&out); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var written map[string]any
+	if err := json.Unmarshal(raw, &written); err != nil {
+		t.Fatal(err)
+	}
+	hooks := written["hooks"].(map[string]any)
+	preToolUse := hooks["PreToolUse"].([]any)
+	if len(preToolUse) != 1 {
+		t.Fatalf("remaining PreToolUse entries = %d, want 1", len(preToolUse))
+	}
+	remaining := preToolUse[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"]
+	if remaining != "/usr/local/bin/kontext hook --agent claude" {
+		t.Fatalf("remaining command = %v, want hosted hook", remaining)
+	}
+}
+
 func TestStartRejectsInvalidNumericEnvironment(t *testing.T) {
 	t.Setenv("KONTEXT_THRESHOLD", "high")
 
