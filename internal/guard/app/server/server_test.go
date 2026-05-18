@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -490,7 +492,59 @@ func TestJudgePolicyDeniesFromLocalJudge(t *testing.T) {
 	if decision.Decision != risk.DecisionDeny || decision.ReasonCode != "judge_deny" {
 		t.Fatalf("decision = %+v", decision)
 	}
-	if decision.RiskEvent.JudgeModel != "qwen3-0.6b-q4" || decision.RiskEvent.JudgeRiskLevel != "high" {
+	if decision.RiskEvent.DecisionStage != risk.DecisionStageJudgeDeny || decision.RiskEvent.JudgeModel != "qwen3-0.6b-q4" || decision.RiskEvent.JudgeRiskLevel != "high" {
+		t.Fatalf("risk event = %+v", decision.RiskEvent)
+	}
+}
+
+func TestJudgePolicyAllowsFromLocalJudge(t *testing.T) {
+	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	localJudge := &recordingJudge{
+		result: judge.Result{
+			Output: judge.Output{
+				Decision:   judge.DecisionAllow,
+				RiskLevel:  judge.RiskLevelLow,
+				Categories: []string{"normal_coding"},
+				Reason:     "Safe local read.",
+			},
+			Metadata: judge.Metadata{
+				Runtime:    "openai-compatible",
+				Model:      "qwen3-0.6b-q4",
+				DurationMs: 8,
+			},
+		},
+	}
+	server, err := NewServerWithOptions(store, Options{Judge: localJudge})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := server.ProcessHookEvent(context.Background(), risk.HookEvent{
+		SessionID:     "s1",
+		HookEventName: "PreToolUse",
+		Agent:         "claude",
+		ToolName:      "Read",
+		ToolInput:     map[string]any{"file_path": "README.md"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if localJudge.calls != 1 {
+		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
+	}
+	if localJudge.input.NormalizedEvent.Type != string(risk.EventNormalToolCall) {
+		t.Fatalf("judge input = %+v", localJudge.input)
+	}
+	if localJudge.input.DeterministicPolicy.Decision != "allow" || localJudge.input.DeterministicPolicy.PolicyVersion != policy.DefaultPolicyVersion {
+		t.Fatalf("deterministic context = %+v", localJudge.input.DeterministicPolicy)
+	}
+	if decision.Decision != risk.DecisionAllow || decision.ReasonCode != risk.DecisionStageJudgeAllow {
+		t.Fatalf("decision = %+v", decision)
+	}
+	if decision.RiskEvent.DecisionStage != risk.DecisionStageJudgeAllow || decision.RiskEvent.PolicyVersion != policy.DefaultPolicyVersion {
 		t.Fatalf("risk event = %+v", decision.RiskEvent)
 	}
 }
@@ -562,7 +616,7 @@ func TestJudgePolicyFailsOpenWhenJudgeUnavailable(t *testing.T) {
 	if decision.Decision != risk.DecisionAllow || decision.ReasonCode != "judge_unavailable_allow" {
 		t.Fatalf("decision = %+v", decision)
 	}
-	if decision.RiskEvent.JudgeFailureKind != judge.FailureTimeout || decision.RiskEvent.DecisionStage != "judge_fail_open" {
+	if decision.RiskEvent.JudgeFailureKind != judge.FailureTimeout || decision.RiskEvent.DecisionStage != risk.DecisionStageJudgeFailOpen {
 		t.Fatalf("risk event = %+v", decision.RiskEvent)
 	}
 }
@@ -590,8 +644,110 @@ func TestJudgePolicyDeterministicDecisionSkipsJudge(t *testing.T) {
 	if localJudge.calls != 0 {
 		t.Fatalf("judge calls = %d, want 0", localJudge.calls)
 	}
-	if decision.Decision != risk.DecisionDeny || decision.RiskEvent.DecisionStage != "deterministic" {
+	if decision.Decision != risk.DecisionDeny || decision.RiskEvent.DecisionStage != risk.DecisionStageDeterministicDeny {
 		t.Fatalf("decision = %+v", decision)
+	}
+	if decision.RiskEvent.PolicyRuleID != "guard.destructive_persistent_resource.v1" ||
+		decision.RiskEvent.PolicyRuleCategory != string(policy.CategoryDestructivePersistentResource) ||
+		decision.RiskEvent.PolicyVersion != policy.DefaultPolicyVersion {
+		t.Fatalf("policy metadata = %+v", decision.RiskEvent)
+	}
+}
+
+func TestJudgePolicyUsesActiveProfileForDeterministicRules(t *testing.T) {
+	dir := t.TempDir()
+	policyStore, err := policyconfig.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := policyStore.ActivateProfile(context.Background(), policy.ProfileRelaxed); err != nil {
+		t.Fatal(err)
+	}
+	store, err := sqlite.OpenStore(filepath.Join(dir, "guard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	localJudge := &recordingJudge{
+		result: judge.Result{
+			Output: judge.Output{
+				Decision:   judge.DecisionAllow,
+				RiskLevel:  judge.RiskLevelLow,
+				Categories: []string{"explicit_profile"},
+				Reason:     "Relaxed profile allows this to reach the judge.",
+			},
+			Metadata: judge.Metadata{Runtime: "openai-compatible", Model: "qwen3-0.6b-q4"},
+		},
+	}
+	server, err := NewServerWithOptions(store, Options{Judge: localJudge})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := server.ProcessHookEvent(context.Background(), risk.HookEvent{
+		SessionID:     "s1",
+		HookEventName: "PreToolUse",
+		ToolName:      "Read",
+		ToolInput:     map[string]any{"file_path": ".env"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if localJudge.calls != 1 {
+		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
+	}
+	if localJudge.input.NormalizedEvent.Type != string(risk.EventCredentialAccess) {
+		t.Fatalf("judge input = %+v", localJudge.input)
+	}
+	if decision.Decision != risk.DecisionAllow || decision.RiskEvent.PolicyProfile != string(policy.ProfileRelaxed) {
+		t.Fatalf("decision = %+v", decision)
+	}
+}
+
+func TestJudgePolicyFallsBackWhenActivePolicyConfigInvalid(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "guard", "policy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "guard", "policy", "active.json"), []byte(`{"version":"invalid-active-policy","profile":"custom","rulePack":"guard-default","nonBypassableRules":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := sqlite.OpenStore(filepath.Join(dir, "guard.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	localJudge := &recordingJudge{
+		result: judge.Result{
+			Output: judge.Output{
+				Decision:   judge.DecisionAllow,
+				RiskLevel:  judge.RiskLevelLow,
+				Categories: []string{"fallback"},
+				Reason:     "Fallback policy allowed this to reach the judge.",
+			},
+			Metadata: judge.Metadata{Runtime: "openai-compatible", Model: "qwen3-0.6b-q4"},
+		},
+	}
+	server, err := NewServerWithOptions(store, Options{Judge: localJudge})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := server.ProcessHookEvent(context.Background(), risk.HookEvent{
+		SessionID:     "s1",
+		HookEventName: "PreToolUse",
+		ToolName:      "Read",
+		ToolInput:     map[string]any{"file_path": "README.md"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if localJudge.calls != 1 {
+		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
+	}
+	if localJudge.input.DeterministicPolicy.PolicyVersion != policy.DefaultPolicyVersion {
+		t.Fatalf("deterministic context = %+v", localJudge.input.DeterministicPolicy)
+	}
+	if decision.RiskEvent.PolicyVersion != policy.DefaultPolicyVersion || decision.RiskEvent.PolicyProfile != string(policy.ProfileBalanced) {
+		t.Fatalf("risk event = %+v", decision.RiskEvent)
 	}
 }
 

@@ -36,6 +36,13 @@ const (
 	DecisionDeny  Decision = "deny"
 )
 
+const (
+	DecisionStageDeterministicDeny = "deterministic_deny"
+	DecisionStageJudgeAllow        = "judge_allow"
+	DecisionStageJudgeDeny         = "judge_deny"
+	DecisionStageJudgeFailOpen     = "judge_fail_open"
+)
+
 type RiskEvent struct {
 	Type               EventType `json:"type"`
 	Provider           string    `json:"provider,omitempty"`
@@ -60,6 +67,11 @@ type RiskEvent struct {
 	Signals            []string  `json:"signals,omitempty"`
 	DecisionStage      string    `json:"decision_stage,omitempty"`
 	PolicyVersion      string    `json:"policy_version,omitempty"`
+	PolicyProfile      string    `json:"policy_profile,omitempty"`
+	PolicyRulePack     string    `json:"policy_rule_pack,omitempty"`
+	PolicyRuleID       string    `json:"policy_rule_id,omitempty"`
+	PolicyRuleCategory string    `json:"policy_rule_category,omitempty"`
+	PolicySignals      []string  `json:"policy_signals,omitempty"`
 	JudgeRuntime       string    `json:"judge_runtime,omitempty"`
 	JudgeModel         string    `json:"judge_model,omitempty"`
 	JudgeDurationMs    *int64    `json:"judge_duration_ms,omitempty"`

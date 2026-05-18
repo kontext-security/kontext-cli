@@ -146,6 +146,35 @@ func TestOpenAICompatibleJudgeClassifiesTimeout(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleJudgeDoesNotFollowRedirects(t *testing.T) {
+	redirectTargetCalled := false
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectTargetCalled = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer redirectTarget.Close()
+	redirectSource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirectSource.Close()
+
+	localJudge, err := NewOpenAICompatibleJudge(HTTPOptions{
+		BaseURL: redirectSource.URL,
+		Model:   "qwen3-0.6b-q4",
+		Timeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = localJudge.Decide(context.Background(), Input{HookEvent: "PreToolUse"})
+	if FailureKind(err) != FailureUnavailable {
+		t.Fatalf("FailureKind(err) = %q, err=%v", FailureKind(err), err)
+	}
+	if redirectTargetCalled {
+		t.Fatal("judge followed redirect target")
+	}
+}
+
 func TestChatCompletionsEndpointAcceptsV1Base(t *testing.T) {
 	endpoint, err := chatCompletionsEndpoint("http://127.0.0.1:8080/v1")
 	if err != nil {

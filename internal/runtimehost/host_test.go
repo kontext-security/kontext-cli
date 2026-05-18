@@ -3,11 +3,14 @@ package runtimehost
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
+	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 	"github.com/kontext-security/kontext-cli/internal/hook"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
@@ -146,6 +149,100 @@ func TestStartPersistsLocalDecisions(t *testing.T) {
 	}
 	if string(events[0].Decision) != string(result.Decision) {
 		t.Fatalf("stored decision = %q, want %q", events[0].Decision, result.Decision)
+	}
+}
+
+func TestStartWiresLocalJudgeFromEnv(t *testing.T) {
+	ctx := context.Background()
+	judgeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("judge path = %q, want /v1/chat/completions", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"decision\":\"deny\",\"risk_level\":\"high\",\"categories\":[\"test\"],\"reason\":\"test judge deny\"}"}}]}`))
+	}))
+	defer judgeServer.Close()
+	t.Setenv("KONTEXT_JUDGE_URL", judgeServer.URL)
+	t.Setenv("KONTEXT_JUDGE_MODEL", "test-local-judge")
+
+	dbPath := filepath.Join(t.TempDir(), "guard.db")
+	host, err := Start(ctx, Options{
+		AgentName:          "claude",
+		CWD:                t.TempDir(),
+		DBPath:             dbPath,
+		JudgeConfigFromEnv: true,
+		Diagnostic:         diagnostic.New(nil, false),
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	client := localruntime.NewClient(host.SocketPath)
+	_, err = client.Process(ctx, hook.Event{
+		Agent:    "claude",
+		HookName: hook.HookPreToolUse,
+		ToolName: "Bash",
+		ToolInput: map[string]any{
+			"command": "echo hello",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	sessionID := host.SessionID
+	if err := host.Close(ctx); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	store, err := sqlite.OpenStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	events, err := store.Events(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("Events() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want 1", len(events))
+	}
+	if events[0].Decision != risk.DecisionDeny || events[0].RiskEvent.DecisionStage != risk.DecisionStageJudgeDeny {
+		t.Fatalf("stored decision = %q stage = %q, want judge deny", events[0].Decision, events[0].RiskEvent.DecisionStage)
+	}
+	if events[0].RiskEvent.JudgeModel != "test-local-judge" {
+		t.Fatalf("judge model = %q, want test-local-judge", events[0].RiskEvent.JudgeModel)
+	}
+}
+
+func TestStartIgnoresJudgeEnvUnlessEnabled(t *testing.T) {
+	t.Setenv("KONTEXT_JUDGE_TIMEOUT", "not-a-duration")
+
+	host, err := Start(context.Background(), Options{
+		AgentName: "claude",
+		CWD:       t.TempDir(),
+		DBPath:    filepath.Join(t.TempDir(), "guard.db"),
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer host.Close(context.Background())
+}
+
+func TestStartValidatesJudgeEnvWhenEnabled(t *testing.T) {
+	t.Setenv("KONTEXT_JUDGE_TIMEOUT", "not-a-duration")
+
+	host, err := Start(context.Background(), Options{
+		AgentName:          "claude",
+		CWD:                t.TempDir(),
+		DBPath:             filepath.Join(t.TempDir(), "guard.db"),
+		JudgeConfigFromEnv: true,
+	})
+	if err == nil {
+		_ = host.Close(context.Background())
+		t.Fatal("Start() error = nil, want judge env validation error")
+	}
+	if !strings.Contains(err.Error(), "KONTEXT_JUDGE_TIMEOUT") {
+		t.Fatalf("error = %v, want judge timeout error", err)
 	}
 }
 
