@@ -50,7 +50,7 @@ Kontext balances security and utility for AI agents: low-risk actions keep movin
 
 - **Audit trails:** Record who instructed which agent to do what, what the agent accessed, which tools it called, what policy decisions were made, and what happened next. Build a chain of custody for security review, incident investigation, and compliance evidence.
 - **Deterministic policy:** Apply `allow`, `ask`, and `deny` rules to agent actions at runtime, before they execute. Use hard policies for known boundaries such as destructive commands, production resources, sensitive files, data exports, and credential access.
-- **Local LLM judge:** Route actions that deterministic policy allows through a local judge for an additional allow/deny decision without sending tool context to hosted services.
+- **Probabilistic risk detection:** Route actions that deterministic policy allows through a local judge for an additional allow/deny decision without sending tool context to hosted services.
 - **Credential injection:** Inject scoped OAuth credentials at runtime using RFC 8693-compliant OAuth 2.0 Token Exchange, so agents can access approved tools without users pasting secrets into chat, config files, or project environments. Credentials can be short-lived, least-privilege, and bound to the current user, session, or workflow.
 
 The local decision path is:
@@ -61,7 +61,7 @@ Agent tool call
   -> local runtime socket
   -> action classification
   -> deterministic policy
-  -> local LLM judge
+  -> probabilistic risk score
   -> allow / ask / deny
   -> local dashboard
 ```
