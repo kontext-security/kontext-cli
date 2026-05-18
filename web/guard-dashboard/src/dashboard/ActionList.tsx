@@ -63,17 +63,22 @@ export function ActionList({
         <Empty />
       ) : (
         <div>
-          {VISIBLE_KINDS[tab].map((kind) => {
-            const items = groups[kind];
-            if (items.length === 0) return null;
-            return (
-              <Group key={kind} label={GROUP_LABELS[kind]} kind={kind} count={items.length}>
+          {VISIBLE_KINDS[tab]
+            .map((kind) => ({ kind, items: groups[kind] }))
+            .filter(({ items }) => items.length > 0)
+            .map(({ kind, items }, index) => (
+              <Group
+                key={kind}
+                label={GROUP_LABELS[kind]}
+                kind={kind}
+                count={items.length}
+                separated={index > 0}
+              >
                 {items.map((e) => (
                   <Row key={e.id} event={e} active={openId === e.id} onClick={() => onOpen(e.id)} />
                 ))}
               </Group>
-            );
-          })}
+            ))}
         </div>
       )}
     </section>
@@ -96,17 +101,24 @@ function Group({
   label,
   kind,
   count,
+  separated,
   children,
 }: {
   label: string;
   kind: Decision;
   count: number;
+  separated: boolean;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(true);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex w-full items-center gap-2 border-b bg-muted/20 px-5 py-2 text-left text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted/40">
+      <CollapsibleTrigger
+        className={cn(
+          "flex w-full items-center gap-2 border-b bg-muted/40 px-5 py-2 text-left text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted/40",
+          separated && "border-t",
+        )}
+      >
         <ChevronDown
           className={cn("h-3 w-3 transition-transform", !open && "-rotate-90")}
         />
@@ -115,7 +127,7 @@ function Group({
         <span className="tabular-nums text-[11px] text-muted-foreground">{count}</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
-        <div className="ml-8 border-l border-border/80">{children}</div>
+        <div>{children}</div>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -137,7 +149,7 @@ function Row({
     <button
       onClick={onClick}
       className={cn(
-        "group relative grid w-full grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-4 border-b px-4 py-3 text-left transition-colors last:border-b-0",
+        "group relative grid w-full grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-4 border-b px-8 py-3 text-left transition-colors last:border-b-0",
         "hover:bg-muted/40",
         active && "bg-accent",
       )}
