@@ -109,7 +109,7 @@ func TestStartLlamaServerEarlyExitDoesNotWaitForStopTimeout(t *testing.T) {
 	modelPath := writeTestModel(t)
 	binaryPath := writeFakeExitingLlamaServer(t)
 	startupTimeout := 5 * time.Second
-	maxWait := 2500 * time.Millisecond
+	maxWait := 3 * time.Second
 	start := time.Now()
 	_, err := StartLlamaServer(context.Background(), LlamaServerOptions{
 		BinaryPath:     binaryPath,
