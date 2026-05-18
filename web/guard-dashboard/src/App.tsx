@@ -206,7 +206,10 @@ export default function App() {
         </main>
 
         <Sheet open={!!opened} onOpenChange={(open) => !open && setOpenId(null)}>
-          <SheetContent side="right" className="w-[540px] max-w-[92vw] p-0 sm:max-w-[540px]">
+          <SheetContent
+            side="right"
+            className="w-[540px] max-w-[92vw] overflow-x-hidden p-0 sm:max-w-[540px]"
+          >
             {opened && <Inspector event={opened} />}
           </SheetContent>
         </Sheet>

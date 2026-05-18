@@ -46,12 +46,16 @@ export function Kv({ k, v }: { k: string; v: string }) {
 
 export function Dt({ children }: { children: React.ReactNode }) {
   return (
-    <dt className="self-center text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">
+    <dt className="self-center break-words text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground [overflow-wrap:anywhere]">
       {children}
     </dt>
   );
 }
 
 export function Dd({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <dd className={cn("text-foreground/90", className)}>{children}</dd>;
+  return (
+    <dd className={cn("min-w-0 break-words text-foreground/90 [overflow-wrap:anywhere]", className)}>
+      {children}
+    </dd>
+  );
 }
