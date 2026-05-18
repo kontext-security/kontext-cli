@@ -34,7 +34,7 @@ brew install kontext-security/tap/kontext
 kontext start
 ```
 
-This starts the currently supported adapter, Claude Code, with a local Kontext runtime. No hosted login is required.
+By default, this starts Claude Code with a local Kontext runtime. Use `kontext start --agent hermes` to start Hermes Agent instead. No hosted login is required for local sessions.
 
 By default, Kontext runs in observe mode: the agent keeps running, while Kontext records `would allow`, `would ask`, and `would deny` decisions in the local dashboard. The dashboard is served on loopback, with the URL printed at startup.
 
@@ -100,6 +100,7 @@ For enterprise identity, audit retention, organization controls, deployment plan
 | Agent | Status | Start command | Support level |
 | --- | --- | --- | --- |
 | Claude Code | Active | `kontext start` or `kontext start --agent claude` | Local observe/enforce, dashboard diagnostics, managed sessions. |
+| Hermes Agent | Beta | `kontext start --agent hermes` | Local observe/enforce for `pre_tool_call` and `post_tool_call`; no managed sessions or native approval prompts yet. |
 | Goose | Planned | Coming soon | Adapter not shipped yet. |
 | Codex | Planned | Coming soon | Adapter not shipped yet. |
 | Cursor | Planned | Coming soon | Adapter not shipped yet. |
@@ -111,9 +112,11 @@ Additional agents can be added through adapters that send compatible tool events
 ```text
 kontext start
   |
-  |-- Agent hook adapter (Claude Code today)
+  |-- Agent hook adapter
   |     |-- PreToolUse  -> kontext hook --agent claude --mode observe --socket /tmp/kontext/.../kontext.sock
   |     |-- PostToolUse -> kontext hook --agent claude --mode observe --socket /tmp/kontext/.../kontext.sock
+  |     |-- pre_tool_call  -> kontext hook --agent hermes --mode observe --socket /tmp/kontext/.../kontext.sock
+  |     |-- post_tool_call -> kontext hook --agent hermes --mode observe --socket /tmp/kontext/.../kontext.sock
   |
   |-- Local runtime: Unix socket service + RuntimeCore
   |-- Local dashboard: 127.0.0.1:4765

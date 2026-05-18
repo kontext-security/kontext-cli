@@ -19,6 +19,36 @@ go run ./cmd/kontext guard start
 claude
 ```
 
+## Hermes Agent
+
+Hermes Agent can run under the local Kontext runtime with the Hermes shell-hook adapter:
+
+```bash
+kontext start --agent hermes
+KONTEXT_MODE=enforce kontext start --agent hermes
+```
+
+Kontext creates a per-session temporary Hermes home shaped as a Hermes profile, snapshots the required Hermes config/auth/env state, and writes temporary shell-hook config that points back to the local Kontext socket. It does not edit `~/.hermes/config.yaml`, does not preserve user-defined shell hooks in the generated session config, and pre-approves only the generated Kontext hook commands in the temporary allowlist.
+
+In observe mode, the generated Hermes hook config uses this shape. Enforce sessions use `--mode enforce` in the same command positions:
+
+```yaml
+hooks:
+  pre_tool_call:
+    - command: "kontext hook --agent hermes --mode observe --socket /tmp/kontext/.../kontext.sock"
+      timeout: 20
+  post_tool_call:
+    - command: "kontext hook --agent hermes --mode observe --socket /tmp/kontext/.../kontext.sock"
+      timeout: 20
+```
+
+Current limitations:
+
+- `ask` approval is not supported through Hermes shell hooks. In observe mode, Kontext records would-ask decisions. In enforce mode, Kontext maps `ask` and `deny` decisions to a Hermes block response.
+- `updatedInput` is not supported through Hermes shell hooks.
+- Managed sessions remain Claude-only.
+- If Hermes cannot run the hook subprocess, the hook times out, or the hook emits malformed output, Hermes logs the problem and continues the agent loop.
+
 ## Runtime boundary
 
 Guard mode is local-first by default:
@@ -34,7 +64,7 @@ Guard mode is local-first by default:
 Hosted mode remains separate:
 
 ```bash
-kontext start --agent claude
+kontext start --managed
 ```
 
 Hosted mode owns login, provider connection, short-lived scoped credentials, hosted traces, and team governance.
