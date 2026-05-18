@@ -233,6 +233,7 @@ where id = ?
 }
 
 func (s *Store) SaveDecision(ctx context.Context, event risk.HookEvent, decision risk.RiskDecision) (DecisionRecord, error) {
+	normalizeAskDecision(&decision)
 	now := time.Now().UTC()
 	sessionID := normalizeSessionID(event.SessionID)
 	id := "evt_" + uuid.NewString()
@@ -294,8 +295,8 @@ func (s *Store) Summary(ctx context.Context) (Summary, error) {
 	var summary Summary
 	row := s.db.QueryRowContext(ctx, `
 select
-  coalesce(sum(case when "decision" = 'deny' then 1 else 0 end), 0),
-  coalesce(sum(case when "decision" = 'ask' then 1 else 0 end), 0),
+  coalesce(sum(case when "decision" in ('deny', 'ask') then 1 else 0 end), 0),
+  0,
   count(*),
   (select count(*) from agent_sessions)
 from risk_decisions
@@ -309,8 +310,8 @@ from risk_decisions
 func (s *Store) Sessions(ctx context.Context) ([]SessionSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
 select session_id,
-  sum(case when "decision" = 'deny' then 1 else 0 end) as critical,
-  sum(case when "decision" = 'ask' then 1 else 0 end) as warnings,
+  sum(case when "decision" in ('deny', 'ask') then 1 else 0 end) as critical,
+  0 as warnings,
   count(*) as actions,
   max(created_at) as latest_at
 from risk_decisions
@@ -343,8 +344,8 @@ func (s *Store) SessionSummary(ctx context.Context, sessionID string) (SessionSu
 	var latest string
 	row := s.db.QueryRowContext(ctx, `
 select session_id,
-  sum(case when "decision" = 'deny' then 1 else 0 end),
-  sum(case when "decision" = 'ask' then 1 else 0 end),
+  sum(case when "decision" in ('deny', 'ask') then 1 else 0 end),
+  0,
   count(*),
   max(created_at)
 from risk_decisions
@@ -406,12 +407,37 @@ func scanDecision(scanner interface{ Scan(...any) error }) (DecisionRecord, erro
 	if err := json.Unmarshal([]byte(riskEventJSON), &record.RiskEvent); err != nil {
 		return DecisionRecord{}, err
 	}
+	normalizeAskRecord(&record)
 	createdAt, err := parseStoredTime("decision created_at", created)
 	if err != nil {
 		return DecisionRecord{}, err
 	}
 	record.CreatedAt = createdAt
 	return record, nil
+}
+
+func normalizeAskDecision(decision *risk.RiskDecision) {
+	if decision == nil {
+		return
+	}
+	if decision.Decision == risk.Decision("ask") {
+		decision.Decision = risk.DecisionDeny
+	}
+	if decision.RiskEvent.Decision == risk.Decision("ask") {
+		decision.RiskEvent.Decision = risk.DecisionDeny
+	}
+}
+
+func normalizeAskRecord(record *DecisionRecord) {
+	if record == nil {
+		return
+	}
+	if record.Decision == risk.Decision("ask") {
+		record.Decision = risk.DecisionDeny
+	}
+	if record.RiskEvent.Decision == risk.Decision("ask") {
+		record.RiskEvent.Decision = risk.DecisionDeny
+	}
 }
 
 func scanSession(scanner interface{ Scan(...any) error }) (SessionRecord, error) {

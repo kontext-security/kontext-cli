@@ -1,6 +1,6 @@
-export type Decision = "allow" | "ask" | "deny";
+export type Decision = "allow" | "deny";
 
-export type Tab = "all" | "deny" | "ask" | "allow";
+export type Tab = "all" | "deny" | "allow";
 
 export type PolicyProfileID = "relaxed" | "balanced" | "strict";
 
@@ -78,7 +78,6 @@ export type PolicyProfileDef = {
 
 export type Counts = {
   all: number;
-  ask: number;
   deny: number;
   allow: number;
 };

@@ -172,7 +172,7 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 	defer runtimeService.Stop()
 	fmt.Fprintf(out, "Kontext Guard local daemon listening on http://%s\n", *addr)
 	fmt.Fprintf(out, "Hook runtime: unix://%s\n", *socketPath)
-	fmt.Fprintln(out, "Mode: observe (Claude Code runs normally; decisions are recorded as would allow / would ask / would deny).")
+	fmt.Fprintln(out, "Mode: observe (Claude Code runs normally; decisions are recorded as would allow / would deny).")
 	fmt.Fprintf(out, "Dashboard: http://%s\n", *addr)
 	if localJudge != nil {
 		fmt.Fprintf(out, "Local judge: %s\n", judgeStatus)
@@ -368,7 +368,6 @@ func runStatus(ctx context.Context, args []string, out io.Writer) error {
 	}
 	fmt.Fprintln(out, "Kontext Guard active")
 	fmt.Fprintf(out, "%d critical\n", summary.Critical)
-	fmt.Fprintf(out, "%d warnings\n", summary.Warnings)
 	fmt.Fprintf(out, "%d actions\n", summary.Actions)
 	fmt.Fprintf(out, "Dashboard: %s\n", *baseURL)
 	return nil
@@ -540,7 +539,7 @@ func installClaudeHooks(out io.Writer, socketPath string) error {
 	}
 	fmt.Fprintf(out, "Installed Kontext Guard Claude Code hooks into %s\n", settingsPath)
 	fmt.Fprintf(out, "Hook command: %s\n", hookCommand)
-	fmt.Fprintln(out, "Default mode is observe. Set KONTEXT_MODE=enforce later to block ask/deny decisions.")
+	fmt.Fprintln(out, "Default mode is observe. Set KONTEXT_MODE=enforce later to block deny decisions.")
 	return nil
 }
 
@@ -733,9 +732,9 @@ func runSmokeTest(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	if summary.Actions != 5 || summary.Warnings != 0 || summary.Critical != 4 {
-		return fmt.Errorf("summary=%+v, want actions=5 warnings=0 critical=4", summary)
+		return fmt.Errorf("summary=%+v, want actions=5 critical=4 and no warnings", summary)
 	}
-	fmt.Fprintf(out, "summary critical=%d warnings=%d actions=%d\n", summary.Critical, summary.Warnings, summary.Actions)
+	fmt.Fprintf(out, "summary critical=%d actions=%d\n", summary.Critical, summary.Actions)
 	return nil
 }
 

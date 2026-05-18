@@ -53,9 +53,10 @@ function stringList(value: unknown): string[] | undefined {
 function decision(value: unknown): Decision | undefined {
   switch (value) {
     case "allow":
-    case "ask":
     case "deny":
       return value;
+    case "ask":
+      return "deny";
     default:
       return undefined;
   }

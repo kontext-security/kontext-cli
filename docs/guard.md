@@ -2,21 +2,19 @@
 
 Guard is the local safety mode inside `kontext`.
 
-It lets a developer run Claude Code normally while Kontext watches tool calls locally, redacts captured data, stores events in local SQLite, and shows a local dashboard with `would allow`, `would ask`, and `would deny` decisions.
+It lets a developer run Claude Code normally while Kontext watches tool calls locally, redacts captured data, stores events in local SQLite, and shows a local dashboard with `would allow` and `would deny` decisions.
 
 ## User path
 
 ```bash
 brew install kontext-security/tap/kontext
-kontext guard start
-claude
+kontext start
 ```
 
 Until the Guard PR is merged and released, test from source:
 
 ```bash
-go run ./cmd/kontext guard start
-claude
+go run ./cmd/kontext start
 ```
 
 ## Runtime boundary
@@ -31,10 +29,10 @@ Guard mode is local-first by default:
 - embedded local dashboard
 - observe mode by default
 
-Hosted mode remains separate:
+Hosted managed mode remains separate:
 
 ```bash
-kontext start --agent claude
+kontext start --managed --agent claude
 ```
 
 Hosted mode owns login, provider connection, short-lived scoped credentials, hosted traces, and team governance.
@@ -47,7 +45,7 @@ Claude Code
   -> local runtime Unix socket
   -> RuntimeCore
   -> deterministic policy
-  -> local LLM judge when deterministic policy allows
+  -> probabilistic risk when deterministic policy allows
   -> local SQLite
   -> local dashboard + notifications
 ```
@@ -57,11 +55,11 @@ Claude Code
 Guard uses two layers:
 
 1. Deterministic policy for obvious risk, such as credential access, direct provider API calls with credential material, production mutations, and destructive persistent-resource operations.
-2. A local LLM judge for cases deterministic policy allows.
+2. Probabilistic risk for cases deterministic policy allows.
 
 ## Local judge
 
-Guard can optionally call a localhost OpenAI-compatible judge, such as `llama-server`, after deterministic rules allow a blocking tool call:
+The user-facing `kontext start` path manages a local judge by default. For daemon-only diagnostics, Guard can call a localhost OpenAI-compatible judge, such as `llama-server`, after deterministic rules allow a blocking tool call:
 
 ```bash
 kontext guard start \

@@ -70,7 +70,7 @@ func ParseMode(value string) (Mode, error) {
 }
 
 func normalizeResult(result hook.Result) hook.Result {
-	if result.Decision == hook.DecisionAllow || result.Decision == hook.DecisionAsk || result.Decision == hook.DecisionDeny {
+	if result.Decision == hook.DecisionAllow || result.Decision == hook.DecisionDeny {
 		return result
 	}
 	result.Decision = hook.DecisionDeny

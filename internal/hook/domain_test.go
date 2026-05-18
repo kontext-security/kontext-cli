@@ -13,8 +13,8 @@ func TestNormalizeDecision(t *testing.T) {
 	}{
 		{name: "allow lowercase", in: "allow", want: DecisionAllow, ok: true},
 		{name: "allow uppercase", in: "ALLOW", want: DecisionAllow, ok: true},
-		{name: "ask padded", in: " ask ", want: DecisionAsk, ok: true},
 		{name: "deny mixed case", in: "DeNy", want: DecisionDeny, ok: true},
+		{name: "ask padded", in: " ask ", want: DecisionAsk, ok: true},
 		{name: "unknown", in: "retry", ok: false},
 	}
 
