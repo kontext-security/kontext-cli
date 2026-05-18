@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -105,21 +103,6 @@ func TestMergeHooksInstallsOnlyToolHooks(t *testing.T) {
 	}
 	if _, ok := hooks["UserPromptSubmit"]; ok {
 		t.Fatal("UserPromptSubmit hook installed, want only tool hooks")
-	}
-}
-
-func TestStartRejectsInvalidNumericEnvironment(t *testing.T) {
-	t.Setenv("KONTEXT_THRESHOLD", "high")
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	err := Run(context.Background(), []string{"start", "--model", "", "--skip-hook-install", "--no-open"}, strings.NewReader(""), &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected invalid threshold error")
-	}
-	var numErr *strconv.NumError
-	if !strings.Contains(err.Error(), "KONTEXT_THRESHOLD must be a number") || !errors.As(err, &numErr) {
-		t.Fatalf("err = %v", err)
 	}
 }
 

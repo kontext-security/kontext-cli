@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { decisionTone, prettyTool, scoreLabel, summaryOf } from "./helpers";
+import { decisionSource, decisionTone, prettyTool, summaryOf } from "./helpers";
 import { DecisionDot } from "./shared";
 import type { Decision, Event, EventGroups, Tab } from "./types";
 
@@ -173,12 +173,12 @@ function Row({
         )}
         <span
           className={cn(
-            "rounded-md border bg-background/60 px-1.5 py-0.5 font-mono text-[11px] font-medium tabular-nums",
+            "rounded-md border bg-background/60 px-1.5 py-0.5 font-mono text-[10.5px] font-medium",
             tone.border,
             event.decision === "allow" ? "text-muted-foreground" : tone.text,
           )}
         >
-          {scoreLabel(event)}
+          {decisionSource(event)}
         </span>
         <ChevronDown
           className={cn(

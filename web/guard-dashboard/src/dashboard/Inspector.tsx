@@ -1,6 +1,5 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
   actionSummary,
@@ -18,10 +17,6 @@ import type { Event } from "./types";
 
 export function Inspector({ event }: { event: Event }) {
   const r = event.risk_event ?? {};
-  const score = event.risk_score ?? null;
-  const threshold = event.threshold ?? null;
-  const ratio =
-    score != null && threshold != null && threshold > 0 ? Math.min(1.2, score / threshold) : null;
   const tone = decisionTone[event.decision];
 
   return (
@@ -47,19 +42,29 @@ export function Inspector({ event }: { event: Event }) {
             </p>
           </div>
 
-          {score != null && threshold != null && (
-            <RiskMeter tone={tone} score={score} threshold={threshold} ratio={ratio} />
-          )}
-
           <dl className="grid grid-cols-[120px_1fr] gap-y-3 text-[13px]">
             <Dt>Operation</Dt>
             <Dd>{r.operation || r.operation_class || "unknown"}</Dd>
             <Dt>Source</Dt>
             <Dd>{decisionSource(event)}</Dd>
+            <Dt>Stage</Dt>
+            <Dd>{r.decision_stage ? humanize(r.decision_stage) : "unknown"}</Dd>
             <Dt>Environment</Dt>
             <Dd>
               <span className="font-mono text-[12.5px]">{r.environment || "unknown"}</span>
             </Dd>
+            {r.judge_model && (
+              <>
+                <Dt>Judge</Dt>
+                <Dd>{r.judge_model}</Dd>
+              </>
+            )}
+            {r.policy_rule_id && (
+              <>
+                <Dt>Policy rule</Dt>
+                <Dd>{r.policy_rule_id}</Dd>
+              </>
+            )}
           </dl>
 
           <Section title="Analysis">
@@ -101,59 +106,6 @@ export function Inspector({ event }: { event: Event }) {
   );
 }
 
-function RiskMeter({
-  tone,
-  score,
-  threshold,
-  ratio,
-}: {
-  tone: { text: string; bg: string };
-  score: number;
-  threshold: number;
-  ratio: number | null;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div className="cursor-default rounded-xl border bg-card p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.04)]">
-          <div className="flex items-baseline justify-between gap-3">
-            <div className="flex flex-col">
-              <span className="font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
-                Risk score
-              </span>
-              <span
-                className={cn(
-                  "mt-1 font-mono text-[28px] font-semibold leading-none tracking-tight tabular-nums",
-                  tone.text,
-                )}
-              >
-                {score.toFixed(3)}
-              </span>
-            </div>
-            <div className="text-right">
-              <span className="font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
-                Threshold
-              </span>
-              <div className="mt-1 font-mono text-[13px] tabular-nums text-foreground/70">
-                {threshold.toFixed(3)}
-              </div>
-            </div>
-          </div>
-          {ratio != null && (
-            <div className="mt-3 h-1 overflow-hidden rounded-full bg-muted">
-              <div
-                className={cn("h-full rounded-full transition-all", tone.bg)}
-                style={{ width: `${Math.min(100, ratio * 100)}%` }}
-              />
-            </div>
-          )}
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="left">Risk score relative to threshold</TooltipContent>
-    </Tooltip>
-  );
-}
-
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="space-y-2.5">
@@ -164,4 +116,3 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     </div>
   );
 }
-

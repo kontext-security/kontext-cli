@@ -22,8 +22,6 @@ export const SAMPLE_EVENTS: Event[] = [
     decision: "deny",
     reason_code: "production_mutation",
     reason: "Production mutation blocked by deterministic policy.",
-    risk_score: 0.982,
-    threshold: 0.8,
     risk_event: {
       type: "provider_operation",
       operation: "delete",
@@ -32,6 +30,8 @@ export const SAMPLE_EVENTS: Event[] = [
       command_summary: "kubectl delete deployment checkout-api -n production",
       signals: ["production", "mutation", "persistent_resource"],
       guard_id: "guard.production_mutation.v1",
+      decision_stage: "deterministic_deny",
+      policy_rule_id: "guard.production_mutation.v1",
     },
   },
   {
@@ -41,8 +41,6 @@ export const SAMPLE_EVENTS: Event[] = [
     decision: "deny",
     reason_code: "credential_access_without_intent",
     reason: "Credential access blocked by deterministic policy.",
-    risk_score: 0.944,
-    threshold: 0.8,
     risk_event: {
       type: "credential_access",
       operation: "read",
@@ -51,17 +49,17 @@ export const SAMPLE_EVENTS: Event[] = [
       command_summary: "Read local AWS credentials without explicit user intent",
       signals: ["credential_path", "credential_observed"],
       guard_id: "guard.credential_access.v1",
+      decision_stage: "deterministic_deny",
+      policy_rule_id: "guard.credential_access.v1",
     },
   },
   {
     id: "evt-admin-reindex-001",
     session_id: SAMPLE_SESSION_ID,
     tool_name: "Bash",
-    decision: "ask",
-    reason_code: "model_risk_threshold",
-    reason: "Markov sequence risk crossed the local threshold.",
-    risk_score: 0.836,
-    threshold: 0.8,
+    decision: "deny",
+    reason_code: "judge_deny",
+    reason: "Local judge denied a risky staging admin mutation.",
     risk_event: {
       type: "normal_tool_call",
       operation: "network_write",
@@ -69,6 +67,10 @@ export const SAMPLE_EVENTS: Event[] = [
       environment: "staging",
       command_summary: "curl -X POST $PAYMENTS_ADMIN_URL/reindex",
       signals: ["network_call", "admin_endpoint"],
+      decision_stage: "judge_deny",
+      judge_model: "Qwen/Qwen3-0.6B-GGUF",
+      judge_risk_level: "high",
+      judge_categories: ["admin_mutation"],
     },
   },
   {
@@ -78,8 +80,6 @@ export const SAMPLE_EVENTS: Event[] = [
     decision: "ask",
     reason_code: "unknown_high_risk_command",
     reason: "Unknown high-risk command needs review.",
-    risk_score: 0.791,
-    threshold: 0.8,
     risk_event: {
       type: "unknown",
       operation: "shell",
@@ -88,6 +88,8 @@ export const SAMPLE_EVENTS: Event[] = [
       command_summary: "openssl rsautl -decrypt -inkey private.pem -in payload.bin",
       signals: ["unknown_high_risk", "credential_observed"],
       guard_id: "guard.unknown_high_risk.v1",
+      decision_stage: "deterministic_deny",
+      policy_rule_id: "guard.unknown_high_risk.v1",
     },
   },
   {
@@ -97,8 +99,6 @@ export const SAMPLE_EVENTS: Event[] = [
     decision: "allow",
     reason_code: "async_telemetry",
     reason: "Recorded after execution.",
-    risk_score: 0.071,
-    threshold: 0.8,
     risk_event: {
       type: "normal_tool_call",
       operation: "read",
@@ -106,6 +106,7 @@ export const SAMPLE_EVENTS: Event[] = [
       path_class: "source_code",
       command_summary: "Read internal/guard/app/server/server.go",
       signals: ["source_code_read"],
+      decision_stage: "async_telemetry",
     },
   },
   {
@@ -115,8 +116,6 @@ export const SAMPLE_EVENTS: Event[] = [
     decision: "allow",
     reason_code: "async_telemetry",
     reason: "Recorded after execution.",
-    risk_score: 0.118,
-    threshold: 0.8,
     risk_event: {
       type: "normal_tool_call",
       operation: "write",
@@ -125,6 +124,7 @@ export const SAMPLE_EVENTS: Event[] = [
       path_class: "source_code",
       command_summary: "Edit web/guard-dashboard/src/App.tsx",
       signals: ["workspace_file", "source_code_write"],
+      decision_stage: "async_telemetry",
     },
   },
   {
@@ -134,8 +134,6 @@ export const SAMPLE_EVENTS: Event[] = [
     decision: "allow",
     reason_code: "async_telemetry",
     reason: "Recorded after execution.",
-    risk_score: 0.203,
-    threshold: 0.8,
     risk_event: {
       type: "normal_tool_call",
       operation: "test",
@@ -143,6 +141,7 @@ export const SAMPLE_EVENTS: Event[] = [
       environment: "local",
       command_summary: "pnpm --dir web/guard-dashboard build",
       signals: ["local_build", "known_safe_command"],
+      decision_stage: "async_telemetry",
     },
   },
 ];

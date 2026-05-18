@@ -21,11 +21,18 @@ export type RiskEvent = {
   path_class?: string;
   decision?: Decision;
   reason_code?: string;
-  model_version?: string;
+  decision_stage?: string;
   signals?: string[];
   guard_id?: string;
-  risk_score?: number | null;
   confidence?: number;
+  policy_profile?: string;
+  policy_rule_id?: string;
+  policy_rule_category?: string;
+  judge_runtime?: string;
+  judge_model?: string;
+  judge_failure_kind?: string;
+  judge_risk_level?: string;
+  judge_categories?: string[];
 };
 
 export type Event = {
@@ -35,8 +42,6 @@ export type Event = {
   decision: Decision;
   reason?: string;
   reason_code?: string;
-  risk_score?: number | null;
-  threshold?: number | null;
   risk_event?: RiskEvent;
 };
 

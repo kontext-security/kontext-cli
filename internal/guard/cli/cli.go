@@ -21,18 +21,13 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/guard/app/server"
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
-	"github.com/kontext-security/kontext-cli/internal/guard/markov"
-	"github.com/kontext-security/kontext-cli/internal/guard/modelsnapshot"
-	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
-	"github.com/kontext-security/kontext-cli/internal/guard/trace"
 	"github.com/kontext-security/kontext-cli/internal/hook"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
 )
 
 const (
-	defaultBaseURL   = "http://" + server.DefaultAddr
-	defaultModelPath = "models/guard/coding-agent-v0.json"
+	defaultBaseURL = "http://" + server.DefaultAddr
 )
 
 // Run executes the Kontext command line.
@@ -57,8 +52,6 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return runHooks(args[1:], stdout)
 	case "traces":
 		return runTraces(ctx, args[1:], stdout)
-	case "model":
-		return runModel(args[1:], stdout)
 	case "judge":
 		return runJudge(ctx, args[1:], stdout)
 	case "smoke-test":
@@ -83,20 +76,10 @@ func usage(out io.Writer) {
 	fmt.Fprintln(out, "  hooks install claude-code     Install Claude Code hooks")
 	fmt.Fprintln(out, "  hooks uninstall claude-code   Remove Claude Code hooks")
 	fmt.Fprintln(out, "  traces inspect                Inspect local trace summary")
-	fmt.Fprintln(out, "  model info                    Print baseline model info")
-	fmt.Fprintln(out, "  model train                   Train a local fixture model")
 	fmt.Fprintln(out, "  judge eval                    Evaluate local judge fixtures")
 }
 
 func runDaemon(ctx context.Context, args []string, out io.Writer) error {
-	defaultThreshold, err := envFloat("KONTEXT_THRESHOLD", 0.5)
-	if err != nil {
-		return err
-	}
-	defaultHorizon, err := envInt("KONTEXT_HORIZON", 5)
-	if err != nil {
-		return err
-	}
 	defaultJudgeTimeout, err := envDuration("KONTEXT_JUDGE_TIMEOUT", judge.DefaultTimeout)
 	if err != nil {
 		return err
@@ -117,9 +100,6 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 	fs.SetOutput(io.Discard)
 	addr := fs.String("addr", envString("KONTEXT_ADDR", server.DefaultAddr), "listen address")
 	dbPath := fs.String("db", envString("KONTEXT_DB", defaultDBPath()), "SQLite database path")
-	modelPath := fs.String("model", envString("KONTEXT_MODEL", defaultModelPath), "optional Markov-chain model path")
-	threshold := fs.Float64("threshold", defaultThreshold, "Markov-chain risk threshold")
-	horizon := fs.Int("horizon", defaultHorizon, "Markov-chain risk horizon")
 	skipHookInstall := fs.Bool("skip-hook-install", false, "skip Claude Code hook install")
 	noOpen := fs.Bool("no-open", false, "do not open the local dashboard")
 	socketPath := fs.String("socket", defaultGuardSocketPath(), "Unix socket path for local hook runtime")
@@ -146,20 +126,6 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 			return err
 		}
 	}
-	var scorer risk.Scorer = risk.NoopScorer{}
-	activeModelPath := *modelPath
-	if *modelPath != "" {
-		snapshot, err := modelsnapshot.NewWithValidator(defaultModelSnapshotDir(*dbPath), risk.ValidateMarkovModel).ActivateFromFile(*modelPath)
-		if err != nil {
-			return err
-		}
-		activeModelPath = snapshot.Path
-		loaded, err := risk.LoadMarkovScorer(activeModelPath, *threshold, *horizon)
-		if err != nil {
-			return err
-		}
-		scorer = loaded
-	}
 	localJudge, closeJudge, judgeStatus, err := configureLocalJudge(ctx, localJudgeConfig{
 		URL:            *judgeURL,
 		Model:          *judgeModel,
@@ -179,8 +145,7 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 	}
 	defer closeJudge()
 	localServer, closeStore, err := server.OpenDefaultServerWithOptions(*dbPath, server.Options{
-		Scorer: scorer,
-		Judge:  localJudge,
+		Judge: localJudge,
 	})
 	if err != nil {
 		return err
@@ -209,7 +174,6 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 	fmt.Fprintf(out, "Hook runtime: unix://%s\n", *socketPath)
 	fmt.Fprintln(out, "Mode: observe (Claude Code runs normally; decisions are recorded as would allow / would ask / would deny).")
 	fmt.Fprintf(out, "Dashboard: http://%s\n", *addr)
-	fmt.Fprintf(out, "Risk model: %s\n", activeModelPath)
 	if localJudge != nil {
 		fmt.Fprintf(out, "Local judge: %s\n", judgeStatus)
 	} else {
@@ -723,7 +687,7 @@ func runSmokeTest(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	defer store.Close()
-	localServer, err := server.NewServer(store, risk.NoopScorer{})
+	localServer, err := server.NewServer(store)
 	if err != nil {
 		return err
 	}
@@ -749,8 +713,8 @@ func runSmokeTest(ctx context.Context, args []string, out io.Writer) error {
 		want hook.Decision
 	}{
 		{"safe read", hook.Event{SessionID: "smoke", HookName: hook.HookPreToolUse, ToolName: "Read", ToolInput: map[string]any{"file_path": "README.md"}}, hook.DecisionAllow},
-		{"env read", hook.Event{SessionID: "smoke", HookName: hook.HookPreToolUse, ToolName: "Read", ToolInput: map[string]any{"file_path": ".env"}}, hook.DecisionAsk},
-		{"cat env", hook.Event{SessionID: "smoke", HookName: hook.HookPreToolUse, ToolName: "Bash", ToolInput: map[string]any{"command": "cat .env"}}, hook.DecisionAsk},
+		{"env read", hook.Event{SessionID: "smoke", HookName: hook.HookPreToolUse, ToolName: "Read", ToolInput: map[string]any{"file_path": ".env"}}, hook.DecisionDeny},
+		{"cat env", hook.Event{SessionID: "smoke", HookName: hook.HookPreToolUse, ToolName: "Bash", ToolInput: map[string]any{"command": "cat .env"}}, hook.DecisionDeny},
 		{"provider token", hook.Event{SessionID: "smoke", HookName: hook.HookPreToolUse, ToolName: "Bash", ToolInput: map[string]any{"command": "curl https://api.railway.app/graphql -H 'Authorization: Bearer secret'"}}, hook.DecisionDeny},
 		{"drop database", hook.Event{SessionID: "smoke", HookName: hook.HookPreToolUse, ToolName: "Bash", ToolInput: map[string]any{"command": "drop database"}}, hook.DecisionDeny},
 	}
@@ -768,8 +732,8 @@ func runSmokeTest(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if summary.Actions != 5 || summary.Warnings != 2 || summary.Critical != 2 {
-		return fmt.Errorf("summary=%+v, want actions=5 warnings=2 critical=2", summary)
+	if summary.Actions != 5 || summary.Warnings != 0 || summary.Critical != 4 {
+		return fmt.Errorf("summary=%+v, want actions=5 warnings=0 critical=4", summary)
 	}
 	fmt.Fprintf(out, "summary critical=%d warnings=%d actions=%d\n", summary.Critical, summary.Warnings, summary.Actions)
 	return nil
@@ -784,25 +748,6 @@ func runTraces(ctx context.Context, args []string, out io.Writer) error {
 		return runStatus(ctx, args[1:], out)
 	default:
 		return fmt.Errorf("usage: kontext guard traces inspect")
-	}
-}
-
-func runModel(args []string, out io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: kontext guard model info|train")
-	}
-	switch args[0] {
-	case "info":
-		info, err := modelInfo(defaultModelPath)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintln(out, info)
-		return nil
-	case "train":
-		return runTrainFixtureModel(args[1:], out)
-	default:
-		return fmt.Errorf("usage: kontext guard model info|train")
 	}
 }
 
@@ -889,57 +834,6 @@ func readJudgeEvalFixtures(path string) ([]judge.Fixture, error) {
 	return fixtures, nil
 }
 
-func modelInfo(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	model, err := markov.ReadModelJSON(file)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s: %d states", path, len(model.States)), nil
-}
-
-func runTrainFixtureModel(args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("model train", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	inputPath := fs.String("input", "internal/trace/testdata/coding_sessions.jsonl", "fixture JSONL path")
-	outputPath := fs.String("out", "models/generated/local-model.json", "model output path")
-	alpha := fs.Float64("alpha", 1, "Markov smoothing alpha")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	file, err := os.Open(*inputPath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	events, err := trace.ReadJSONL(file)
-	if err != nil {
-		return err
-	}
-	sessions := trace.GroupSessions(events)
-	model, err := markov.BuildModel(trace.Observations(sessions), trace.CodingAbstraction{}, markov.BuildOptions{Alpha: *alpha})
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(*outputPath), 0o755); err != nil {
-		return err
-	}
-	outFile, err := os.Create(*outputPath)
-	if err != nil {
-		return err
-	}
-	defer outFile.Close()
-	if err := markov.WriteModelJSON(outFile, model); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "wrote %s from %d events, %d sessions, %d states\n", *outputPath, len(events), len(sessions), len(model.States))
-	return nil
-}
-
 func envString(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -963,17 +857,6 @@ func envBool(key string, fallback bool) (bool, error) {
 		parsed, err := strconv.ParseBool(value)
 		if err != nil {
 			return false, fmt.Errorf("%s must be a boolean: %w", key, err)
-		}
-		return parsed, nil
-	}
-	return fallback, nil
-}
-
-func envFloat(key string, fallback float64) (float64, error) {
-	if value := os.Getenv(key); value != "" {
-		parsed, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return 0, fmt.Errorf("%s must be a number: %w", key, err)
 		}
 		return parsed, nil
 	}
@@ -1015,13 +898,6 @@ func defaultDBPath() string {
 		return filepath.Join(home, ".kontext", "guard.db")
 	}
 	return "kontext-guard.db"
-}
-
-func defaultModelSnapshotDir(dbPath string) string {
-	if dbPath != "" {
-		return filepath.Join(filepath.Dir(dbPath), "models")
-	}
-	return filepath.Join(".", "models")
 }
 
 func defaultJudgeCacheDir(dbPath string) string {

@@ -16,10 +16,7 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
 )
 
-func TestStartLoadsEmbeddedModelOutsideRepoCWD(t *testing.T) {
-	t.Setenv("KONTEXT_MODEL", "")
-	t.Setenv("KONTEXT_THRESHOLD", "")
-	t.Setenv("KONTEXT_HORIZON", "")
+func TestStartWorksOutsideRepoCWD(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	host, err := Start(context.Background(), Options{
@@ -31,13 +28,6 @@ func TestStartLoadsEmbeddedModelOutsideRepoCWD(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 	defer host.Close(context.Background())
-
-	if host.ActiveModelPath == "" {
-		t.Fatal("ActiveModelPath is empty")
-	}
-	if _, err := os.Stat(host.ActiveModelPath); err != nil {
-		t.Fatalf("active model stat error = %v", err)
-	}
 }
 
 func TestStartUsesFullSessionIDForSessionDir(t *testing.T) {

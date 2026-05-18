@@ -6,7 +6,11 @@ const DETERMINISTIC_REASON_CODES = new Set([
   "destructive_operation_without_intent",
   "direct_infra_api_with_credential",
   "unknown_high_risk_command",
+  "no_policy_rule_matched",
 ]);
+
+const JUDGE_STAGES = new Set(["judge_allow", "judge_deny", "judge_fail_open"]);
+const DETERMINISTIC_STAGES = new Set(["deterministic_deny", "deterministic_allow"]);
 
 export function bucket(events: Event[]): EventBuckets {
   const groups: EventGroups = { deny: [], ask: [], allow: [] };
@@ -46,53 +50,56 @@ export function prettyTool(t?: string): string {
 }
 
 export function isDeterministicGuard(e: Event): boolean {
-  return Boolean(e.risk_event?.guard_id) || DETERMINISTIC_REASON_CODES.has(e.reason_code ?? "");
+  const stage = e.risk_event?.decision_stage;
+  return (
+    Boolean(stage && DETERMINISTIC_STAGES.has(stage)) ||
+    DETERMINISTIC_REASON_CODES.has(e.reason_code ?? "")
+  );
 }
 
 export function humanReason(e: Event): string {
   if (e.reason_code === "async_telemetry") return "Recorded after execution.";
-  if (e.reason_code === "model_risk_threshold") {
-    return "Markov sequence risk crossed the local threshold.";
+  if (e.risk_event?.decision_stage === "judge_fail_open") {
+    return "Local judge was unavailable, so Guard allowed by fail-open policy.";
   }
   return e.reason || e.reason_code || "No explanation captured.";
 }
 
 export function technicalExplanation(e: Event): string {
   const r = e.risk_event ?? {};
-  const score = scoreLabel(e);
-  const threshold = thresholdLabel(e);
-  if (e.reason_code === "model_risk_threshold") {
-    return `The Markov-chain model scored this normalized action at ${score}, at or above threshold ${threshold}.`;
-  }
   if (e.reason_code === "async_telemetry") {
-    return "Not a live gate. Recorded after execution to improve future model parameters.";
+    return "Not a live gate. Recorded after execution for local session history.";
+  }
+  if (r.decision_stage === "judge_allow") {
+    return `Deterministic policy allowed this action, then the local judge allowed it${r.judge_model ? ` using ${r.judge_model}` : ""}.`;
+  }
+  if (r.decision_stage === "judge_deny") {
+    return `Deterministic policy allowed this action, then the local judge denied it${r.judge_model ? ` using ${r.judge_model}` : ""}.`;
+  }
+  if (r.decision_stage === "judge_fail_open") {
+    return `Deterministic policy allowed this action, but the local judge failed${r.judge_failure_kind ? ` with ${humanize(r.judge_failure_kind)}` : ""}.`;
   }
   if (isDeterministicGuard(e)) {
-    return `A deterministic rule fired before the model decision mattered. Markov score is ${score} against threshold ${threshold}.`;
+    return r.policy_rule_id
+      ? `Deterministic policy matched ${r.policy_rule_id} before calling the local judge.`
+      : "Deterministic policy allowed this action.";
   }
   if (r.type === "normal_tool_call") {
-    return `Model score is ${score} against threshold ${threshold}. Routine coding-agent behavior.`;
+    return "Routine coding-agent behavior. No deterministic policy rule matched.";
   }
-  return `Normalized as ${r.type || "unknown"} with model score ${score} against threshold ${threshold}.`;
+  return `Normalized as ${r.type || "unknown"}.`;
 }
 
 export function decisionSource(e: Event): string {
-  if (e.reason_code === "model_risk_threshold") return "Markov-chain model";
+  const stage = e.risk_event?.decision_stage;
+  if (stage && JUDGE_STAGES.has(stage)) return "Local LLM judge";
   if (e.reason_code === "async_telemetry") return "Trace history";
-  if (isDeterministicGuard(e)) return "Deterministic rule";
-  return "Normal scoring";
+  if (isDeterministicGuard(e)) return "Deterministic policy";
+  return "Guard policy";
 }
 
 export function actionSummary(e: Event): string {
   return summaryOf(e, "No command summary stored.");
-}
-
-export function scoreLabel(e: Event): string {
-  return e.risk_score == null ? "n/a" : e.risk_score.toFixed(3);
-}
-
-export function thresholdLabel(e: Event): string {
-  return e.threshold == null ? "n/a" : e.threshold.toFixed(3);
 }
 
 export function relativeTime(value?: string): string {

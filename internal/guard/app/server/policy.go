@@ -19,14 +19,12 @@ type PolicyConfigProvider interface {
 }
 
 type RiskPolicyProvider struct {
-	scorer       risk.Scorer
 	judge        judge.Judge
 	policyEngine guardpolicy.Engine
 	policyConfig PolicyConfigProvider
 }
 
 type RiskPolicyProviderOptions struct {
-	Scorer               risk.Scorer
 	Judge                judge.Judge
 	PolicyEngine         guardpolicy.Engine
 	PolicyConfig         guardpolicy.Config
@@ -41,28 +39,22 @@ func (p staticPolicyConfigProvider) ActivePolicyConfig(context.Context) (guardpo
 	return p.config, nil
 }
 
-func NewRiskPolicyProvider(scorer risk.Scorer) RiskPolicyProvider {
-	return NewRiskPolicyProviderWithJudge(scorer, nil)
+func NewRiskPolicyProvider() RiskPolicyProvider {
+	return NewRiskPolicyProviderWithJudge(nil)
 }
 
-func NewRiskPolicyProviderWithJudge(scorer risk.Scorer, localJudge judge.Judge) RiskPolicyProvider {
+func NewRiskPolicyProviderWithJudge(localJudge judge.Judge) RiskPolicyProvider {
 	return NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
-		Scorer: scorer,
-		Judge:  localJudge,
+		Judge: localJudge,
 	})
 }
 
 func NewRiskPolicyProviderWithOptions(opts RiskPolicyProviderOptions) RiskPolicyProvider {
-	scorer := opts.Scorer
-	if scorer == nil {
-		scorer = risk.NoopScorer{}
-	}
 	configProvider := opts.PolicyConfigProvider
 	if configProvider == nil {
 		configProvider = staticPolicyConfigProvider{config: opts.PolicyConfig}
 	}
 	return RiskPolicyProvider{
-		scorer:       scorer,
 		judge:        opts.Judge,
 		policyEngine: opts.PolicyEngine,
 		policyConfig: configProvider,
@@ -70,61 +62,83 @@ func NewRiskPolicyProviderWithOptions(opts RiskPolicyProviderOptions) RiskPolicy
 }
 
 func (p RiskPolicyProvider) DecideHook(ctx context.Context, event risk.HookEvent) (risk.RiskDecision, error) {
-	if p.judge != nil && event.HookEventName == "PreToolUse" {
-		return p.decideWithJudge(ctx, event)
+	if event.HookEventName != "PreToolUse" {
+		return p.asyncTelemetryDecision(event), nil
 	}
-	return risk.DecideRisk(event, p.scorer)
-}
-
-func (p RiskPolicyProvider) decideWithJudge(ctx context.Context, event risk.HookEvent) (risk.RiskDecision, error) {
 	riskEvent := risk.NormalizeHookEvent(event)
-	score, err := p.scorer.Score(riskEvent)
-	if err != nil {
-		return risk.RiskDecision{}, err
-	}
-	riskEvent.RiskScore = score.RiskScore
-	riskEvent.ModelVersion = score.ModelVersion
-
 	policyResult := p.policyEngine.Evaluate(riskEvent, p.activePolicyConfig(ctx))
 	applyPolicyMetadata(&riskEvent, policyResult)
 	if policyResult.Decision == guardpolicy.DecisionDeny {
-		riskEvent.Decision = risk.DecisionDeny
-		riskEvent.ReasonCode = policyResult.ReasonCode
-		riskEvent.GuardID = policyResult.RuleID
-		riskEvent.DecisionStage = risk.DecisionStageDeterministicDeny
-		return risk.RiskDecision{
-			Decision:     risk.DecisionDeny,
-			Reason:       policyResult.Reason,
-			ReasonCode:   policyResult.ReasonCode,
-			RiskScore:    score.RiskScore,
-			Threshold:    score.Threshold,
-			ModelVersion: score.ModelVersion,
-			GuardID:      policyResult.RuleID,
-			RiskEvent:    riskEvent,
-		}, nil
+		return deterministicDenyDecision(riskEvent, policyResult), nil
+	}
+	if p.judge == nil {
+		return deterministicAllowDecision(riskEvent, policyResult), nil
 	}
 
 	result, err := p.judge.Decide(ctx, judgeInputFromRiskEvent(event, riskEvent, policyResult))
 	if err != nil {
-		failureKind := judge.FailureKind(err)
-		metadata := judgeMetadata(p.judge)
-		riskEvent.Decision = risk.DecisionAllow
-		riskEvent.ReasonCode = "judge_unavailable_allow"
-		riskEvent.DecisionStage = risk.DecisionStageJudgeFailOpen
-		riskEvent.JudgeRuntime = metadata.Runtime
-		riskEvent.JudgeModel = metadata.Model
-		riskEvent.JudgeFailureKind = failureKind
-		return risk.RiskDecision{
-			Decision:     risk.DecisionAllow,
-			Reason:       "local judge unavailable; allowing by fail-open policy",
-			ReasonCode:   "judge_unavailable_allow",
-			RiskScore:    score.RiskScore,
-			Threshold:    score.Threshold,
-			ModelVersion: score.ModelVersion,
-			RiskEvent:    riskEvent,
-		}, nil
+		return judgeFailOpenDecision(riskEvent, p.judge, err), nil
 	}
+	return judgeDecision(riskEvent, result), nil
+}
 
+func (p RiskPolicyProvider) asyncTelemetryDecision(event risk.HookEvent) risk.RiskDecision {
+	riskEvent := risk.NormalizeHookEvent(event)
+	riskEvent.Decision = risk.DecisionAllow
+	riskEvent.ReasonCode = "async_telemetry"
+	riskEvent.DecisionStage = "async_telemetry"
+	return risk.RiskDecision{
+		Decision:   risk.DecisionAllow,
+		Reason:     "async telemetry event recorded",
+		ReasonCode: "async_telemetry",
+		RiskEvent:  riskEvent,
+	}
+}
+
+func deterministicDenyDecision(riskEvent risk.RiskEvent, policyResult guardpolicy.Result) risk.RiskDecision {
+	riskEvent.Decision = risk.DecisionDeny
+	riskEvent.ReasonCode = policyResult.ReasonCode
+	riskEvent.GuardID = policyResult.RuleID
+	riskEvent.DecisionStage = risk.DecisionStageDeterministicDeny
+	return risk.RiskDecision{
+		Decision:   risk.DecisionDeny,
+		Reason:     policyResult.Reason,
+		ReasonCode: policyResult.ReasonCode,
+		GuardID:    policyResult.RuleID,
+		RiskEvent:  riskEvent,
+	}
+}
+
+func deterministicAllowDecision(riskEvent risk.RiskEvent, policyResult guardpolicy.Result) risk.RiskDecision {
+	riskEvent.Decision = risk.DecisionAllow
+	riskEvent.ReasonCode = policyResult.ReasonCode
+	riskEvent.DecisionStage = "deterministic_allow"
+	return risk.RiskDecision{
+		Decision:   risk.DecisionAllow,
+		Reason:     policyResult.Reason,
+		ReasonCode: policyResult.ReasonCode,
+		RiskEvent:  riskEvent,
+	}
+}
+
+func judgeFailOpenDecision(riskEvent risk.RiskEvent, localJudge judge.Judge, err error) risk.RiskDecision {
+	failureKind := judge.FailureKind(err)
+	metadata := judgeMetadata(localJudge)
+	riskEvent.Decision = risk.DecisionAllow
+	riskEvent.ReasonCode = "judge_unavailable_allow"
+	riskEvent.DecisionStage = risk.DecisionStageJudgeFailOpen
+	riskEvent.JudgeRuntime = metadata.Runtime
+	riskEvent.JudgeModel = metadata.Model
+	riskEvent.JudgeFailureKind = failureKind
+	return risk.RiskDecision{
+		Decision:   risk.DecisionAllow,
+		Reason:     "local judge unavailable; allowing by fail-open policy",
+		ReasonCode: "judge_unavailable_allow",
+		RiskEvent:  riskEvent,
+	}
+}
+
+func judgeDecision(riskEvent risk.RiskEvent, result judge.Result) risk.RiskDecision {
 	decision := risk.DecisionAllow
 	reasonCode := risk.DecisionStageJudgeAllow
 	if result.Output.Decision == judge.DecisionDeny {
@@ -143,15 +157,12 @@ func (p RiskPolicyProvider) decideWithJudge(ctx context.Context, event risk.Hook
 	riskEvent.JudgeCategories = result.Output.Categories
 
 	return risk.RiskDecision{
-		Decision:     decision,
-		Reason:       result.Output.Reason,
-		ReasonCode:   reasonCode,
-		RiskScore:    score.RiskScore,
-		Threshold:    score.Threshold,
-		ModelVersion: score.ModelVersion,
-		GuardID:      "local_llm_judge",
-		RiskEvent:    riskEvent,
-	}, nil
+		Decision:   decision,
+		Reason:     result.Output.Reason,
+		ReasonCode: reasonCode,
+		GuardID:    "local_llm_judge",
+		RiskEvent:  riskEvent,
+	}
 }
 
 func (p RiskPolicyProvider) activePolicyConfig(ctx context.Context) guardpolicy.Config {
