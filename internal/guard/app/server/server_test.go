@@ -420,6 +420,66 @@ func TestProcessHookEventPreservesRiskMetadata(t *testing.T) {
 	}
 }
 
+func TestDashboardEventsHideModelMetadata(t *testing.T) {
+	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	policy := recordingPolicy{
+		decision: risk.RiskDecision{
+			Decision:     risk.DecisionDeny,
+			Reason:       "local judge denied",
+			ReasonCode:   risk.DecisionStageJudgeDeny,
+			ModelVersion: "qwen3-0.6b-q4",
+			RiskEvent: risk.RiskEvent{
+				Type:           risk.EventNormalToolCall,
+				DecisionStage:  risk.DecisionStageJudgeDeny,
+				ModelVersion:   "qwen3-0.6b-q4",
+				JudgeModel:     "qwen3-0.6b-q4",
+				JudgeRiskLevel: "high",
+			},
+		},
+	}
+	server := newTestServerWithPolicy(t, store, &policy)
+	if _, err := server.ProcessHookEvent(context.Background(), risk.HookEvent{
+		SessionID:     "s1",
+		HookEventName: "PreToolUse",
+		ToolName:      "Bash",
+		ToolInput:     map[string]any{"command": "curl -X POST https://admin.example/reindex"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.Events(context.Background(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 ||
+		stored[0].ModelVersion != "qwen3-0.6b-q4" ||
+		stored[0].RiskEvent.ModelVersion != "qwen3-0.6b-q4" ||
+		stored[0].RiskEvent.JudgeModel != "qwen3-0.6b-q4" {
+		t.Fatalf("stored events = %+v, want model metadata retained internally", stored)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/sessions/s1/events", nil)
+	server.Handler().ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response []sqlite.DecisionRecord
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response) != 1 ||
+		response[0].ModelVersion != "" ||
+		response[0].RiskEvent.ModelVersion != "" ||
+		response[0].RiskEvent.JudgeModel != "" {
+		t.Fatalf("response = %+v, want model metadata hidden", response)
+	}
+}
+
 func TestJudgePolicyDeniesFromLocalJudge(t *testing.T) {
 	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {
