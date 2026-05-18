@@ -1,12 +1,14 @@
 import { API } from "./config";
-import type { Decision, Event, PolicyProfile, PolicyProfileID, RiskEvent, Session } from "./types";
+import { isDecision, isPolicyProfileID, type Decision, type Event, type PolicyProfile, type PolicyProfileID, type RiskEvent, type Session } from "./types";
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 async function responseJSON(r: Response): Promise<unknown> {
-  return r.json();
+  // `Response.json()` is typed as `any` in lib.dom. Force it back to `unknown` at the boundary.
+  const body: unknown = await r.json();
+  return body;
 }
 
 async function ok(r: Response): Promise<unknown> {
@@ -51,25 +53,11 @@ function stringList(value: unknown): string[] | undefined {
 }
 
 function decision(value: unknown): Decision | undefined {
-  switch (value) {
-    case "allow":
-    case "ask":
-    case "deny":
-      return value;
-    default:
-      return undefined;
-  }
+  return isDecision(value) ? value : undefined;
 }
 
 function policyProfileID(value: unknown): PolicyProfileID | undefined {
-  switch (value) {
-    case "relaxed":
-    case "balanced":
-    case "strict":
-      return value;
-    default:
-      return undefined;
-  }
+  return isPolicyProfileID(value) ? value : undefined;
 }
 
 function parseRiskEvent(value: unknown): RiskEvent | undefined {

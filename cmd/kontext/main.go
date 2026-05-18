@@ -94,8 +94,10 @@ func startCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if isInteractivePrompt() {
 				if latest := update.Available(version); latest != "" {
-					upgraded, _ := update.PromptAndUpgrade(os.Stdin, os.Stderr, version, latest)
-					if upgraded {
+					upgraded, err := update.PromptAndUpgrade(os.Stdin, os.Stderr, version, latest)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Update prompt failed: %v\n", err)
+					} else if upgraded {
 						return nil
 					}
 				}
@@ -269,24 +271,29 @@ func evaluateViaSidecar(socketPath string, event hook.Event) (hook.Result, error
 func evaluateViaSidecarForMode(socketPath string, event hook.Event, mode string) (hook.Result, error) {
 	conn, err := net.DialTimeout("unix", socketPath, 5*time.Second)
 	if err != nil {
+		warnHookError(fmt.Sprintf("sidecar dial %q", socketPath), err)
 		return sidecarFailureResult(event, "sidecar unreachable", mode), nil
 	}
 	defer conn.Close()
 	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		warnHookError("sidecar set deadline", err)
 		return sidecarFailureResult(event, "sidecar deadline error", mode), nil
 	}
 
 	req, err := localruntime.EvaluateRequestFromEvent(event)
 	if err != nil {
+		warnHookError("sidecar marshal request", err)
 		return sidecarFailureResult(event, "sidecar marshal error", mode), nil
 	}
 
 	if err := localruntime.WriteMessage(conn, req); err != nil {
+		warnHookError("sidecar write request", err)
 		return sidecarFailureResult(event, "sidecar write error", mode), nil
 	}
 
 	var result localruntime.EvaluateResult
 	if err := localruntime.ReadMessage(conn, &result); err != nil {
+		warnHookError("sidecar read response", err)
 		return sidecarFailureResult(event, "sidecar read error", mode), nil
 	}
 
@@ -322,6 +329,7 @@ func currentHostedAccessMode() string {
 	if modePath := os.Getenv("KONTEXT_ACCESS_MODE_PATH"); modePath != "" {
 		data, err := os.ReadFile(modePath)
 		if err != nil {
+			warnHookError(fmt.Sprintf("read KONTEXT_ACCESS_MODE_PATH %q", modePath), err)
 			return "enforce"
 		}
 		if mode := normalizedHostedAccessMode(string(data)); mode != "" {
@@ -357,4 +365,11 @@ func isCharDevice(f *os.File) bool {
 		return false
 	}
 	return info.Mode()&os.ModeCharDevice != 0
+}
+
+func warnHookError(operation string, err error) {
+	if err == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "kontext: %s: %v\n", operation, err)
 }

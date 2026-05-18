@@ -64,6 +64,12 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 }
 
+func newFlagSet(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	return fs
+}
+
 func usage(out io.Writer) {
 	fmt.Fprintln(out, "Kontext Guard")
 	fmt.Fprintln(out, "")
@@ -96,13 +102,12 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fs := flag.NewFlagSet("start", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newFlagSet("start")
 	addr := fs.String("addr", envString("KONTEXT_ADDR", server.DefaultAddr), "listen address")
 	dbPath := fs.String("db", envString("KONTEXT_DB", defaultDBPath()), "SQLite database path")
 	skipHookInstall := fs.Bool("skip-hook-install", false, "skip Claude Code hook install")
 	noOpen := fs.Bool("no-open", false, "do not open the local dashboard")
-	socketPath := fs.String("socket", defaultGuardSocketPath(), "Unix socket path for local hook runtime")
+	socketPath := fs.String("socket", localruntime.DefaultSocketPath(), "Unix socket path for local hook runtime")
 	judgeURL := fs.String("judge-url", envString("KONTEXT_JUDGE_URL", ""), "OpenAI-compatible local judge base URL, for example http://127.0.0.1:8080")
 	judgeModel := fs.String("judge-model", envString("KONTEXT_JUDGE_MODEL", ""), "local judge model name; with --judge-managed this may be a local GGUF path")
 	judgeTimeout := fs.Duration("judge-timeout", defaultJudgeTimeout, "local judge timeout")
@@ -153,7 +158,7 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 	defer func() {
 		_ = closeStore()
 	}()
-	if err := ensureGuardSocketDir(*socketPath); err != nil {
+	if err := localruntime.EnsureSocketDir(*socketPath); err != nil {
 		return err
 	}
 	runtimeService, err := localruntime.NewService(localruntime.Options{
@@ -356,8 +361,7 @@ func verifyClaudeCode() error {
 }
 
 func runStatus(ctx context.Context, args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newFlagSet("status")
 	baseURL := fs.String("daemon-url", envString("KONTEXT_DAEMON_URL", defaultBaseURL), "local daemon URL")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -375,8 +379,7 @@ func runStatus(ctx context.Context, args []string, out io.Writer) error {
 }
 
 func runDashboard(args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("dashboard", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newFlagSet("dashboard")
 	baseURL := fs.String("daemon-url", envString("KONTEXT_DAEMON_URL", defaultBaseURL), "local daemon URL")
 	noOpen := fs.Bool("no-open", false, "print URL without opening a browser")
 	if err := fs.Parse(args); err != nil {
@@ -410,8 +413,7 @@ func fetchSummary(ctx context.Context, baseURL string) (sqlite.Summary, error) {
 }
 
 func runDoctor(ctx context.Context, args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newFlagSet("doctor")
 	baseURL := fs.String("daemon-url", envString("KONTEXT_DAEMON_URL", defaultBaseURL), "local daemon URL")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -508,9 +510,8 @@ func runHooks(args []string, out io.Writer) error {
 	}
 	switch args[0] {
 	case "install":
-		fs := flag.NewFlagSet("hooks install claude-code", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		socketPath := fs.String("socket", defaultGuardSocketPath(), "Unix socket path for local hook runtime")
+		fs := newFlagSet("hooks install claude-code")
+		socketPath := fs.String("socket", localruntime.DefaultSocketPath(), "Unix socket path for local hook runtime")
 		if err := fs.Parse(args[2:]); err != nil {
 			return err
 		}
@@ -672,8 +673,7 @@ func isGuardHookCommand(command string) bool {
 }
 
 func runSmokeTest(ctx context.Context, args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("smoke-test", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newFlagSet("smoke-test")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -768,8 +768,7 @@ func runJudgeEval(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fs := flag.NewFlagSet("judge eval", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newFlagSet("judge eval")
 	judgeURL := fs.String("judge-url", envString("KONTEXT_JUDGE_URL", ""), "OpenAI-compatible local judge base URL")
 	judgeModel := fs.String("judge-model", envString("KONTEXT_JUDGE_MODEL", ""), "local judge model name")
 	judgeTimeout := fs.Duration("judge-timeout", defaultJudgeTimeout, "local judge timeout")
@@ -922,7 +921,7 @@ func installedHookCommand(socketPath string) string {
 		return command
 	}
 	if strings.TrimSpace(socketPath) == "" {
-		socketPath = defaultGuardSocketPath()
+		socketPath = localruntime.DefaultSocketPath()
 	}
 	path := selfPath()
 	if strings.Contains(path, "go-build") {

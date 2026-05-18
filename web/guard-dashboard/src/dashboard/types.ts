@@ -1,8 +1,22 @@
-export type Decision = "allow" | "ask" | "deny";
+export const DECISION_VALUES = ["allow", "ask", "deny"] as const;
+export type Decision = (typeof DECISION_VALUES)[number];
 
-export type Tab = "all" | "deny" | "ask" | "allow";
+export const TAB_VALUES = ["all", ...DECISION_VALUES] as const;
+export type Tab = (typeof TAB_VALUES)[number];
 
-export type PolicyProfileID = "relaxed" | "balanced" | "strict";
+export const POLICY_PROFILE_ID_VALUES = ["relaxed", "balanced", "strict"] as const;
+export type PolicyProfileID = (typeof POLICY_PROFILE_ID_VALUES)[number];
+
+const decisionSet: ReadonlySet<string> = new Set(DECISION_VALUES);
+const policyProfileIDSet: ReadonlySet<string> = new Set(POLICY_PROFILE_ID_VALUES);
+
+export function isDecision(value: unknown): value is Decision {
+  return typeof value === "string" && decisionSet.has(value);
+}
+
+export function isPolicyProfileID(value: unknown): value is PolicyProfileID {
+  return typeof value === "string" && policyProfileIDSet.has(value);
+}
 
 export type RiskEvent = {
   type?: string;
