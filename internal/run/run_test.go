@@ -22,6 +22,8 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/auth"
 	"github.com/kontext-security/kontext-cli/internal/credential"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
+
+	_ "github.com/kontext-security/kontext-cli/internal/agent/hermes"
 )
 
 func TestFilterArgs(t *testing.T) {
@@ -130,6 +132,27 @@ func TestFindExecutableDistinguishesMissing(t *testing.T) {
 	}
 }
 
+func TestFindAgentExecutableFallsBackToAliasForCanonicalName(t *testing.T) {
+	dir := t.TempDir()
+	aliasPath := filepath.Join(dir, "hermes-agent")
+	if err := os.WriteFile(aliasPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	a, err := resolveAgent("hermes")
+	if err != nil {
+		t.Fatalf("resolveAgent() error = %v", err)
+	}
+	got, err := findAgentExecutable("hermes", a)
+	if err != nil {
+		t.Fatalf("findAgentExecutable() error = %v", err)
+	}
+	if got != aliasPath {
+		t.Fatalf("findAgentExecutable() = %q, want alias path %q", got, aliasPath)
+	}
+}
+
 func TestCredentialFailureSummaryHidesRawDetails(t *testing.T) {
 	t.Parallel()
 
@@ -218,6 +241,80 @@ func TestLaunchAgentWithSettingsReturnsAgentExitError(t *testing.T) {
 	}
 	if exitErr.ExitCode() != 42 {
 		t.Fatalf("ExitCode() = %d, want 42", exitErr.ExitCode())
+	}
+}
+
+func TestStartManagedRejectsHermes(t *testing.T) {
+	t.Parallel()
+
+	err := StartManaged(context.Background(), Options{Agent: "hermes"})
+	if err == nil {
+		t.Fatal("StartManaged() error = nil, want unsupported Hermes error")
+	}
+	if !strings.Contains(err.Error(), "managed sessions currently support Claude Code only") {
+		t.Fatalf("StartManaged() error = %q, want managed unsupported message", err.Error())
+	}
+}
+
+func TestStartLocalLaunchesHermesWithGeneratedHookHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script launch test is POSIX-specific")
+	}
+
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recordPath := filepath.Join(root, "hermes-launch.env")
+	fakeHermes := filepath.Join(binDir, "hermes")
+	script := `#!/bin/sh
+set -eu
+{
+  printf 'argv=%s\n' "$*"
+  printf 'HERMES_HOME=%s\n' "${HERMES_HOME:-}"
+} > "$KONTEXT_TEST_RECORD"
+`
+	if err := os.WriteFile(fakeHermes, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sourceHome := filepath.Join(root, ".hermes")
+	if err := os.MkdirAll(sourceHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceHome, "config.yaml"), []byte("model: test-model\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HOME", root)
+	t.Setenv("HERMES_HOME", sourceHome)
+	t.Setenv("KONTEXT_DB", filepath.Join(root, "runtime.db"))
+	t.Setenv("KONTEXT_ADDR", "127.0.0.1:0")
+	t.Setenv("KONTEXT_TEST_RECORD", recordPath)
+
+	err := StartLocal(context.Background(), Options{
+		Agent: "hermes-agent",
+		Args:  []string{"--settings", "ignored.json", "--print", "hello"},
+	})
+	if err != nil {
+		t.Fatalf("StartLocal() error = %v", err)
+	}
+
+	record := readKeyValueFile(t, recordPath)
+	if got := record["argv"]; got != "--print hello" {
+		t.Fatalf("fake Hermes argv = %q, want filtered passthrough args", got)
+	}
+	hermesHome := record["HERMES_HOME"]
+	if hermesHome == "" {
+		t.Fatal("fake Hermes did not receive HERMES_HOME")
+	}
+	if hermesHome == sourceHome {
+		t.Fatal("fake Hermes received source HERMES_HOME, want generated session home")
+	}
+	if filepath.Base(filepath.Dir(hermesHome)) != "profiles" {
+		t.Fatalf("HERMES_HOME = %q, parent must be profiles", hermesHome)
 	}
 }
 
@@ -1265,6 +1362,22 @@ func TestVerifyBlockingHookSettingsRequiresPreToolUseCommand(t *testing.T) {
 type recordingCredentialProvider struct {
 	resolve func(context.Context, credential.Entry) (credential.Resolved, error)
 	connect func(context.Context, bool, loginFunc) (string, error)
+}
+
+func readKeyValueFile(t *testing.T, path string) map[string]string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", path, err)
+	}
+	values := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	return values
 }
 
 func (p recordingCredentialProvider) ResolveCredential(ctx context.Context, entry credential.Entry) (credential.Resolved, error) {
