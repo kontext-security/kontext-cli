@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
+	guardpolicy "github.com/kontext-security/kontext-cli/internal/guard/policy"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 )
 
@@ -13,9 +14,31 @@ type PolicyProvider interface {
 	DecideHook(context.Context, risk.HookEvent) (risk.RiskDecision, error)
 }
 
+type PolicyConfigProvider interface {
+	ActivePolicyConfig(context.Context) (guardpolicy.Config, error)
+}
+
 type RiskPolicyProvider struct {
-	scorer risk.Scorer
-	judge  judge.Judge
+	scorer       risk.Scorer
+	judge        judge.Judge
+	policyEngine guardpolicy.Engine
+	policyConfig PolicyConfigProvider
+}
+
+type RiskPolicyProviderOptions struct {
+	Scorer               risk.Scorer
+	Judge                judge.Judge
+	PolicyEngine         guardpolicy.Engine
+	PolicyConfig         guardpolicy.Config
+	PolicyConfigProvider PolicyConfigProvider
+}
+
+type staticPolicyConfigProvider struct {
+	config guardpolicy.Config
+}
+
+func (p staticPolicyConfigProvider) ActivePolicyConfig(context.Context) (guardpolicy.Config, error) {
+	return p.config, nil
 }
 
 func NewRiskPolicyProvider(scorer risk.Scorer) RiskPolicyProvider {
@@ -23,10 +46,27 @@ func NewRiskPolicyProvider(scorer risk.Scorer) RiskPolicyProvider {
 }
 
 func NewRiskPolicyProviderWithJudge(scorer risk.Scorer, localJudge judge.Judge) RiskPolicyProvider {
+	return NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
+		Scorer: scorer,
+		Judge:  localJudge,
+	})
+}
+
+func NewRiskPolicyProviderWithOptions(opts RiskPolicyProviderOptions) RiskPolicyProvider {
+	scorer := opts.Scorer
 	if scorer == nil {
 		scorer = risk.NoopScorer{}
 	}
-	return RiskPolicyProvider{scorer: scorer, judge: localJudge}
+	configProvider := opts.PolicyConfigProvider
+	if configProvider == nil {
+		configProvider = staticPolicyConfigProvider{config: opts.PolicyConfig}
+	}
+	return RiskPolicyProvider{
+		scorer:       scorer,
+		judge:        opts.Judge,
+		policyEngine: opts.PolicyEngine,
+		policyConfig: configProvider,
+	}
 }
 
 func (p RiskPolicyProvider) DecideHook(ctx context.Context, event risk.HookEvent) (risk.RiskDecision, error) {
@@ -38,46 +78,63 @@ func (p RiskPolicyProvider) DecideHook(ctx context.Context, event risk.HookEvent
 
 func (p RiskPolicyProvider) decideWithJudge(ctx context.Context, event risk.HookEvent) (risk.RiskDecision, error) {
 	riskEvent := risk.NormalizeHookEvent(event)
-	riskEvent.PolicyVersion = risk.PolicyVersionLaunchV0
+	score, err := p.scorer.Score(riskEvent)
+	if err != nil {
+		return risk.RiskDecision{}, err
+	}
+	riskEvent.RiskScore = score.RiskScore
+	riskEvent.ModelVersion = score.ModelVersion
 
-	if decision := risk.DeterministicDecision(riskEvent); decision.Decision != "" {
-		decision.RiskEvent = riskEvent
-		decision.RiskEvent.Decision = decision.Decision
-		decision.RiskEvent.ReasonCode = decision.ReasonCode
-		decision.RiskEvent.GuardID = decision.GuardID
-		decision.RiskEvent.DecisionStage = "deterministic"
-		decision.RiskEvent.PolicyVersion = risk.PolicyVersionLaunchV0
-		return decision, nil
+	policyResult := p.policyEngine.Evaluate(riskEvent, p.activePolicyConfig(ctx))
+	applyPolicyMetadata(&riskEvent, policyResult)
+	if policyResult.Decision == guardpolicy.DecisionDeny {
+		riskEvent.Decision = risk.DecisionDeny
+		riskEvent.ReasonCode = policyResult.ReasonCode
+		riskEvent.GuardID = policyResult.RuleID
+		riskEvent.DecisionStage = risk.DecisionStageDeterministicDeny
+		return risk.RiskDecision{
+			Decision:     risk.DecisionDeny,
+			Reason:       policyResult.Reason,
+			ReasonCode:   policyResult.ReasonCode,
+			RiskScore:    score.RiskScore,
+			Threshold:    score.Threshold,
+			ModelVersion: score.ModelVersion,
+			GuardID:      policyResult.RuleID,
+			RiskEvent:    riskEvent,
+		}, nil
 	}
 
-	result, err := p.judge.Decide(ctx, judgeInputFromRiskEvent(event, riskEvent))
+	result, err := p.judge.Decide(ctx, judgeInputFromRiskEvent(event, riskEvent, policyResult))
 	if err != nil {
 		failureKind := judge.FailureKind(err)
 		metadata := judgeMetadata(p.judge)
 		riskEvent.Decision = risk.DecisionAllow
 		riskEvent.ReasonCode = "judge_unavailable_allow"
-		riskEvent.DecisionStage = "judge_fail_open"
+		riskEvent.DecisionStage = risk.DecisionStageJudgeFailOpen
 		riskEvent.JudgeRuntime = metadata.Runtime
 		riskEvent.JudgeModel = metadata.Model
 		riskEvent.JudgeFailureKind = failureKind
 		return risk.RiskDecision{
-			Decision:   risk.DecisionAllow,
-			Reason:     "local judge unavailable; allowing by fail-open policy",
-			ReasonCode: "judge_unavailable_allow",
-			RiskEvent:  riskEvent,
+			Decision:     risk.DecisionAllow,
+			Reason:       "local judge unavailable; allowing by fail-open policy",
+			ReasonCode:   "judge_unavailable_allow",
+			RiskScore:    score.RiskScore,
+			Threshold:    score.Threshold,
+			ModelVersion: score.ModelVersion,
+			RiskEvent:    riskEvent,
 		}, nil
 	}
 
 	decision := risk.DecisionAllow
-	reasonCode := "judge_allow"
+	reasonCode := risk.DecisionStageJudgeAllow
 	if result.Output.Decision == judge.DecisionDeny {
 		decision = risk.DecisionDeny
-		reasonCode = "judge_deny"
+		reasonCode = risk.DecisionStageJudgeDeny
 	}
 	duration := result.Metadata.DurationMs
 	riskEvent.Decision = decision
 	riskEvent.ReasonCode = reasonCode
-	riskEvent.DecisionStage = string(reasonCode)
+	riskEvent.DecisionStage = reasonCode
 	riskEvent.GuardID = "local_llm_judge"
 	riskEvent.JudgeRuntime = result.Metadata.Runtime
 	riskEvent.JudgeModel = result.Metadata.Model
@@ -86,15 +143,44 @@ func (p RiskPolicyProvider) decideWithJudge(ctx context.Context, event risk.Hook
 	riskEvent.JudgeCategories = result.Output.Categories
 
 	return risk.RiskDecision{
-		Decision:   decision,
-		Reason:     result.Output.Reason,
-		ReasonCode: reasonCode,
-		GuardID:    "local_llm_judge",
-		RiskEvent:  riskEvent,
+		Decision:     decision,
+		Reason:       result.Output.Reason,
+		ReasonCode:   reasonCode,
+		RiskScore:    score.RiskScore,
+		Threshold:    score.Threshold,
+		ModelVersion: score.ModelVersion,
+		GuardID:      "local_llm_judge",
+		RiskEvent:    riskEvent,
 	}, nil
 }
 
-func judgeInputFromRiskEvent(event risk.HookEvent, riskEvent risk.RiskEvent) judge.Input {
+func (p RiskPolicyProvider) activePolicyConfig(ctx context.Context) guardpolicy.Config {
+	if p.policyConfig == nil {
+		return guardpolicy.DefaultConfig()
+	}
+	config, err := p.policyConfig.ActivePolicyConfig(ctx)
+	if err != nil {
+		return guardpolicy.DefaultConfig()
+	}
+	if err := config.Validate(); err != nil {
+		return guardpolicy.DefaultConfig()
+	}
+	return config
+}
+
+func applyPolicyMetadata(event *risk.RiskEvent, result guardpolicy.Result) {
+	event.PolicyVersion = result.PolicyVersion
+	event.PolicyProfile = string(result.Profile)
+	event.PolicyRulePack = result.RulePack
+	if !result.Matched {
+		return
+	}
+	event.PolicyRuleID = result.RuleID
+	event.PolicyRuleCategory = string(result.Category)
+	event.PolicySignals = result.MatchedSignals
+}
+
+func judgeInputFromRiskEvent(event risk.HookEvent, riskEvent risk.RiskEvent, policyResult guardpolicy.Result) judge.Input {
 	return judge.Input{
 		Agent:     event.Agent,
 		HookEvent: event.HookEventName,
@@ -122,10 +208,18 @@ func judgeInputFromRiskEvent(event risk.HookEvent, riskEvent risk.RiskEvent) jud
 			Signals:            riskEvent.Signals,
 		},
 		DeterministicPolicy: judge.DeterministicContext{
-			Decision:      "allow",
-			PolicyVersion: risk.PolicyVersionLaunchV0,
+			Decision:      string(policyResult.Decision),
+			MatchedRules:  matchedPolicyRules(policyResult),
+			PolicyVersion: policyResult.PolicyVersion,
 		},
 	}
+}
+
+func matchedPolicyRules(result guardpolicy.Result) []string {
+	if !result.Matched || result.RuleID == "" {
+		return nil
+	}
+	return []string{result.RuleID}
 }
 
 func cwdClass(cwd string) string {

@@ -44,8 +44,10 @@ type ProcessResponse struct {
 }
 
 type Options struct {
-	Scorer risk.Scorer
-	Judge  judge.Judge
+	Scorer               risk.Scorer
+	Judge                judge.Judge
+	PolicyConfig         policy.Config
+	PolicyConfigProvider PolicyConfigProvider
 }
 
 type PolicyProfileResponse struct {
@@ -70,7 +72,23 @@ func NewServer(store *sqlite.Store, scorer risk.Scorer) (*Server, error) {
 }
 
 func NewServerWithOptions(store *sqlite.Store, opts Options) (*Server, error) {
-	return NewServerWithPolicy(store, NewRiskPolicyProviderWithJudge(opts.Scorer, opts.Judge))
+	policyStore, err := openPolicyStoreForSQLite(store)
+	if err != nil {
+		return nil, err
+	}
+	configProvider := opts.PolicyConfigProvider
+	if configProvider == nil {
+		if explicitPolicyConfig(opts.PolicyConfig) {
+			configProvider = staticPolicyConfigProvider{config: opts.PolicyConfig}
+		} else {
+			configProvider = policyStoreConfigProvider{store: policyStore}
+		}
+	}
+	return NewServerWithPolicyConfig(store, NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
+		Scorer:               opts.Scorer,
+		Judge:                opts.Judge,
+		PolicyConfigProvider: configProvider,
+	}), policyStore)
 }
 
 // NewServerWithPolicy creates a Guard server with an injected policy provider.
@@ -85,9 +103,6 @@ func NewServerWithPolicy(store *sqlite.Store, policy PolicyProvider) (*Server, e
 }
 
 func NewServerWithPolicyConfig(store *sqlite.Store, policy PolicyProvider, policyStore *policyconfig.Store) (*Server, error) {
-	if policy == nil {
-		policy = NewRiskPolicyProvider(nil)
-	}
 	if policyStore == nil {
 		var err error
 		policyStore, err = openPolicyStoreForSQLite(store)
@@ -97,6 +112,11 @@ func NewServerWithPolicyConfig(store *sqlite.Store, policy PolicyProvider, polic
 	}
 	if _, err := policyStore.Load(context.Background()); err != nil {
 		return nil, fmt.Errorf("load policy config: %w", err)
+	}
+	if policy == nil {
+		policy = NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
+			PolicyConfigProvider: policyStoreConfigProvider{store: policyStore},
+		})
 	}
 	runtime := newGuardHookRuntime(store, policy)
 	core, err := runtimecore.New(runtime)
@@ -334,6 +354,21 @@ func hasJSONContentType(r *http.Request) bool {
 		return false
 	}
 	return strings.EqualFold(mediaType, jsonContentType)
+}
+
+type policyStoreConfigProvider struct {
+	store *policyconfig.Store
+}
+
+func (p policyStoreConfigProvider) ActivePolicyConfig(context.Context) (policy.Config, error) {
+	if p.store == nil {
+		return policy.DefaultConfig(), nil
+	}
+	return p.store.Current().ToPolicyConfig(), nil
+}
+
+func explicitPolicyConfig(cfg policy.Config) bool {
+	return cfg.Version != "" || cfg.Profile != "" || cfg.RulePack != "" || cfg.NonBypassableRules != nil
 }
 
 func withCORS(next http.Handler) http.Handler {

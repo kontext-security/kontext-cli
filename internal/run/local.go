@@ -26,15 +26,17 @@ func StartLocal(ctx context.Context, opts Options) error {
 	}
 	cwd, _ := os.Getwd()
 	host, err := runtimehost.Start(ctx, runtimehost.Options{
-		AgentName:      opts.Agent,
-		CWD:            cwd,
-		DBPath:         os.Getenv("KONTEXT_DB"),
-		ModelPath:      os.Getenv("KONTEXT_MODEL"),
-		DashboardAddr:  os.Getenv("KONTEXT_ADDR"),
-		StartDashboard: true,
-		Mode:           string(mode),
-		Diagnostic:     diagnostics,
-		Out:            os.Stderr,
+		AgentName:           opts.Agent,
+		CWD:                 cwd,
+		DBPath:              os.Getenv("KONTEXT_DB"),
+		ModelPath:           os.Getenv("KONTEXT_MODEL"),
+		DashboardAddr:       os.Getenv("KONTEXT_ADDR"),
+		StartDashboard:      true,
+		JudgeConfigFromEnv:  true,
+		JudgeManagedDefault: true,
+		Mode:                string(mode),
+		Diagnostic:          diagnostics,
+		Out:                 os.Stderr,
 	})
 	if err != nil {
 		return err
@@ -62,6 +64,11 @@ func StartLocal(ctx context.Context, opts Options) error {
 		fmt.Fprintf(os.Stderr, "✓ Dashboard: %s\n", host.DashboardURL)
 	}
 	fmt.Fprintf(os.Stderr, "✓ Risk model: %s\n", host.ActiveModelPath)
+	if host.LocalJudgeStatus != "" {
+		fmt.Fprintf(os.Stderr, "✓ Local judge: %s\n", host.LocalJudgeStatus)
+	} else {
+		fmt.Fprintln(os.Stderr, "✓ Local judge: disabled")
+	}
 	printLocalMode(os.Stderr, string(host.Mode))
 	fmt.Fprintf(os.Stderr, "\nLaunching %s...\n\n", opts.Agent)
 

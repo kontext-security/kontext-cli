@@ -65,7 +65,7 @@ func NewOpenAICompatibleJudge(opts HTTPOptions) (*OpenAICompatibleJudge, error) 
 	}
 	client := opts.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		client = localJudgeHTTPClient()
 	}
 	prompt := opts.Prompt
 	if strings.TrimSpace(prompt) == "" {
@@ -80,6 +80,14 @@ func NewOpenAICompatibleJudge(opts HTTPOptions) (*OpenAICompatibleJudge, error) 
 		prompt:          prompt,
 		disableThinking: opts.DisableThinking || shouldDisableThinking(model),
 	}, nil
+}
+
+func localJudgeHTTPClient() *http.Client {
+	return &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 func (j *OpenAICompatibleJudge) Decide(ctx context.Context, input Input) (Result, error) {

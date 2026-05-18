@@ -18,6 +18,8 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/guard/app/server"
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
+	"github.com/kontext-security/kontext-cli/internal/guard/judge"
+	"github.com/kontext-security/kontext-cli/internal/guard/judgeruntime"
 	"github.com/kontext-security/kontext-cli/internal/guard/modelsnapshot"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
@@ -42,6 +44,8 @@ type Options struct {
 	DashboardAddr             string
 	StartDashboard            bool
 	AllowNonLoopbackDashboard bool
+	JudgeConfigFromEnv        bool
+	JudgeManagedDefault       bool
 	Mode                      string
 	Threshold                 float64
 	Horizon                   int
@@ -50,17 +54,19 @@ type Options struct {
 }
 
 type Host struct {
-	SessionID       string
-	SessionDir      string
-	SocketPath      string
-	DBPath          string
-	DashboardURL    string
-	DashboardErr    error
-	ActiveModelPath string
-	Mode            guardhookruntime.Mode
+	SessionID        string
+	SessionDir       string
+	SocketPath       string
+	DBPath           string
+	DashboardURL     string
+	DashboardErr     error
+	ActiveModelPath  string
+	LocalJudgeStatus string
+	Mode             guardhookruntime.Mode
 
 	server           *server.Server
 	closeStore       func() error
+	closeJudge       func()
 	runtimeService   *localruntime.Service
 	dashboardServer  *http.Server
 	sessionOpened    bool
@@ -96,12 +102,30 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		return nil, err
 	}
 
-	localServer, closeStore, err := server.OpenDefaultServer(dbPath, scorer)
+	closeJudge := func() {}
+	var localJudge judge.Judge
+	var judgeStatus string
+	if opts.JudgeConfigFromEnv {
+		judgeConfig, err := judgeruntime.ConfigFromEnv(dbPath, opts.JudgeManagedDefault)
+		if err != nil {
+			return nil, err
+		}
+		localJudge, closeJudge, judgeStatus, err = judgeruntime.Configure(ctx, judgeConfig)
+		if err != nil {
+			return nil, err
+		}
+	}
+	localServer, closeStore, err := server.OpenDefaultServerWithOptions(dbPath, server.Options{
+		Scorer: scorer,
+		Judge:  localJudge,
+	})
 	if err != nil {
+		closeJudge()
 		return nil, err
 	}
 	if err := os.Chmod(dbPath, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
 		_ = closeStore()
+		closeJudge()
 		return nil, fmt.Errorf("secure runtime database: %w", err)
 	}
 
@@ -111,11 +135,13 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 	}
 	if err := validateSessionID(sessionID); err != nil {
 		_ = closeStore()
+		closeJudge()
 		return nil, err
 	}
 	sessionDir := filepath.Join("/tmp", "kontext", sessionID)
 	if err := createSessionDir(sessionDir); err != nil {
 		_ = closeStore()
+		closeJudge()
 		return nil, err
 	}
 	socketPath := strings.TrimSpace(opts.SocketPath)
@@ -124,14 +150,16 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 	}
 
 	host := &Host{
-		SessionID:       sessionID,
-		SessionDir:      sessionDir,
-		SocketPath:      socketPath,
-		DBPath:          dbPath,
-		ActiveModelPath: activeModelPath,
-		Mode:            mode,
-		server:          localServer,
-		closeStore:      closeStore,
+		SessionID:        sessionID,
+		SessionDir:       sessionDir,
+		SocketPath:       socketPath,
+		DBPath:           dbPath,
+		ActiveModelPath:  activeModelPath,
+		LocalJudgeStatus: judgeStatus,
+		Mode:             mode,
+		server:           localServer,
+		closeStore:       closeStore,
+		closeJudge:       closeJudge,
 	}
 
 	runtimeService, err := localruntime.NewService(localruntime.Options{
@@ -220,6 +248,10 @@ func (h *Host) Close(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 		h.closeStore = nil
+	}
+	if h.closeJudge != nil {
+		h.closeJudge()
+		h.closeJudge = nil
 	}
 	if h.SessionDir != "" {
 		if err := os.RemoveAll(h.SessionDir); err != nil {
