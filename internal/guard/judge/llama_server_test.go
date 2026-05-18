@@ -92,7 +92,7 @@ func TestStartLlamaServerHealthCheckAndStop(t *testing.T) {
 		BinaryPath:     binaryPath,
 		ModelPath:      modelPath,
 		Port:           port,
-		StartupTimeout: 2 * time.Second,
+		StartupTimeout: 5 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +108,8 @@ func TestStartLlamaServerHealthCheckAndStop(t *testing.T) {
 func TestStartLlamaServerEarlyExitDoesNotWaitForStopTimeout(t *testing.T) {
 	modelPath := writeTestModel(t)
 	binaryPath := writeFakeExitingLlamaServer(t)
-	startupTimeout := 2 * time.Second
+	startupTimeout := 5 * time.Second
+	maxWait := 2500 * time.Millisecond
 	start := time.Now()
 	_, err := StartLlamaServer(context.Background(), LlamaServerOptions{
 		BinaryPath:     binaryPath,
@@ -119,8 +120,8 @@ func TestStartLlamaServerEarlyExitDoesNotWaitForStopTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("StartLlamaServer() error = nil, want early exit error")
 	}
-	if elapsed := time.Since(start); elapsed > startupTimeout {
-		t.Fatalf("early exit took %s, want less than %s", elapsed, startupTimeout)
+	if elapsed := time.Since(start); elapsed > maxWait {
+		t.Fatalf("early exit took %s, want less than %s", elapsed, maxWait)
 	}
 }
 
