@@ -4,8 +4,7 @@ import { cn } from "@/lib/utils";
 import { decisionTone } from "./helpers";
 import type { Counts, Decision, Tab } from "./types";
 
-const TILES: { id: Tab; label: string }[] = [
-  { id: "all", label: "Total" },
+const DECISION_TILES: { id: Decision; label: string }[] = [
   { id: "deny", label: "Would deny" },
   { id: "ask", label: "Needs ask" },
   { id: "allow", label: "Allowed" },
@@ -30,8 +29,14 @@ export function StatRow({
 }) {
   return (
     <section className="overflow-hidden rounded-xl border bg-card shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.04)]">
-      <div className="grid grid-cols-2 divide-x divide-y md:grid-cols-4 md:divide-y-0">
-        {TILES.map((t) => (
+      <TotalSummary
+        count={counts.all}
+        active={active === "all"}
+        loading={loading}
+        onClick={() => onSelect("all")}
+      />
+      <div className="grid divide-y md:grid-cols-3 md:divide-x md:divide-y-0">
+        {DECISION_TILES.map((t) => (
           <StatTile
             key={t.id}
             id={t.id}
@@ -49,6 +54,49 @@ export function StatRow({
   );
 }
 
+function TotalSummary({
+  count,
+  active,
+  loading,
+  onClick,
+}: {
+  count: number;
+  active: boolean;
+  loading: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Show all decisions"
+      className={cn(
+        "flex w-full items-center gap-3 border-b bg-muted/10 px-6 py-3 text-left transition-colors",
+        "hover:bg-muted/30",
+        active && "bg-muted/40",
+      )}
+    >
+      {loading ? (
+        <Skeleton className="h-7 w-10" />
+      ) : (
+        <span className="font-mono text-[26px] font-semibold leading-none tabular-nums text-foreground">
+          {count}
+        </span>
+      )}
+      <div className="min-w-0">
+        <span
+          className={cn(
+            "text-[13px] font-medium",
+            active ? "text-foreground" : "text-muted-foreground",
+          )}
+        >
+          decisions captured
+        </span>
+      </div>
+    </button>
+  );
+}
+
 function StatTile({
   id,
   label,
@@ -58,7 +106,7 @@ function StatTile({
   loading,
   onClick,
 }: {
-  id: Tab;
+  id: Decision;
   label: string;
   count: number;
   total: number;
@@ -66,13 +114,11 @@ function StatTile({
   loading: boolean;
   onClick: () => void;
 }) {
-  const pct = id === "all" ? null : Math.round((count / Math.max(1, total)) * 100);
+  const pct = Math.round((count / Math.max(1, total)) * 100);
   const numberColor =
     count === 0
       ? "text-muted-foreground/40"
-      : id === "all"
-        ? ""
-        : decisionTone[id].text;
+      : decisionTone[id].text;
   return (
     <button
       type="button"
@@ -105,7 +151,7 @@ function StatTile({
           {label}
         </span>
         <span className="mt-1 text-[11px] text-muted-foreground/70">
-          {pct == null ? "Decisions captured" : `${pct}% of session`}
+          {pct}% of session
         </span>
       </div>
     </button>
