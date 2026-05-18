@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -105,6 +106,61 @@ func TestMergeHooksInstallsOnlyToolHooks(t *testing.T) {
 	}
 	if _, ok := hooks["UserPromptSubmit"]; ok {
 		t.Fatal("UserPromptSubmit hook installed, want only tool hooks")
+	}
+}
+
+func TestMergeHooksPreservesNonGuardEntriesAndOrder(t *testing.T) {
+	t.Parallel()
+
+	const hookCommand = `/usr/local/bin/kontext hook --agent claude --mode "${KONTEXT_MODE:-observe}" --socket /tmp/kontext.sock`
+
+	preExisting := map[string]any{"matcher": "Read", "hooks": []any{map[string]any{"type": "command", "command": "echo pre"}}}
+	postExisting := map[string]any{"matcher": "Write", "hooks": []any{map[string]any{"type": "command", "command": "echo post"}}}
+	submitExisting := map[string]any{"matcher": "*", "hooks": []any{map[string]any{"type": "command", "command": "echo submit"}}}
+
+	hooks := mergeHooks(map[string]any{
+		"PreToolUse": []any{
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "/usr/local/bin/kontext guard hook claude-code"}}},
+			preExisting,
+		},
+		"PostToolUse": []any{
+			postExisting,
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "/usr/local/bin/kontext hook --agent claude --mode observe"}}},
+		},
+		"UserPromptSubmit": []any{
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "/usr/local/bin/kontext guard hook claude-code"}}},
+			submitExisting,
+		},
+	}, hookCommand)
+
+	preToolUse, ok := hooks["PreToolUse"].([]any)
+	if !ok || len(preToolUse) != 2 {
+		t.Fatalf("PreToolUse = %#v, want existing entry plus installed hook", hooks["PreToolUse"])
+	}
+	if !reflect.DeepEqual(preToolUse[0], preExisting) {
+		t.Fatalf("PreToolUse existing entry moved: %#v", preToolUse)
+	}
+	if !reflect.DeepEqual(preToolUse[1], guardToolHookEntry(hookCommand)) {
+		t.Fatalf("PreToolUse installed hook = %#v, want %#v", preToolUse[1], guardToolHookEntry(hookCommand))
+	}
+
+	postToolUse, ok := hooks["PostToolUse"].([]any)
+	if !ok || len(postToolUse) != 2 {
+		t.Fatalf("PostToolUse = %#v, want existing entry plus installed hook", hooks["PostToolUse"])
+	}
+	if !reflect.DeepEqual(postToolUse[0], postExisting) {
+		t.Fatalf("PostToolUse existing entry moved: %#v", postToolUse)
+	}
+	if !reflect.DeepEqual(postToolUse[1], guardToolHookEntry(hookCommand)) {
+		t.Fatalf("PostToolUse installed hook = %#v, want %#v", postToolUse[1], guardToolHookEntry(hookCommand))
+	}
+
+	userPromptSubmit, ok := hooks["UserPromptSubmit"].([]any)
+	if !ok || len(userPromptSubmit) != 1 {
+		t.Fatalf("UserPromptSubmit = %#v, want only non-guard entry", hooks["UserPromptSubmit"])
+	}
+	if !reflect.DeepEqual(userPromptSubmit[0], submitExisting) {
+		t.Fatalf("UserPromptSubmit existing entry moved: %#v", userPromptSubmit)
 	}
 }
 

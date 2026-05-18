@@ -664,13 +664,9 @@ func mergeHooks(raw any, hookCommand string) map[string]any {
 		hooks = map[string]any{}
 	}
 	for _, hookName := range []string{"PreToolUse", "PostToolUse", "UserPromptSubmit"} {
-		var list []any
-		if existing, ok := hooks[hookName].([]any); ok {
-			for _, entry := range existing {
-				if !isGuardHookEntry(entry) {
-					list = append(list, entry)
-				}
-			}
+		list := filteredHookEntries(hooks[hookName])
+		if hookName == "PreToolUse" || hookName == "PostToolUse" {
+			list = append(list, guardToolHookEntry(hookCommand))
 		}
 		if len(list) == 0 {
 			delete(hooks, hookName)
@@ -678,23 +674,33 @@ func mergeHooks(raw any, hookCommand string) map[string]any {
 		}
 		hooks[hookName] = list
 	}
-	for _, hookName := range []string{"PreToolUse", "PostToolUse"} {
-		var list []any
-		if existing, ok := hooks[hookName].([]any); ok {
-			list = append(list, existing...)
-		}
-		list = append(list, map[string]any{
-			"matcher": "*",
-			"hooks": []any{
-				map[string]any{
-					"type":    "command",
-					"command": hookCommand,
-				},
-			},
-		})
-		hooks[hookName] = list
-	}
 	return hooks
+}
+
+func filteredHookEntries(raw any) []any {
+	existing, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	list := make([]any, 0, len(existing))
+	for _, entry := range existing {
+		if !isGuardHookEntry(entry) {
+			list = append(list, entry)
+		}
+	}
+	return list
+}
+
+func guardToolHookEntry(hookCommand string) map[string]any {
+	return map[string]any{
+		"matcher": "*",
+		"hooks": []any{
+			map[string]any{
+				"type":    "command",
+				"command": hookCommand,
+			},
+		},
+	}
 }
 
 func isGuardHookEntry(entry any) bool {
