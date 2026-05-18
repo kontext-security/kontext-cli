@@ -25,9 +25,7 @@ echo "==> starting local daemon on ${BASE_URL}"
 KONTEXT_NOTIFY=0 go run ./cmd/kontext guard start --skip-hook-install --no-open \
   --addr "127.0.0.1:${PORT}" \
   --db "$DB_PATH" \
-  --model models/guard/coding-agent-v0.json \
-  --socket "$SOCKET_PATH" \
-  --threshold 0.3 >"$LOG_PATH" 2>&1 &
+  --socket "$SOCKET_PATH" >"$LOG_PATH" 2>&1 &
 DAEMON_PID=$!
 
 for _ in $(seq 1 80); do
@@ -102,14 +100,14 @@ process.stdin.on("end", () => {
 assert_hook \
   "safe read" \
   "{\"session_id\":\"${SESSION_ID}\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"README.md\"}}" \
-  "normal tool call" \
+  "no deterministic policy rule matched" \
   "would allow"
 
 assert_hook \
   "credential read" \
   "{\"session_id\":\"${SESSION_ID}\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\".env\"}}" \
-  "credential access requires approval" \
-  "would ask"
+  "credential access blocked by deterministic policy" \
+  "would deny"
 
 assert_hook \
   "provider credential" \
@@ -128,7 +126,7 @@ let raw = "";
 process.stdin.on("data", (chunk) => raw += chunk);
 process.stdin.on("end", () => {
   const summary = JSON.parse(raw);
-  if (summary.critical !== 1 || summary.warnings !== 1 || summary.actions !== 4 || summary.sessions !== 1) {
+  if (summary.critical !== 2 || summary.warnings !== 0 || summary.actions !== 4 || summary.sessions !== 1) {
     throw new Error(`unexpected summary ${JSON.stringify(summary)}`);
   }
 });
@@ -143,7 +141,7 @@ let raw = "";
 process.stdin.on("data", (chunk) => raw += chunk);
 process.stdin.on("end", () => {
   const summary = JSON.parse(raw);
-  if (summary.critical !== 1 || summary.warnings !== 1 || summary.actions !== 4 || summary.sessions !== 1) {
+  if (summary.critical !== 2 || summary.warnings !== 0 || summary.actions !== 4 || summary.sessions !== 1) {
     throw new Error(`unexpected summary ${JSON.stringify(summary)}`);
   }
 });
@@ -155,13 +153,8 @@ process.stdin.on("data", (chunk) => raw += chunk);
 process.stdin.on("end", () => {
   const events = JSON.parse(raw);
   const decisions = events.map((event) => event.decision).sort().join(",");
-  if (events.length !== 4 || decisions !== "allow,allow,ask,deny") {
+  if (events.length !== 4 || decisions !== "allow,allow,deny,deny") {
     throw new Error(`unexpected decisions ${decisions} in ${JSON.stringify(events)}`);
-  }
-  for (const event of events) {
-    if (event.risk_score == null) {
-      throw new Error(`missing risk score for ${event.id}`);
-    }
   }
 });
 '
@@ -169,7 +162,7 @@ process.stdin.on("end", () => {
 echo "==> checking served dashboard"
 curl -fsS "$BASE_URL" | grep -q "<title>Kontext Guard</title>"
 
-go run ./cmd/kontext guard status --daemon-url "$BASE_URL" | grep -q "1 critical"
+go run ./cmd/kontext guard status --daemon-url "$BASE_URL" | grep -q "2 critical"
 go run ./cmd/kontext guard doctor --daemon-url "$BASE_URL" | grep -q "daemon healthy"
 
-echo "E2E passed: hook -> local runtime -> RuntimeCore -> risk engine -> SQLite -> dashboard API"
+echo "E2E passed: hook -> local runtime -> RuntimeCore -> deterministic policy -> SQLite -> dashboard API"

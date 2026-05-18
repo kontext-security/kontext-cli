@@ -29,7 +29,6 @@ func StartLocal(ctx context.Context, opts Options) error {
 		AgentName:           opts.Agent,
 		CWD:                 cwd,
 		DBPath:              os.Getenv("KONTEXT_DB"),
-		ModelPath:           os.Getenv("KONTEXT_MODEL"),
 		DashboardAddr:       os.Getenv("KONTEXT_ADDR"),
 		StartDashboard:      true,
 		JudgeConfigFromEnv:  true,
@@ -63,7 +62,6 @@ func StartLocal(ctx context.Context, opts Options) error {
 	if host.DashboardURL != "" {
 		fmt.Fprintf(os.Stderr, "✓ Dashboard: %s\n", host.DashboardURL)
 	}
-	fmt.Fprintf(os.Stderr, "✓ Risk model: %s\n", host.ActiveModelPath)
 	if host.LocalJudgeStatus != "" {
 		fmt.Fprintf(os.Stderr, "✓ Local judge: %s\n", host.LocalJudgeStatus)
 	} else {

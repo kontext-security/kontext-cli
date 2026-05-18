@@ -44,11 +44,6 @@ function optionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function nullableNumber(value: unknown): number | null | undefined {
-  if (value === null) return null;
-  return optionalNumber(value);
-}
-
 function stringList(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const strings = value.filter((item): item is string => typeof item === "string");
@@ -96,11 +91,18 @@ function parseRiskEvent(value: unknown): RiskEvent | undefined {
     path_class: optionalString(value.path_class),
     decision: decision(value.decision),
     reason_code: optionalString(value.reason_code),
-    model_version: optionalString(value.model_version),
+    decision_stage: optionalString(value.decision_stage),
     signals: stringList(value.signals),
     guard_id: optionalString(value.guard_id),
-    risk_score: nullableNumber(value.risk_score),
     confidence: optionalNumber(value.confidence),
+    policy_profile: optionalString(value.policy_profile),
+    policy_rule_id: optionalString(value.policy_rule_id),
+    policy_rule_category: optionalString(value.policy_rule_category),
+    judge_runtime: optionalString(value.judge_runtime),
+    judge_model: optionalString(value.judge_model),
+    judge_failure_kind: optionalString(value.judge_failure_kind),
+    judge_risk_level: optionalString(value.judge_risk_level),
+    judge_categories: stringList(value.judge_categories),
   };
 }
 
@@ -129,8 +131,6 @@ function parseEvent(value: unknown): Event | undefined {
     decision: parsedDecision,
     reason: optionalString(value.reason),
     reason_code: optionalString(value.reason_code),
-    risk_score: nullableNumber(value.risk_score),
-    threshold: nullableNumber(value.threshold),
     risk_event: parseRiskEvent(value.risk_event),
   };
 }

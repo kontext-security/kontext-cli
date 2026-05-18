@@ -2,7 +2,7 @@
 
 Guard is the local safety mode inside `kontext`.
 
-It lets a developer run Claude Code normally while Kontext watches tool calls locally, redacts captured data, scores risk, stores events in local SQLite, and shows a local dashboard with `would allow`, `would ask`, and `would deny` decisions.
+It lets a developer run Claude Code normally while Kontext watches tool calls locally, redacts captured data, stores events in local SQLite, and shows a local dashboard with `would allow`, `would ask`, and `would deny` decisions.
 
 ## User path
 
@@ -46,8 +46,8 @@ Claude Code
   -> kontext hook --agent claude --mode observe
   -> local runtime Unix socket
   -> RuntimeCore
-  -> deterministic risk rules
-  -> optional local LLM judge or Markov-chain risk model
+  -> deterministic policy
+  -> local LLM judge when deterministic policy allows
   -> local SQLite
   -> local dashboard + notifications
 ```
@@ -56,10 +56,8 @@ Claude Code
 
 Guard uses two layers:
 
-1. Deterministic rules for obvious risk, such as credential access, direct provider API calls with credential material, production mutations, and destructive persistent-resource operations.
-2. A local Markov-chain risk model for sequence context in coding-agent workflows.
-
-The shipped model is a JSON artifact under `models/guard/`. Lab is the private pipeline that ingests datasets and local traces, evaluates candidate models, and produces improved JSON files. Accepted model files are committed back to this repo by PR.
+1. Deterministic policy for obvious risk, such as credential access, direct provider API calls with credential material, production mutations, and destructive persistent-resource operations.
+2. A local LLM judge for cases deterministic policy allows.
 
 ## Local judge
 
@@ -121,16 +119,13 @@ Public in `kontext-cli`:
 - `kontext guard ...` commands
 - Claude Code local hook adapter
 - local daemon, SQLite store, dashboard, notifications
-- deterministic risk rules
-- shipped baseline/candidate model JSON files
+- deterministic policy and local LLM judge wiring
 
 Private in Lab:
 
 - dataset ingestion
 - OpenTelemetry/Claude trace import
 - weak labeling
-- model training/evaluation
-- model promotion gates
 - unpublished datasets and experiments
 
 ## Work tracking

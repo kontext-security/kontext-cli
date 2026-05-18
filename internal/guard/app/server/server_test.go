@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,9 +18,9 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 )
 
-func newTestServer(t *testing.T, store *sqlite.Store, scorer risk.Scorer) *Server {
+func newTestServer(t *testing.T, store *sqlite.Store) *Server {
 	t.Helper()
-	server, err := NewServer(store, scorer)
+	server, err := NewServer(store)
 	if err != nil {
 		t.Fatalf("NewServer() error = %v", err)
 	}
@@ -39,7 +38,7 @@ func newTestServerWithPolicy(t *testing.T, store *sqlite.Store, policy PolicyPro
 
 func newTestServerWithPolicyConfig(t *testing.T, store *sqlite.Store, policyStore *policyconfig.Store) *Server {
 	t.Helper()
-	server, err := NewServerWithPolicyConfig(store, NewRiskPolicyProvider(risk.NoopScorer{}), policyStore)
+	server, err := NewServerWithPolicyConfig(store, NewRiskPolicyProvider(), policyStore)
 	if err != nil {
 		t.Fatalf("NewServerWithPolicyConfig() error = %v", err)
 	}
@@ -52,7 +51,7 @@ func TestStorePersistsSummaryCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	server := newTestServer(t, store, risk.NoopScorer{})
+	server := newTestServer(t, store)
 	events := []risk.HookEvent{
 		{SessionID: "s1", HookEventName: "PreToolUse", ToolName: "Read", ToolInput: map[string]any{"file_path": "README.md"}},
 		{SessionID: "s1", HookEventName: "PreToolUse", ToolName: "Read", ToolInput: map[string]any{"file_path": ".env"}},
@@ -67,34 +66,8 @@ func TestStorePersistsSummaryCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Actions != 3 || summary.Warnings != 1 || summary.Critical != 1 || summary.Sessions != 1 {
+	if summary.Actions != 3 || summary.Warnings != 0 || summary.Critical != 2 || summary.Sessions != 1 {
 		t.Fatalf("summary = %+v", summary)
-	}
-}
-
-func TestProcessHookEventReturnsScorerError(t *testing.T) {
-	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	want := errors.New("score failed")
-	server := newTestServer(t, store, failingScorer{err: want})
-	_, err = server.ProcessHookEvent(context.Background(), risk.HookEvent{
-		SessionID:     "s1",
-		HookEventName: "PreToolUse",
-		ToolName:      "Read",
-		ToolInput:     map[string]any{"file_path": "README.md"},
-	})
-	if !errors.Is(err, want) {
-		t.Fatalf("err = %v, want %v", err, want)
-	}
-	summary, err := store.Summary(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if summary.Actions != 0 {
-		t.Fatalf("summary = %+v, want no persisted action", summary)
 	}
 }
 
@@ -334,7 +307,7 @@ func TestProcessHookEventEnsuresDaemonObservedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	server := newTestServer(t, store, risk.NoopScorer{})
+	server := newTestServer(t, store)
 
 	if _, err := server.ProcessHookEvent(context.Background(), risk.HookEvent{
 		HookEventName: "PreToolUse",
@@ -367,7 +340,7 @@ func TestProcessHookEventPreservesClosedWrapperOwnedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	server := newTestServer(t, store, risk.NoopScorer{})
+	server := newTestServer(t, store)
 
 	if _, err := store.OpenSession(context.Background(), "session-123", "claude", "/tmp/project", "wrapper_owned", "backend-123"); err != nil {
 		t.Fatal(err)
@@ -757,7 +730,7 @@ func TestEvaluateHookRejectsTelemetryEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	server := newTestServer(t, store, risk.NoopScorer{})
+	server := newTestServer(t, store)
 	_, err = server.EvaluateHook(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
 		HookEventName: "PostToolUse",
@@ -782,7 +755,7 @@ func TestIngestEventRecordsTelemetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	server := newTestServer(t, store, risk.NoopScorer{})
+	server := newTestServer(t, store)
 	decision, err := server.IngestEvent(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
 		HookEventName: "PostToolUse",
@@ -810,7 +783,7 @@ func TestIngestEventRejectsBlockingEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	server := newTestServer(t, store, risk.NoopScorer{})
+	server := newTestServer(t, store)
 	_, err = server.IngestEvent(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
 		HookEventName: "PreToolUse",
@@ -827,14 +800,6 @@ func TestIngestEventRejectsBlockingEvents(t *testing.T) {
 	if summary.Actions != 0 {
 		t.Fatalf("summary = %+v, want no persisted action", summary)
 	}
-}
-
-type failingScorer struct {
-	err error
-}
-
-func (s failingScorer) Score(risk.RiskEvent) (risk.ScoreResult, error) {
-	return risk.ScoreResult{}, s.err
 }
 
 type recordingPolicy struct {
@@ -870,7 +835,7 @@ func TestStoreListsSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	server := newTestServer(t, store, risk.NoopScorer{})
+	server := newTestServer(t, store)
 	if _, err := server.ProcessHookEvent(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
 		HookEventName: "PreToolUse",
@@ -883,7 +848,7 @@ func TestStoreListsSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sessions) != 1 || sessions[0].SessionID != "s1" || sessions[0].Warnings != 1 {
+	if len(sessions) != 1 || sessions[0].SessionID != "s1" || sessions[0].Critical != 1 {
 		t.Fatalf("sessions = %+v", sessions)
 	}
 }

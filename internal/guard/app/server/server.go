@@ -44,7 +44,6 @@ type ProcessResponse struct {
 }
 
 type Options struct {
-	Scorer               risk.Scorer
 	Judge                judge.Judge
 	PolicyConfig         policy.Config
 	PolicyConfigProvider PolicyConfigProvider
@@ -67,8 +66,8 @@ type ActivatePolicyProfileRequest struct {
 	Profile policy.Profile `json:"profile"`
 }
 
-func NewServer(store *sqlite.Store, scorer risk.Scorer) (*Server, error) {
-	return NewServerWithOptions(store, Options{Scorer: scorer})
+func NewServer(store *sqlite.Store) (*Server, error) {
+	return NewServerWithOptions(store, Options{})
 }
 
 func NewServerWithOptions(store *sqlite.Store, opts Options) (*Server, error) {
@@ -85,7 +84,6 @@ func NewServerWithOptions(store *sqlite.Store, opts Options) (*Server, error) {
 		}
 	}
 	return NewServerWithPolicyConfig(store, NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
-		Scorer:               opts.Scorer,
 		Judge:                opts.Judge,
 		PolicyConfigProvider: configProvider,
 	}), policyStore)
@@ -391,8 +389,8 @@ func openPolicyStoreForSQLite(store *sqlite.Store) (*policyconfig.Store, error) 
 	return policyconfig.Open(filepath.Dir(store.Path()))
 }
 
-func OpenDefaultServer(dbPath string, scorer risk.Scorer) (*Server, func() error, error) {
-	return OpenDefaultServerWithOptions(dbPath, Options{Scorer: scorer})
+func OpenDefaultServer(dbPath string) (*Server, func() error, error) {
+	return OpenDefaultServerWithOptions(dbPath, Options{})
 }
 
 func OpenDefaultServerWithOptions(dbPath string, opts Options) (*Server, func() error, error) {

@@ -20,17 +20,8 @@ import (
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
 	"github.com/kontext-security/kontext-cli/internal/guard/judgeruntime"
-	"github.com/kontext-security/kontext-cli/internal/guard/modelsnapshot"
-	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
 	"github.com/kontext-security/kontext-cli/internal/runtimecore"
-	guardmodels "github.com/kontext-security/kontext-cli/models/guard"
-)
-
-const (
-	defaultModelSource = "embedded:models/guard/coding-agent-v0.json"
-	defaultThreshold   = 0.5
-	defaultHorizon     = 5
 )
 
 type Options struct {
@@ -38,8 +29,6 @@ type Options struct {
 	SessionID                 string
 	CWD                       string
 	DBPath                    string
-	ModelPath                 string
-	ModelSnapshotDir          string
 	SocketPath                string
 	DashboardAddr             string
 	StartDashboard            bool
@@ -47,8 +36,6 @@ type Options struct {
 	JudgeConfigFromEnv        bool
 	JudgeManagedDefault       bool
 	Mode                      string
-	Threshold                 float64
-	Horizon                   int
 	Diagnostic                diagnostic.Logger
 	Out                       io.Writer
 }
@@ -60,7 +47,6 @@ type Host struct {
 	DBPath           string
 	DashboardURL     string
 	DashboardErr     error
-	ActiveModelPath  string
 	LocalJudgeStatus string
 	Mode             guardhookruntime.Mode
 
@@ -91,17 +77,6 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		return nil, fmt.Errorf("create runtime data dir: %w", err)
 	}
 
-	scorer, activeModelPath, err := loadScorer(loadScorerOptions{
-		DBPath:           dbPath,
-		ModelPath:        opts.ModelPath,
-		ModelSnapshotDir: opts.ModelSnapshotDir,
-		Threshold:        opts.Threshold,
-		Horizon:          opts.Horizon,
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	closeJudge := func() {}
 	var localJudge judge.Judge
 	var judgeStatus string
@@ -116,8 +91,7 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		}
 	}
 	localServer, closeStore, err := server.OpenDefaultServerWithOptions(dbPath, server.Options{
-		Scorer: scorer,
-		Judge:  localJudge,
+		Judge: localJudge,
 	})
 	if err != nil {
 		closeJudge()
@@ -154,7 +128,6 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		SessionDir:       sessionDir,
 		SocketPath:       socketPath,
 		DBPath:           dbPath,
-		ActiveModelPath:  activeModelPath,
 		LocalJudgeStatus: judgeStatus,
 		Mode:             mode,
 		server:           localServer,
@@ -299,49 +272,6 @@ func DashboardAddr(value string, allowNonLoopback bool) (string, error) {
 	return "", fmt.Errorf("dashboard address %q is not loopback; use 127.0.0.1 or localhost", addr)
 }
 
-type loadScorerOptions struct {
-	DBPath           string
-	ModelPath        string
-	ModelSnapshotDir string
-	Threshold        float64
-	Horizon          int
-}
-
-func loadScorer(opts loadScorerOptions) (risk.Scorer, string, error) {
-	threshold, err := envFloat("KONTEXT_THRESHOLD", opts.Threshold, defaultThreshold)
-	if err != nil {
-		return nil, "", err
-	}
-	horizon, err := envInt("KONTEXT_HORIZON", opts.Horizon, defaultHorizon)
-	if err != nil {
-		return nil, "", err
-	}
-	snapshotDir := strings.TrimSpace(opts.ModelSnapshotDir)
-	if snapshotDir == "" {
-		snapshotDir = defaultModelSnapshotDir(opts.DBPath)
-	}
-	store := modelsnapshot.NewWithValidator(snapshotDir, risk.ValidateMarkovModel)
-
-	modelPath := strings.TrimSpace(opts.ModelPath)
-	if modelPath == "" {
-		modelPath = strings.TrimSpace(os.Getenv("KONTEXT_MODEL"))
-	}
-	var snapshot modelsnapshot.Snapshot
-	if modelPath == "" {
-		snapshot, err = store.ActivateBytes(defaultModelSource, guardmodels.CodingAgentV0)
-	} else {
-		snapshot, err = store.ActivateFromFile(modelPath)
-	}
-	if err != nil {
-		return nil, "", fmt.Errorf("activate risk model: %w", err)
-	}
-	scorer, err := risk.LoadMarkovScorer(snapshot.Path, threshold, horizon)
-	if err != nil {
-		return nil, "", fmt.Errorf("load risk model: %w", err)
-	}
-	return scorer, snapshot.Path, nil
-}
-
 func startDashboard(addr string, handler http.Handler) (*http.Server, string, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -383,41 +313,6 @@ func ensureRuntimeDataDir(path string, private bool) error {
 		return nil
 	}
 	return os.Chmod(path, 0o700)
-}
-
-func defaultModelSnapshotDir(dbPath string) string {
-	if dbPath != "" {
-		return filepath.Join(filepath.Dir(dbPath), "models")
-	}
-	return filepath.Join(".", "models")
-}
-
-func envFloat(key string, explicit, fallback float64) (float64, error) {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		parsed, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return 0, fmt.Errorf("%s must be a number: %w", key, err)
-		}
-		return parsed, nil
-	}
-	if explicit != 0 {
-		return explicit, nil
-	}
-	return fallback, nil
-}
-
-func envInt(key string, explicit, fallback int) (int, error) {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			return 0, fmt.Errorf("%s must be an integer: %w", key, err)
-		}
-		return parsed, nil
-	}
-	if explicit != 0 {
-		return explicit, nil
-	}
-	return fallback, nil
 }
 
 func isLoopbackHost(host string) bool {

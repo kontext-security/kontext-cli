@@ -2,30 +2,18 @@ package risk
 
 const PolicyVersionLaunchV0 = "guard-launch-v0"
 
-func DecideRisk(event HookEvent, scorer Scorer) (RiskDecision, error) {
-	if scorer == nil {
-		scorer = NoopScorer{}
-	}
+func DecideRisk(event HookEvent) (RiskDecision, error) {
 	riskEvent := NormalizeHookEvent(event)
 	riskEvent.PolicyVersion = PolicyVersionLaunchV0
-	score, err := scorer.Score(riskEvent)
-	if err != nil {
-		return RiskDecision{}, err
-	}
-	riskEvent.RiskScore = score.RiskScore
-	riskEvent.ModelVersion = score.ModelVersion
 	if event.HookEventName != "PreToolUse" {
 		riskEvent.Decision = DecisionAllow
 		riskEvent.ReasonCode = "async_telemetry"
 		riskEvent.DecisionStage = "async_telemetry"
 		return RiskDecision{
-			Decision:     DecisionAllow,
-			Reason:       "async telemetry event recorded",
-			ReasonCode:   "async_telemetry",
-			RiskScore:    score.RiskScore,
-			Threshold:    score.Threshold,
-			ModelVersion: score.ModelVersion,
-			RiskEvent:    riskEvent,
+			Decision:   DecisionAllow,
+			Reason:     "async telemetry event recorded",
+			ReasonCode: "async_telemetry",
+			RiskEvent:  riskEvent,
 		}, nil
 	}
 
@@ -36,29 +24,14 @@ func DecideRisk(event HookEvent, scorer Scorer) (RiskDecision, error) {
 			Reason:     "normal tool call",
 			ReasonCode: "normal_tool_call",
 		}
-		if score.Known && score.RiskScore != nil && score.Threshold != nil && *score.RiskScore >= *score.Threshold && modelCanEscalate(riskEvent) {
-			decision = RiskDecision{
-				Decision:   DecisionAsk,
-				Reason:     "model risk exceeded threshold",
-				ReasonCode: "model_risk_threshold",
-				GuardID:    "markov_threshold",
-			}
-		}
 	}
-	decision.RiskScore = score.RiskScore
-	decision.Threshold = score.Threshold
-	decision.ModelVersion = score.ModelVersion
 	decision.RiskEvent = riskEvent
 	decision.RiskEvent.Decision = decision.Decision
 	decision.RiskEvent.ReasonCode = decision.ReasonCode
 	decision.RiskEvent.GuardID = decision.GuardID
-	decision.RiskEvent.RiskScore = decision.RiskScore
-	decision.RiskEvent.ModelVersion = decision.ModelVersion
 	decision.RiskEvent.PolicyVersion = PolicyVersionLaunchV0
 	if decision.RiskEvent.DecisionStage == "" {
 		switch {
-		case decision.ReasonCode == "model_risk_threshold":
-			decision.RiskEvent.DecisionStage = "model"
 		case decision.GuardID != "":
 			decision.RiskEvent.DecisionStage = "deterministic"
 		default:
@@ -70,13 +43,6 @@ func DecideRisk(event HookEvent, scorer Scorer) (RiskDecision, error) {
 
 func DeterministicDecision(event RiskEvent) RiskDecision {
 	return guardDecision(event)
-}
-
-func modelCanEscalate(event RiskEvent) bool {
-	return event.Type == EventUnknown ||
-		event.Type == EventCredentialAccess ||
-		event.Type == EventDirectProviderAPICall ||
-		event.Type == EventDestructiveProviderOperation
 }
 
 func guardDecision(event RiskEvent) RiskDecision {

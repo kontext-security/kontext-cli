@@ -92,30 +92,6 @@ type RiskDecision struct {
 	RiskEvent    RiskEvent `json:"risk_event"`
 }
 
-type Scorer interface {
-	Score(event RiskEvent) (ScoreResult, error)
-}
-
-type ScoreResult struct {
-	RiskScore    *float64
-	Threshold    *float64
-	ModelVersion string
-	Known        bool
-}
-
-type NoopScorer struct{}
-
-func (NoopScorer) Score(RiskEvent) (ScoreResult, error) {
-	score := 0.0
-	threshold := 0.5
-	return ScoreResult{
-		RiskScore:    &score,
-		Threshold:    &threshold,
-		ModelVersion: "none",
-		Known:        false,
-	}, nil
-}
-
 func MarshalInput(value map[string]any) string {
 	if len(value) == 0 {
 		return ""
