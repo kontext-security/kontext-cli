@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kontext.dev/schemas/managed.v1.json",
+  "title": "Kontext managed install config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "organization_id",
+    "cloud_url",
+    "mode",
+    "agent",
+    "credentials"
+  ],
+  "properties": {
+    "version": {
+      "const": "managed-install-v1"
+    },
+    "organization_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cloud_url": {
+      "type": "string",
+      "pattern": "^https://[^/?#@]+(?:/[^?#]*)?$"
+    },
+    "mode": {
+      "const": "observe"
+    },
+    "agent": {
+      "const": "claude"
+    },
+    "credentials": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["install_token_ref"],
+      "properties": {
+        "install_token_ref": {
+          "type": "string",
+          "pattern": "^(keychain|env):[^\\s:]+$"
+        }
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
