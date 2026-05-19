@@ -57,6 +57,20 @@ Guard uses two layers:
 1. Deterministic policy for obvious risk, such as credential access, direct provider API calls with credential material, production mutations, and destructive persistent-resource operations.
 2. Probabilistic risk for cases deterministic policy allows.
 
+## Local authorization ledger
+
+Guard persists new local decisions to an authorization ledger in SQLite:
+
+- `agent_sessions`
+- `authorization_actions`
+- `authorization_receipts`
+
+`authorization_actions` stores the latest lifecycle state for a tool action, while `authorization_receipts` appends decision and outcome evidence.
+
+Receipt signing is intentionally small for the local implementation. Set `KONTEXT_GUARD_LEDGER_SIGNING=1` to enable local Ed25519 receipt signatures. The generated key is stored beside the SQLite database unless `KONTEXT_GUARD_LEDGER_SIGNING_KEY` points to a specific key path.
+
+The SQLite store also exposes raw ledger export and verification helpers for follow-on managed streaming work. `LedgerBatch` returns sessions, selected actions plus any bridge actions needed by a contiguous receipt range, receipts, and a receipt-chain anchor for incremental batches. `VerifyReceipts` checks receipt hashes, previous-hash links, and local Ed25519 signatures when signing is enabled.
+
 ## Local judge
 
 The user-facing `kontext start` path manages a local judge by default. For daemon-only diagnostics, Guard can call a localhost OpenAI-compatible judge, such as `llama-server`, after deterministic rules allow a blocking tool call:

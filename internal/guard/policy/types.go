@@ -1,6 +1,11 @@
 package policy
 
-import "fmt"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+)
 
 type Decision string
 
@@ -96,9 +101,26 @@ type Result struct {
 	Category       RuleCategory `json:"category,omitempty"`
 	Profile        Profile      `json:"profile"`
 	PolicyVersion  string       `json:"policy_version"`
+	PolicyHash     string       `json:"policy_hash"`
 	RulePack       string       `json:"rule_pack"`
 	ReasonCode     string       `json:"reason_code"`
 	Reason         string       `json:"reason"`
 	NonBypassable  bool         `json:"non_bypassable"`
 	MatchedSignals []string     `json:"matched_signals,omitempty"`
+}
+
+func PolicyHash(cfg Config, rulePack string) string {
+	cfg = cfg.withDefaults()
+	payload := map[string]any{
+		"version":              cfg.Version,
+		"profile":              cfg.Profile,
+		"rule_pack":            rulePack,
+		"non_bypassable_rules": cfg.NonBypassableRules,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }

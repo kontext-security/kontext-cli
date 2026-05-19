@@ -261,6 +261,9 @@ func TestZeroValueConfigUsesDefaultNonBypassableRules(t *testing.T) {
 	if result.PolicyVersion != DefaultPolicyVersion {
 		t.Fatalf("policy version = %s, want %s", result.PolicyVersion, DefaultPolicyVersion)
 	}
+	if result.PolicyHash == "" {
+		t.Fatal("policy hash is empty")
+	}
 	if result.RulePack != DefaultRulePackID {
 		t.Fatalf("rule pack = %s, want %s", result.RulePack, DefaultRulePackID)
 	}
@@ -362,5 +365,8 @@ func assertDenyMetadata(t *testing.T, result Result, category RuleCategory) {
 	}
 	if result.PolicyVersion == "" {
 		t.Fatal("policy version is empty")
+	}
+	if result.PolicyHash == "" {
+		t.Fatal("policy hash is empty")
 	}
 }

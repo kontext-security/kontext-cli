@@ -10,6 +10,7 @@ node_modules/
 web/guard-dashboard/dist/
 web/guard-dashboard/node_modules/
 data/
+.tmp/
 *.db
 *.sqlite
 *.sqlite3

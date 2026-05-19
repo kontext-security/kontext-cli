@@ -35,6 +35,16 @@ const (
 	DecisionDeny  Decision = "deny"
 )
 
+type AuthorizationDecision string
+
+const (
+	AuthorizationDecisionAllow  AuthorizationDecision = "ALLOW"
+	AuthorizationDecisionDeny   AuthorizationDecision = "DENY"
+	AuthorizationDecisionModify AuthorizationDecision = "MODIFY"
+	AuthorizationDecisionStepUp AuthorizationDecision = "STEP_UP"
+	AuthorizationDecisionDefer  AuthorizationDecision = "DEFER"
+)
+
 const (
 	DecisionStageDeterministicDeny = "deterministic_deny"
 	DecisionStageJudgeAllow        = "judge_allow"
@@ -66,6 +76,7 @@ type RiskEvent struct {
 	Signals            []string  `json:"signals,omitempty"`
 	DecisionStage      string    `json:"decision_stage,omitempty"`
 	PolicyVersion      string    `json:"policy_version,omitempty"`
+	PolicyHash         string    `json:"policy_hash,omitempty"`
 	PolicyProfile      string    `json:"policy_profile,omitempty"`
 	PolicyRulePack     string    `json:"policy_rule_pack,omitempty"`
 	PolicyRuleID       string    `json:"policy_rule_id,omitempty"`
