@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/kontext-security/kontext-cli/internal/agent"
 	"github.com/kontext-security/kontext-cli/internal/auth"
+	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
 	guardcli "github.com/kontext-security/kontext-cli/internal/guard/cli"
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/hook"
@@ -198,10 +200,18 @@ func hookCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:    "hook",
+		Use:    "hook [event]",
 		Short:  "Process a hook event (called by the agent, not by users)",
 		Hidden: true,
+		Args: func(cmd *cobra.Command, args []string) error {
+			_, err := expectedHookEventFromArgs(args)
+			return err
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			expectedEvent, err := expectedHookEventFromArgs(args)
+			if err != nil {
+				return err
+			}
 			a, ok := agent.Get(agentName)
 			if !ok {
 				fmt.Fprintf(os.Stderr, "unknown agent: %s\n", agentName)
@@ -214,11 +224,14 @@ func hookCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				adapter := guardhookruntime.AgentAdapter{Agent: a, AgentName: agentName}
+				var adapter guardhookruntime.Adapter = guardhookruntime.AgentAdapter{Agent: a, AgentName: agentName}
+				if expectedEvent != "" {
+					adapter = expectedHookAdapter{Adapter: adapter, expected: expectedEvent}
+				}
 				processor := rootHookProcessor{socketPath: resolvedSocketPath, mode: hookMode}
 				return guardhookruntime.Run(context.Background(), adapter, processor, hookMode, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 			}
-			hookcmd.Run(a, func(e hook.Event) (hook.Result, error) {
+			hookcmd.RunWithExpectedEvent(a, expectedEvent, func(e hook.Event) (hook.Result, error) {
 				return evaluateHookWithSidecar(resolvedSocketPath, e)
 			})
 			return nil
@@ -230,6 +243,36 @@ func hookCmd() *cobra.Command {
 	cmd.Flags().StringVar(&mode, "mode", "", "hook mode: observe or enforce")
 
 	return cmd
+}
+
+type expectedHookAdapter struct {
+	guardhookruntime.Adapter
+	expected hook.HookName
+}
+
+func (a expectedHookAdapter) Decode(in io.Reader) (hook.Event, error) {
+	event, err := a.Adapter.Decode(in)
+	if err != nil {
+		return hook.Event{}, err
+	}
+	if event.HookName != a.expected {
+		return hook.Event{}, fmt.Errorf("hook event alias %q does not match stdin event %q", a.expected, event.HookName)
+	}
+	return event, nil
+}
+
+func expectedHookEventFromArgs(args []string) (hook.HookName, error) {
+	if len(args) == 0 {
+		return "", nil
+	}
+	if len(args) > 1 {
+		return "", fmt.Errorf("expected at most one hook event alias")
+	}
+	event, ok := claudemanaged.ParseEventAlias(args[0])
+	if !ok {
+		return "", fmt.Errorf("unknown hook event alias %q", args[0])
+	}
+	return event, nil
 }
 
 type rootHookProcessor struct {

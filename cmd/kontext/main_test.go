@@ -157,6 +157,24 @@ func TestHookCmdModeDoesNotDefaultFromEnv(t *testing.T) {
 	}
 }
 
+func TestExpectedHookEventFromArgs(t *testing.T) {
+	event, err := expectedHookEventFromArgs([]string{"pre-tool-use"})
+	if err != nil {
+		t.Fatalf("expectedHookEventFromArgs() error = %v", err)
+	}
+	if event != hook.HookPreToolUse {
+		t.Fatalf("event = %q, want PreToolUse", event)
+	}
+
+	_, err = expectedHookEventFromArgs([]string{"pretooluse"})
+	if err == nil {
+		t.Fatal("expectedHookEventFromArgs() error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "unknown hook event alias") {
+		t.Fatalf("error = %q, want unknown alias", err.Error())
+	}
+}
+
 func TestLogoutCmdAlreadyLoggedOut(t *testing.T) {
 	cmd := newLogoutCmd(func() error { return keyring.ErrNotFound })
 
