@@ -28,6 +28,8 @@ Kontext is an authorization platform for AI agents. It helps teams control what 
 brew install kontext-security/tap/kontext
 ```
 
+The Homebrew package also installs `llama.cpp`, which provides the `llama-server` runtime used by the local LLM judge. On first use, Kontext manages the default GGUF judge model automatically: if the model is not already cached locally, it downloads it into the Kontext model cache before starting `llama-server` on loopback.
+
 ## Start a local protected session
 
 ```bash
@@ -93,6 +95,7 @@ For enterprise identity, audit retention, organization controls, deployment plan
 | Observe mode | Decisions are recorded as `would allow` or `would deny` without blocking the agent. |
 | Loopback dashboard | The local dashboard binds to loopback by default. |
 | Redacted storage | Tool events and decisions are stored locally with redaction. |
+| Managed local judge | Homebrew installs `llama-server` via `llama.cpp`; Kontext downloads and caches the default GGUF judge model when needed. |
 | No reasoning capture | Kontext captures tool events and outcomes, not LLM reasoning, token usage, or full conversation history. |
 
 ## Agent support
