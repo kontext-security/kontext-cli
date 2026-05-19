@@ -3,15 +3,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/hook"
+	"github.com/kontext-security/kontext-cli/internal/installation"
+	"github.com/kontext-security/kontext-cli/internal/managedconfig"
 	"github.com/kontext-security/kontext-cli/internal/run"
 	"github.com/zalando/go-keyring"
 )
@@ -131,6 +135,118 @@ func TestStartCmdRejectsEnvTemplateWithoutManaged(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--env-template is only used with --managed") {
 		t.Fatalf("error = %q, want env-template managed error", err.Error())
+	}
+}
+
+func TestStatusCmdReportsManagedJSONWithoutLeakingToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "managed.json")
+	installationPath := filepath.Join(tmpDir, "installation.json")
+	t.Setenv(managedconfig.EnvPath, configPath)
+	t.Setenv(installation.EnvPath, installationPath)
+
+	if err := os.WriteFile(configPath, []byte(`{
+		"version":"managed-install-v1",
+		"organization_id":"org_example",
+		"cloud_url":"https://api.kontext.security",
+		"mode":"observe",
+		"agent":"claude",
+		"device":{"label":"managed-mac"},
+		"credentials":{"install_token_ref":"keychain:kontext-managed-install-token"}
+	}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+	if err := installation.Write(installationPath, installation.Record{
+		Version:        installation.Version,
+		InstallationID: "ins_0123456789abcdefghijkl",
+		CreatedAt:      time.Unix(10, 0).UTC(),
+	}); err != nil {
+		t.Fatalf("installation.Write() error = %v", err)
+	}
+
+	cmd := statusCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("Set json flag error = %v", err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+
+	output := stdout.String()
+	if strings.Contains(output, "kontext-managed-install-token") {
+		t.Fatalf("status leaked token source name: %s", output)
+	}
+	var report statusReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if report.ManagedState != managedconfig.StateManagedActive {
+		t.Fatalf("managed_state = %q, want %q", report.ManagedState, managedconfig.StateManagedActive)
+	}
+	if report.InstallationID != "ins_0123456789abcdefghijkl" {
+		t.Fatalf("installation_id = %q", report.InstallationID)
+	}
+	if report.CredentialSource != "keychain:<redacted>" {
+		t.Fatalf("credential_source = %q, want redacted keychain", report.CredentialSource)
+	}
+}
+
+func TestStatusCmdMissingConfigIsReadOnlyUnmanaged(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "missing-managed.json")
+	installationPath := filepath.Join(tmpDir, "missing-installation.json")
+	t.Setenv(managedconfig.EnvPath, configPath)
+	t.Setenv(installation.EnvPath, installationPath)
+
+	cmd := statusCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("Set json flag error = %v", err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+
+	var report statusReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if report.ManagedState != managedconfig.StateUnmanaged {
+		t.Fatalf("managed_state = %q, want %q", report.ManagedState, managedconfig.StateUnmanaged)
+	}
+	if report.Installation.Exists {
+		t.Fatal("installation exists = true, want false")
+	}
+	if _, err := os.Stat(installationPath); !os.IsNotExist(err) {
+		t.Fatalf("status command created installation file, stat err = %v", err)
+	}
+}
+
+func TestStatusCmdReportsInvalidManagedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "managed.json")
+	t.Setenv(managedconfig.EnvPath, configPath)
+	t.Setenv(installation.EnvPath, filepath.Join(tmpDir, "installation.json"))
+
+	if err := os.WriteFile(configPath, []byte(`{"version":"bad"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+
+	cmd := statusCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "Managed state: managed_invalid") {
+		t.Fatalf("output = %q, want managed_invalid", output)
+	}
+	if !strings.Contains(output, "Validation: invalid") {
+		t.Fatalf("output = %q, want invalid validation", output)
 	}
 }
 

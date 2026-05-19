@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -18,7 +20,9 @@ import (
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/hook"
 	"github.com/kontext-security/kontext-cli/internal/hookcmd"
+	"github.com/kontext-security/kontext-cli/internal/installation"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
+	"github.com/kontext-security/kontext-cli/internal/managedconfig"
 	"github.com/kontext-security/kontext-cli/internal/run"
 	"github.com/kontext-security/kontext-cli/internal/update"
 
@@ -45,10 +49,124 @@ func main() {
 	root.AddCommand(hookCmd())
 	root.AddCommand(doctorCmd())
 	root.AddCommand(guardCmd())
+	root.AddCommand(statusCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+type statusReport struct {
+	ManagedState     managedconfig.State       `json:"managed_state"`
+	OrganizationID   string                    `json:"organization_id,omitempty"`
+	InstallationID   string                    `json:"installation_id,omitempty"`
+	CloudURL         string                    `json:"cloud_url,omitempty"`
+	Mode             string                    `json:"mode,omitempty"`
+	Agent            string                    `json:"agent,omitempty"`
+	CredentialSource string                    `json:"credential_source,omitempty"`
+	ConfigSource     managedconfig.Source      `json:"config_source"`
+	Validation       statusValidation          `json:"validation"`
+	Installation     statusInstallationSummary `json:"installation"`
+}
+
+type statusValidation struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+type statusInstallationSummary struct {
+	Path   string `json:"path"`
+	Exists bool   `json:"exists"`
+	Error  string `json:"error,omitempty"`
+}
+
+func statusCmd() *cobra.Command {
+	var jsonOutput bool
+
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show managed enrollment status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			report := buildStatusReport(time.Now())
+			if jsonOutput {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(report)
+			}
+			printStatusReport(cmd.OutOrStdout(), report)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print status as JSON")
+	return cmd
+}
+
+func buildStatusReport(now time.Time) statusReport {
+	managed := managedconfig.LoadDefault(now)
+	installPath := installation.PathFromEnv()
+	record, exists, installErr := installation.Load(installPath)
+
+	report := statusReport{
+		ManagedState: managed.State,
+		ConfigSource: managed.Source,
+		Validation: statusValidation{
+			OK:    managed.State != managedconfig.StateManagedInvalid,
+			Error: managed.Error,
+		},
+		Installation: statusInstallationSummary{
+			Path:   installPath,
+			Exists: exists,
+		},
+	}
+	if installErr != nil {
+		report.Installation.Error = installErr.Error()
+	} else if exists {
+		report.InstallationID = record.InstallationID
+	}
+	if managed.Config != nil {
+		report.OrganizationID = managed.Config.OrganizationID
+		report.CloudURL = managed.Config.CloudURL
+		report.Mode = managed.Config.Mode
+		report.Agent = managed.Config.Agent
+		report.CredentialSource = managedconfig.RedactTokenRef(managed.Config.Credentials.InstallTokenRef)
+	}
+	return report
+}
+
+func printStatusReport(out io.Writer, report statusReport) {
+	fmt.Fprintf(out, "Managed state: %s\n", report.ManagedState)
+	if report.OrganizationID != "" {
+		fmt.Fprintf(out, "Organization ID: %s\n", report.OrganizationID)
+	}
+	if report.InstallationID != "" {
+		fmt.Fprintf(out, "Installation ID: %s\n", report.InstallationID)
+	} else if report.Installation.Error != "" {
+		fmt.Fprintf(out, "Installation ID: invalid (%s)\n", report.Installation.Error)
+	} else {
+		fmt.Fprintln(out, "Installation ID: not present")
+	}
+	if report.CloudURL != "" {
+		fmt.Fprintf(out, "Cloud URL: %s\n", report.CloudURL)
+	}
+	if report.Mode != "" {
+		fmt.Fprintf(out, "Mode: %s\n", report.Mode)
+	}
+	if report.Agent != "" {
+		fmt.Fprintf(out, "Agent: %s\n", report.Agent)
+	}
+	if report.CredentialSource != "" {
+		fmt.Fprintf(out, "Credential source: %s\n", report.CredentialSource)
+	}
+	fmt.Fprintf(out, "Config source: %s\n", report.ConfigSource.Path)
+	if report.ConfigSource.Checksum != "" {
+		fmt.Fprintf(out, "Config checksum: %s\n", report.ConfigSource.Checksum)
+	}
+	fmt.Fprintf(out, "Config loaded at: %s\n", report.ConfigSource.LoadedAt.Format(time.RFC3339))
+	if report.Validation.OK {
+		fmt.Fprintln(out, "Validation: ok")
+	} else {
+		fmt.Fprintf(out, "Validation: invalid (%s)\n", report.Validation.Error)
 	}
 }
 
