@@ -181,6 +181,7 @@ func (p RiskPolicyProvider) activePolicyConfig(ctx context.Context) guardpolicy.
 
 func applyPolicyMetadata(event *risk.RiskEvent, result guardpolicy.Result) {
 	event.PolicyVersion = result.PolicyVersion
+	event.PolicyHash = result.PolicyHash
 	event.PolicyProfile = string(result.Profile)
 	event.PolicyRulePack = result.RulePack
 	if !result.Matched {
