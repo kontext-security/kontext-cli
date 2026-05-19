@@ -37,7 +37,7 @@ const (
 )
 
 const (
-	DefaultPolicyVersion = "guard-policy-v1"
+	DefaultPolicyVersion = "guard-policy-v0.2.0"
 	DefaultRulePackID    = "guard-default"
 )
 

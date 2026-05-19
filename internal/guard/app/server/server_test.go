@@ -680,7 +680,7 @@ func TestJudgePolicyDeterministicDecisionSkipsJudge(t *testing.T) {
 	if decision.Decision != risk.DecisionDeny || decision.RiskEvent.DecisionStage != risk.DecisionStageDeterministicDeny {
 		t.Fatalf("decision = %+v", decision)
 	}
-	if decision.RiskEvent.PolicyRuleID != "guard.destructive_persistent_resource.v1" ||
+	if decision.RiskEvent.PolicyRuleID != "guard.destructive_persistent_resource.v2" ||
 		decision.RiskEvent.PolicyRuleCategory != string(policy.CategoryDestructivePersistentResource) ||
 		decision.RiskEvent.PolicyVersion != policy.DefaultPolicyVersion {
 		t.Fatalf("policy metadata = %+v", decision.RiskEvent)

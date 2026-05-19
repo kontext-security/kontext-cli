@@ -45,6 +45,52 @@ func TestNormalizeDestructiveOperation(t *testing.T) {
 	}
 }
 
+func TestNormalizeQuotedDatabaseDrop(t *testing.T) {
+	event := NormalizeHookEvent(HookEvent{ToolName: "Bash", ToolInput: map[string]any{"command": `psql "$PROD_DATABASE_URL" -c "DROP DATABASE production;"`}})
+	if event.Type != EventDestructiveProviderOperation {
+		t.Fatalf("type = %s, want %s", event.Type, EventDestructiveProviderOperation)
+	}
+	if event.ResourceClass != "database" || event.OperationClass != "delete" {
+		t.Fatalf("resource/operation = %s/%s, want database/delete", event.ResourceClass, event.OperationClass)
+	}
+	if event.Environment != "production" {
+		t.Fatalf("environment = %s, want production", event.Environment)
+	}
+}
+
+func TestNormalizeSearchPatternDoesNotBecomeDestructiveAction(t *testing.T) {
+	event := NormalizeHookEvent(HookEvent{ToolName: "Bash", ToolInput: map[string]any{"command": `grep -R "DROP DATABASE" tests`}})
+	if event.Type != EventNormalToolCall {
+		t.Fatalf("type = %s, want %s", event.Type, EventNormalToolCall)
+	}
+	if event.OperationClass == "delete" || event.ResourceClass == "database" {
+		t.Fatalf("search pattern was treated as action: %+v", event)
+	}
+}
+
+func TestNormalizeManagedProductionMutation(t *testing.T) {
+	event := NormalizeHookEvent(HookEvent{
+		ToolName:  "mcp__railway__restart_service",
+		ToolInput: map[string]any{"project": "prod-api", "environment": "production", "service": "api"},
+	})
+	if event.Type != EventManagedToolCall {
+		t.Fatalf("type = %s, want %s", event.Type, EventManagedToolCall)
+	}
+	if event.Provider != "railway" || event.OperationClass != "write" || event.Environment != "production" {
+		t.Fatalf("managed event = %+v", event)
+	}
+}
+
+func TestNormalizeCredentialFileWrite(t *testing.T) {
+	event := NormalizeHookEvent(HookEvent{ToolName: "Write", ToolInput: map[string]any{"file_path": ".env", "content": "TOKEN=secret"}})
+	if event.Type != EventCredentialAccess {
+		t.Fatalf("type = %s, want %s", event.Type, EventCredentialAccess)
+	}
+	if event.CredentialSource != "tool_input" || event.PathClass != "env_file" {
+		t.Fatalf("credential metadata = %+v", event)
+	}
+}
+
 func TestNormalizeDestructiveSourceControlOperation(t *testing.T) {
 	event := NormalizeHookEvent(HookEvent{ToolName: "Bash", ToolInput: map[string]any{"command": "gh repo delete kontext-security/guard"}})
 	if event.Type != EventDestructiveProviderOperation {
@@ -53,7 +99,7 @@ func TestNormalizeDestructiveSourceControlOperation(t *testing.T) {
 	if event.ProviderCategory != "source_control" {
 		t.Fatalf("provider category = %s", event.ProviderCategory)
 	}
-	if event.ResourceClass != "repo" {
+	if event.ResourceClass != "repository" {
 		t.Fatalf("resource class = %s", event.ResourceClass)
 	}
 }

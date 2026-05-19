@@ -70,3 +70,12 @@ func matchedSignals(eventSignals, ruleSignals []string) []string {
 	}
 	return matched
 }
+
+func hasSignal(signals []string, want string) bool {
+	for _, signal := range signals {
+		if signal == want {
+			return true
+		}
+	}
+	return false
+}

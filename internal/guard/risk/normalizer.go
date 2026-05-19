@@ -14,6 +14,10 @@ var credentialShape = regexp.MustCompile(`(?i)(authorization\s*:|api[_-]?key\s*[
 var credentialReference = regexp.MustCompile(`(?i)(authorization\s*:|bearer\s+[a-z0-9._~+/=-]+|api[_-]?key\s*[=:]|secret\s*[=:]|token\s*[=:]|\$[A-Z0-9_]*(TOKEN|SECRET|API_KEY|ACCESS_KEY)[A-Z0-9_]*)`)
 var destructiveWord = regexp.MustCompile(`(?i)\b(delete|destroy|drop|truncate|wipe)\b`)
 var resourceWord = regexp.MustCompile(`(?i)\b(database|volume|backup|bucket|project|repo|repository|branch|deployment|namespace|secret)\b`)
+var productionEnvironment = regexp.MustCompile(`(?i)(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)`)
+var destructiveDatabaseText = regexp.MustCompile(`(?i)\b(drop\s+(database|schema|table)|truncate\s+(table\s+)?[a-z0-9_.-]+|dropdb|mysqladmin\s+drop|flushall|flushdb)\b`)
+var recursiveRemoveText = regexp.MustCompile(`(?i)\brm\s+-[a-z]*r[a-z]*f[a-z]*\s+.*(postgres|mysql|mongodb|redis|/var/lib|/data)\b`)
+var textValueOption = regexp.MustCompile(`(?s)(^|\s)(-m|--message|--title|--body|--body-file|--notes|--notes-file)(=|\s+)("[^"]*"|'[^']*'|\S+)`)
 
 func NormalizeHookEvent(event HookEvent) RiskEvent {
 	toolName := strings.TrimSpace(event.ToolName)
@@ -47,6 +51,7 @@ func NormalizeHookEvent(event HookEvent) RiskEvent {
 	if strings.HasPrefix(lowerTool, "mcp__") {
 		riskEvent.Type = EventManagedToolCall
 		addSignal(&riskEvent, "managed_tool")
+		classifyManagedTool(&riskEvent, lowerTool, inputText)
 	}
 	if lowerTool == "bash" || strings.Contains(lowerTool, "bash") || strings.Contains(lowerTool, "shell") {
 		classifySourceControl(&riskEvent, lowerCommand)
@@ -58,8 +63,17 @@ func NormalizeHookEvent(event HookEvent) RiskEvent {
 		riskEvent.PathClass = pathClass(path)
 		addSignal(&riskEvent, "credential_path")
 	}
+	if isWriteTool(lowerTool) && isCredentialPath(path) {
+		riskEvent.Type = EventCredentialAccess
+		riskEvent.CredentialObserved = true
+		riskEvent.CredentialSource = "tool_input"
+		riskEvent.PathClass = pathClass(path)
+		addSignal(&riskEvent, "credential_path")
+		addSignal(&riskEvent, "credential_file_write")
+	}
 	if lowerTool == "bash" || strings.Contains(lowerTool, "bash") || strings.Contains(lowerTool, "shell") {
 		classifyBash(&riskEvent, lowerCommand, commandSignalText)
+		classifyProviderCommand(&riskEvent, lowerCommand, commandSignalText)
 	}
 	if strings.Contains(lowerCommand, "curl") {
 		classifyProvider(&riskEvent, lowerCommand)
@@ -111,6 +125,15 @@ func classifyBash(event *RiskEvent, command, combined string) {
 	if strings.Contains(command, "curl") {
 		classifyProvider(event, command)
 	}
+	if destructiveDatabaseText.MatchString(combined) || recursiveRemoveText.MatchString(combined) {
+		event.Type = EventDestructiveProviderOperation
+		event.ProviderCategory = "infrastructure"
+		event.Operation = "destructive_database_operation"
+		event.OperationClass = "delete"
+		event.ResourceClass = "database"
+		addSignal(event, "destructive_database")
+		addSignal(event, "persistent_resource")
+	}
 }
 
 func classifySourceControl(event *RiskEvent, command string) {
@@ -128,6 +151,9 @@ func classifySourceControl(event *RiskEvent, command string) {
 			switch fields[1] {
 			case "add", "commit", "merge", "rebase", "push", "tag":
 				event.OperationClass = "write"
+				if fields[1] == "push" {
+					addSignal(event, "source_control_remote_write")
+				}
 			case "status", "diff", "log", "show", "branch":
 				event.OperationClass = "read"
 			}
@@ -143,7 +169,15 @@ func classifySourceControl(event *RiskEvent, command string) {
 				switch fields[2] {
 				case "view", "list", "status", "checks", "diff":
 					event.OperationClass = "read"
+				case "merge", "close", "comment", "review":
+					addSignal(event, "source_control_remote_write")
 				}
+			}
+			if fields[1] == "repo" && len(fields) > 2 && fields[2] == "delete" {
+				addSignal(event, "source_control_remote_write")
+			}
+			if fields[1] == "release" {
+				addSignal(event, "source_control_remote_write")
 			}
 		}
 	}
@@ -165,14 +199,164 @@ func classifyProvider(event *RiskEvent, text string) {
 			event.Type = EventDirectProviderAPICall
 			event.Provider = provider
 			event.DirectAPICall = true
+			event.OperationClass = httpOperationClass(text)
 			if provider == "github" {
 				event.ProviderCategory = "source_control"
 			} else {
 				event.ProviderCategory = "infrastructure"
 			}
+			if resource := resourceClass(text); resource != "" {
+				event.ResourceClass = resource
+			}
 			addSignal(event, "direct_provider_api")
 			return
 		}
+	}
+}
+
+func classifyProviderCommand(event *RiskEvent, command, actionText string) {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return
+	}
+	switch fields[0] {
+	case "aws":
+		event.Provider = "aws"
+		event.ProviderCategory = "infrastructure"
+		addSignal(event, "provider_cli")
+		if len(fields) > 2 {
+			event.Operation = strings.Join(fields[:3], " ")
+			switch {
+			case fields[1] == "s3" && fields[2] == "rm":
+				event.OperationClass = "delete"
+				event.ResourceClass = "bucket"
+			case fields[1] == "rds" && strings.Contains(fields[2], "delete"):
+				event.OperationClass = "delete"
+				event.ResourceClass = "database"
+			case strings.HasPrefix(fields[2], "delete") || strings.HasPrefix(fields[2], "remove"):
+				event.OperationClass = "delete"
+			case strings.HasPrefix(fields[2], "put") || strings.HasPrefix(fields[2], "update") || strings.HasPrefix(fields[2], "create"):
+				event.OperationClass = "write"
+			}
+		}
+	case "kubectl":
+		event.Provider = "kubernetes"
+		event.ProviderCategory = "infrastructure"
+		addSignal(event, "provider_cli")
+		if len(fields) > 1 {
+			event.Operation = fields[1]
+		}
+		if len(fields) > 2 {
+			event.ResourceClass = normalizeResourceClass(fields[2])
+		}
+		switch {
+		case len(fields) > 1 && fields[1] == "delete":
+			event.OperationClass = "delete"
+		case len(fields) > 2 && fields[1] == "rollout" && fields[2] == "status":
+			event.OperationClass = "read"
+		case len(fields) > 1 && (fields[1] == "apply" || fields[1] == "rollout" || fields[1] == "scale"):
+			event.OperationClass = "write"
+		case len(fields) > 1 && (fields[1] == "get" || fields[1] == "describe" || fields[1] == "logs"):
+			event.OperationClass = "read"
+		}
+	case "terraform":
+		event.Provider = "terraform"
+		event.ProviderCategory = "infrastructure"
+		addSignal(event, "provider_cli")
+		if len(fields) > 1 {
+			event.Operation = fields[1]
+			event.ResourceClass = "deployment"
+			switch fields[1] {
+			case "destroy":
+				event.OperationClass = "delete"
+			case "apply", "taint", "import":
+				event.OperationClass = "write"
+			case "plan", "show", "state":
+				event.OperationClass = "read"
+			}
+		}
+	case "railway":
+		event.Provider = "railway"
+		event.ProviderCategory = "infrastructure"
+		addSignal(event, "provider_cli")
+		if len(fields) > 2 {
+			event.Operation = strings.Join(fields[:3], " ")
+			if fields[1] == "volume" && fields[2] == "delete" {
+				event.OperationClass = "delete"
+				event.ResourceClass = "volume"
+			}
+			if fields[1] == "variables" && fields[2] == "set" {
+				event.OperationClass = "write"
+				event.ResourceClass = "secret"
+			}
+		}
+	case "vercel":
+		event.Provider = "vercel"
+		event.ProviderCategory = "infrastructure"
+		addSignal(event, "provider_cli")
+		if len(fields) > 1 {
+			event.Operation = fields[1]
+			event.ResourceClass = "deployment"
+			switch fields[1] {
+			case "remove", "delete":
+				event.OperationClass = "delete"
+			case "deploy", "promote", "rollback":
+				event.OperationClass = "write"
+			case "ls", "inspect", "env":
+				event.OperationClass = "read"
+			}
+		}
+	case "docker":
+		event.Provider = "docker"
+		event.ProviderCategory = "infrastructure"
+		addSignal(event, "provider_cli")
+		event.ResourceClass = "deployment"
+		if dockerComposeDownWithVolumes(fields) {
+			event.Operation = "compose down --volumes"
+			event.OperationClass = "delete"
+			event.ResourceClass = "volume"
+		} else if strings.Contains(command, " service update") || strings.Contains(command, " compose up") {
+			event.OperationClass = "write"
+		}
+	case "psql", "mysql", "sqlite3", "dropdb", "mysqladmin", "redis-cli":
+		event.Provider = databaseProvider(fields[0])
+		event.ProviderCategory = "infrastructure"
+		addSignal(event, "provider_cli")
+		if destructiveDatabaseText.MatchString(actionText) {
+			event.Type = EventDestructiveProviderOperation
+			event.Operation = "destructive_database_operation"
+			event.OperationClass = "delete"
+			event.ResourceClass = "database"
+			addSignal(event, "destructive_database")
+		} else {
+			event.ResourceClass = "database"
+		}
+	}
+}
+
+func classifyManagedTool(event *RiskEvent, tool, inputText string) {
+	parts := strings.Split(tool, "__")
+	if len(parts) < 3 {
+		return
+	}
+	provider := parts[1]
+	action := parts[2]
+	event.Provider = provider
+	event.Operation = action
+	event.ProviderCategory = managedProviderCategory(provider)
+	event.OperationClass = operationClassFromAction(action)
+	event.ResourceClass = resourceClassFromText(action + " " + inputText)
+	if event.ResourceClass == "unknown" {
+		event.ResourceClass = "project"
+	}
+	if event.OperationClass != "read" {
+		addSignal(event, "managed_tool_write")
+	}
+	if event.Environment == "production" {
+		addSignal(event, "production")
+	}
+	if event.OperationClass == "delete" && isPersistentResource(event.ResourceClass) {
+		event.Type = EventDestructiveProviderOperation
 	}
 }
 
@@ -196,6 +380,15 @@ func pathFromInput(input map[string]any) string {
 
 func isReadTool(tool string) bool {
 	return tool == "read" || strings.Contains(tool, "read")
+}
+
+func isWriteTool(tool string) bool {
+	switch tool {
+	case "write", "edit", "multiedit", "notebookedit":
+		return true
+	default:
+		return strings.Contains(tool, "write") || strings.Contains(tool, "edit")
+	}
 }
 
 func isCredentialPath(path string) bool {
@@ -233,9 +426,35 @@ func destructiveOperation(text string) string {
 func resourceClass(text string) string {
 	match := resourceWord.FindStringSubmatch(text)
 	if len(match) > 1 {
-		return strings.ToLower(match[1])
+		return normalizeResourceClass(match[1])
 	}
 	return ""
+}
+
+func resourceClassFromText(text string) string {
+	if resource := resourceClass(text); resource != "" {
+		return resource
+	}
+	if strings.Contains(text, "service") {
+		return "deployment"
+	}
+	if strings.Contains(text, "policy") && strings.Contains(text, "bucket") {
+		return "bucket"
+	}
+	return "unknown"
+}
+
+func normalizeResourceClass(resource string) string {
+	switch strings.TrimSpace(strings.ToLower(resource)) {
+	case "ns":
+		return "namespace"
+	case "pvc", "pv":
+		return "volume"
+	case "repo":
+		return "repository"
+	default:
+		return strings.TrimSpace(strings.ToLower(resource))
+	}
 }
 
 func isPersistentResource(resource string) bool {
@@ -249,7 +468,7 @@ func isPersistentResource(resource string) bool {
 
 func environmentFromText(text string) string {
 	switch {
-	case strings.Contains(text, "production") || strings.Contains(text, " prod"):
+	case productionEnvironment.MatchString(text):
 		return "production"
 	case strings.Contains(text, "staging"):
 		return "staging"
@@ -301,7 +520,106 @@ func observesCredential(command string, eventType EventType) bool {
 
 func commandRiskText(command string) string {
 	withoutDocs := stripHereDocs(command)
-	return stripQuotedText(withoutDocs)
+	return stripTextOnlyArguments(withoutDocs)
+}
+
+func stripTextOnlyArguments(command string) string {
+	fields := strings.Fields(strings.ToLower(command))
+	if len(fields) == 0 {
+		return command
+	}
+	if isSearchCommand(fields[0]) {
+		return fields[0]
+	}
+	if fields[0] == "git" && len(fields) > 1 && fields[1] == "commit" {
+		return textValueOption.ReplaceAllString(command, "$1$2 [text]")
+	}
+	if fields[0] == "gh" && len(fields) > 2 && fields[1] == "pr" && fields[2] == "create" {
+		return textValueOption.ReplaceAllString(command, "$1$2 [text]")
+	}
+	return command
+}
+
+func isSearchCommand(command string) bool {
+	switch filepath.Base(command) {
+	case "grep", "egrep", "fgrep", "rg", "ag":
+		return true
+	default:
+		return false
+	}
+}
+
+func httpOperationClass(text string) string {
+	if strings.Contains(text, "-x delete") || strings.Contains(text, "--request delete") {
+		return "delete"
+	}
+	if strings.Contains(text, "-x post") || strings.Contains(text, "-x put") || strings.Contains(text, "-x patch") ||
+		strings.Contains(text, "--request post") || strings.Contains(text, "--request put") || strings.Contains(text, "--request patch") {
+		return "write"
+	}
+	return "read"
+}
+
+func operationClassFromAction(action string) string {
+	action = strings.ToLower(action)
+	switch {
+	case strings.HasPrefix(action, "list") || strings.HasPrefix(action, "get") ||
+		strings.HasPrefix(action, "read") || strings.HasPrefix(action, "search") ||
+		strings.HasPrefix(action, "describe") || strings.HasPrefix(action, "fetch"):
+		return "read"
+	case strings.HasPrefix(action, "delete") || strings.HasPrefix(action, "remove") ||
+		strings.Contains(action, "delete") || strings.Contains(action, "remove"):
+		return "delete"
+	case strings.HasPrefix(action, "put") || strings.HasPrefix(action, "set") ||
+		strings.HasPrefix(action, "update") || strings.HasPrefix(action, "create") ||
+		strings.HasPrefix(action, "restart") || strings.HasPrefix(action, "deploy") ||
+		strings.HasPrefix(action, "merge") || strings.HasPrefix(action, "push") ||
+		strings.Contains(action, "policy") || strings.Contains(action, "restart"):
+		return "write"
+	default:
+		return "unknown"
+	}
+}
+
+func managedProviderCategory(provider string) string {
+	switch provider {
+	case "aws", "railway", "vercel", "kubernetes", "cloudflare", "digitalocean", "google_cloud", "gcp":
+		return "infrastructure"
+	case "github", "gitlab":
+		return "source_control"
+	default:
+		return "unknown"
+	}
+}
+
+func databaseProvider(command string) string {
+	switch command {
+	case "mysql", "mysqladmin":
+		return "mysql"
+	case "sqlite3":
+		return "sqlite"
+	case "redis-cli":
+		return "redis"
+	default:
+		return "postgres"
+	}
+}
+
+func dockerComposeDownWithVolumes(fields []string) bool {
+	composeSeen := false
+	downSeen := false
+	volumeSeen := false
+	for _, field := range fields {
+		switch field {
+		case "compose":
+			composeSeen = true
+		case "down":
+			downSeen = true
+		case "-v", "--volumes":
+			volumeSeen = true
+		}
+	}
+	return composeSeen && downSeen && volumeSeen
 }
 
 func stripHereDocs(command string) string {

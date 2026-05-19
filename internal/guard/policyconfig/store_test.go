@@ -97,7 +97,7 @@ func TestLoadValidActiveRefreshesLastKnownGood(t *testing.T) {
 func TestLoadRejectsUnknownFields(t *testing.T) {
 	store := newTestStore(t)
 	writeActive(t, store, `{
-  "version": "guard-policy-v1",
+  "version": "guard-policy-v0.2.0",
   "profile": "balanced",
   "rulePack": "guard-default",
   "nonBypassableRules": true,
@@ -524,7 +524,7 @@ func TestLoadFallsBackToDefaultWhenActiveAndLKGInvalid(t *testing.T) {
 	store := newTestStore(t)
 	writeActive(t, store, `{"version":`)
 	writeLKG(t, store, `{
-  "version": "guard-policy-v1",
+  "version": "guard-policy-v0.2.0",
   "profile": "balanced",
   "rulePack": "guard-default",
   "nonBypassableRules": false
@@ -550,7 +550,7 @@ func TestValidationRejectsBadProfilesRulePacksAndBypassableRules(t *testing.T) {
 		{
 			name: "unknown profile",
 			config: `{
-  "version": "guard-policy-v1",
+  "version": "guard-policy-v0.2.0",
   "profile": "aggressive",
   "rulePack": "guard-default",
   "nonBypassableRules": true
@@ -559,7 +559,7 @@ func TestValidationRejectsBadProfilesRulePacksAndBypassableRules(t *testing.T) {
 		{
 			name: "unknown rule pack",
 			config: `{
-  "version": "guard-policy-v1",
+  "version": "guard-policy-v0.2.0",
   "profile": "balanced",
   "rulePack": "custom",
   "nonBypassableRules": true
@@ -568,7 +568,7 @@ func TestValidationRejectsBadProfilesRulePacksAndBypassableRules(t *testing.T) {
 		{
 			name: "missing nonBypassableRules",
 			config: `{
-  "version": "guard-policy-v1",
+  "version": "guard-policy-v0.2.0",
   "profile": "balanced",
   "rulePack": "guard-default"
 }`,
@@ -576,7 +576,7 @@ func TestValidationRejectsBadProfilesRulePacksAndBypassableRules(t *testing.T) {
 		{
 			name: "false nonBypassableRules",
 			config: `{
-  "version": "guard-policy-v1",
+  "version": "guard-policy-v0.2.0",
   "profile": "balanced",
   "rulePack": "guard-default",
   "nonBypassableRules": false
@@ -664,7 +664,7 @@ func TestSnapshotConvertsToPolicyConfigAndMetadata(t *testing.T) {
 		t.Fatalf("ToPolicyConfig() = %#v", engineConfig)
 	}
 	metadata := snapshot.DecisionMetadata()
-	if metadata.PolicyVersion != policy.DefaultPolicyVersion || metadata.RulePackVersion != "v1" {
+	if metadata.PolicyVersion != policy.DefaultPolicyVersion || metadata.RulePackVersion != "v0.2.0" {
 		t.Fatalf("DecisionMetadata() = %#v", metadata)
 	}
 	if metadata.ConfigSource != string(SourceActiveFile) || metadata.ConfigStatus != string(StatusOK) {
