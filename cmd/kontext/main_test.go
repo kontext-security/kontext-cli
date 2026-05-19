@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -141,6 +143,100 @@ func TestGuardCmdRoutesToLocalGuardMode(t *testing.T) {
 	}
 	if !cmd.DisableFlagParsing {
 		t.Fatal("guard command should pass flags through to the local Guard command parser")
+	}
+}
+
+func TestStatusCmdReportsUnmanagedWithoutCreatingInstallationState(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "managed.json")
+	installationPath := filepath.Join(t.TempDir(), "installation.json")
+	t.Setenv("KONTEXT_MANAGED_CONFIG", configPath)
+	t.Setenv("KONTEXT_INSTALLATION_STATE", installationPath)
+
+	var stdout bytes.Buffer
+	cmd := statusCmd()
+	cmd.SetOut(&stdout)
+
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Managed state: unmanaged") {
+		t.Fatalf("stdout = %q, want unmanaged state", stdout.String())
+	}
+	if _, err := os.Stat(installationPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("installation state stat error = %v, want not exist", err)
+	}
+}
+
+func TestStatusCmdJSONReportsManagedActiveWithoutSecretResolution(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "managed.json")
+	installationPath := filepath.Join(dir, "installation.json")
+	if err := os.WriteFile(configPath, []byte(`{
+		"version": "managed-install-v1",
+		"organization_id": "org_123",
+		"cloud_url": "https://api.kontext.dev",
+		"mode": "observe",
+		"agent": "claude",
+		"credentials": {"install_token_ref": "env:KONTEXT_INSTALL_TOKEN"}
+	}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+	if err := os.WriteFile(installationPath, []byte(`{"installation_id":"ins_existing"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(installation) error = %v", err)
+	}
+	t.Setenv("KONTEXT_MANAGED_CONFIG", configPath)
+	t.Setenv("KONTEXT_INSTALLATION_STATE", installationPath)
+	t.Setenv("KONTEXT_INSTALL_TOKEN", "super-secret")
+
+	var stdout bytes.Buffer
+	cmd := statusCmd()
+	cmd.SetOut(&stdout)
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("Set(json) error = %v", err)
+	}
+
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if strings.Contains(stdout.String(), "super-secret") {
+		t.Fatalf("stdout leaked resolved secret: %q", stdout.String())
+	}
+
+	var report statusReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("Unmarshal(status) error = %v", err)
+	}
+	if report.ManagedState != "managed_active" {
+		t.Fatalf("ManagedState = %q, want managed_active", report.ManagedState)
+	}
+	if report.InstallationID != "ins_existing" {
+		t.Fatalf("InstallationID = %q, want ins_existing", report.InstallationID)
+	}
+	if report.CredentialRef == nil || report.CredentialRef.Source != "env" || report.CredentialRef.Name != "KONTEXT_INSTALL_TOKEN" {
+		t.Fatalf("CredentialRef = %+v, want env/KONTEXT_INSTALL_TOKEN", report.CredentialRef)
+	}
+}
+
+func TestStatusCmdReportsManagedInvalid(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "managed.json")
+	if err := os.WriteFile(configPath, []byte(`{"version":"wrong"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+	t.Setenv("KONTEXT_MANAGED_CONFIG", configPath)
+	t.Setenv("KONTEXT_INSTALLATION_STATE", filepath.Join(t.TempDir(), "installation.json"))
+
+	var stdout bytes.Buffer
+	cmd := statusCmd()
+	cmd.SetOut(&stdout)
+
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Managed state: managed_invalid") {
+		t.Fatalf("stdout = %q, want managed_invalid state", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Validation error:") {
+		t.Fatalf("stdout = %q, want validation error", stdout.String())
 	}
 }
 
