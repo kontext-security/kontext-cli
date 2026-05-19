@@ -48,6 +48,8 @@ class Kontext < Formula
   version "${version}"
   license "MIT"
 
+  depends_on "llama.cpp"
+
   on_macos do
     if Hardware::CPU.intel?
       url "https://github.com/kontext-security/kontext-cli/releases/download/v${version}/${darwin_amd64_archive}"
