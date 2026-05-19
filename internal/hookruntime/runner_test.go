@@ -22,9 +22,9 @@ func TestRunWritesStructuredDenyResult(t *testing.T) {
 		stdout,
 		stderr,
 		codec,
-		SinkFunc(func(hook.Event) (hook.Result, error) {
+		func(hook.Event) (hook.Result, error) {
 			return hook.Result{Decision: hook.DecisionDeny, Reason: "blocked by policy"}, nil
-		}),
+		},
 	)
 
 	if code != 0 {
@@ -53,9 +53,9 @@ func TestRunWritesStructuredAskResult(t *testing.T) {
 		stdout,
 		stderr,
 		codec,
-		SinkFunc(func(hook.Event) (hook.Result, error) {
+		func(hook.Event) (hook.Result, error) {
 			return hook.Result{Decision: hook.DecisionAsk, Reason: "approval required"}, nil
-		}),
+		},
 	)
 
 	if code != 0 {

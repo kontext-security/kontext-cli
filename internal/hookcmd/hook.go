@@ -24,8 +24,7 @@ func run(stdin io.Reader, stdout, stderr io.Writer, a agent.Agent, evaluate func
 
 func runWithExpectedEvent(stdin io.Reader, stdout, stderr io.Writer, a agent.Agent, expected hook.HookName, evaluate func(hook.Event) (hook.Result, error)) int {
 	codec := agentCodec{agentName: a.Name(), agent: a, expected: expected}
-	sink := hookruntime.SinkFunc(evaluate)
-	return hookruntime.Run(stdin, stdout, stderr, codec, sink)
+	return hookruntime.Run(stdin, stdout, stderr, codec, evaluate)
 }
 
 type agentCodec struct {

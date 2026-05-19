@@ -8,7 +8,7 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/hook"
 )
 
-type ClaudeHookInput struct {
+type claudeHookInput struct {
 	SessionID        string         `json:"session_id"`
 	SessionIDAlt     string         `json:"sessionId"`
 	HookEventName    string         `json:"hook_event_name"`
@@ -44,7 +44,7 @@ type claudeHookSpecificOutput struct {
 }
 
 func DecodeClaudeEvent(input []byte, agentName string) (hook.Event, error) {
-	var h ClaudeHookInput
+	var h claudeHookInput
 	if err := json.Unmarshal(input, &h); err != nil {
 		return hook.Event{}, fmt.Errorf("claude: decode hook input: %w", err)
 	}
