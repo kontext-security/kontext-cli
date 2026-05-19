@@ -12,17 +12,7 @@ type Codec interface {
 	EncodeHookResult(hook.Event, hook.Result) ([]byte, error)
 }
 
-type Sink interface {
-	ProcessHookEvent(hook.Event) (hook.Result, error)
-}
-
-type SinkFunc func(hook.Event) (hook.Result, error)
-
-func (f SinkFunc) ProcessHookEvent(event hook.Event) (hook.Result, error) {
-	return f(event)
-}
-
-func Run(stdin io.Reader, stdout, stderr io.Writer, codec Codec, sink Sink) int {
+func Run(stdin io.Reader, stdout, stderr io.Writer, codec Codec, evaluate func(hook.Event) (hook.Result, error)) int {
 	input, err := io.ReadAll(stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "kontext: failed to read stdin: %v\n", err)
@@ -35,7 +25,7 @@ func Run(stdin io.Reader, stdout, stderr io.Writer, codec Codec, sink Sink) int 
 		return 2
 	}
 
-	result, err := sink.ProcessHookEvent(event)
+	result, err := evaluate(event)
 	if err != nil {
 		fmt.Fprintf(stderr, "kontext: evaluation error: %v\n", err)
 		return 2
