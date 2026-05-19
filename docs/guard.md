@@ -47,7 +47,7 @@ Claude Code
   -> deterministic policy
   -> probabilistic risk when deterministic policy allows
   -> local SQLite
-  -> local dashboard + notifications
+  -> local dashboard
 ```
 
 ## Risk layers
@@ -116,7 +116,7 @@ Public in `kontext-cli`:
 
 - `kontext guard ...` commands
 - Claude Code local hook adapter
-- local daemon, SQLite store, dashboard, notifications
+- local daemon, SQLite store, dashboard
 - deterministic policy and local LLM judge wiring
 
 Private in Lab:

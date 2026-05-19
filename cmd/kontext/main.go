@@ -346,7 +346,7 @@ func normalizedHostedAccessMode(value string) string {
 // isInteractivePrompt reports whether both stdin (where the answer is read)
 // and stderr (where the prompt is written) are terminals. If either is
 // redirected, the user cannot meaningfully answer the prompt, so we fall
-// back to the passive async notification.
+// back to a background update check.
 func isInteractivePrompt() bool {
 	return isCharDevice(os.Stdin) && isCharDevice(os.Stderr)
 }
