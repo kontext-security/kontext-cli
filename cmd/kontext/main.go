@@ -46,6 +46,7 @@ func main() {
 	root.AddCommand(logoutCmd())
 	root.AddCommand(hookCmd())
 	root.AddCommand(doctorCmd())
+	root.AddCommand(claudeCmd())
 	root.AddCommand(guardCmd())
 
 	if err := root.Execute(); err != nil {
@@ -74,6 +75,72 @@ func guardCmd() *cobra.Command {
 			return guardcli.Run(context.Background(), args, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
+}
+
+func claudeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "claude",
+		Short: "Manage Claude Code integration",
+	}
+	cmd.AddCommand(claudeManagedSettingsCmd())
+	return cmd
+}
+
+func claudeManagedSettingsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "managed-settings",
+		Short: "Render and validate Claude Code managed settings",
+	}
+	cmd.AddCommand(claudeManagedSettingsTemplateCmd())
+	cmd.AddCommand(claudeManagedSettingsValidateCmd())
+	return cmd
+}
+
+func claudeManagedSettingsTemplateCmd() *cobra.Command {
+	var kontextBinary string
+
+	cmd := &cobra.Command{
+		Use:   "template",
+		Short: "Print Claude Code managed settings for Kontext hooks",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			data, err := claudemanaged.TemplateJSON(kontextBinary)
+			if err != nil {
+				return err
+			}
+			_, err = cmd.OutOrStdout().Write(data)
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&kontextBinary, "kontext-binary", claudemanaged.DefaultKontextBinary, "Kontext executable path for managed hooks")
+	return cmd
+}
+
+func claudeManagedSettingsValidateCmd() *cobra.Command {
+	var kontextBinary string
+
+	cmd := &cobra.Command{
+		Use:   "validate [path]",
+		Short: "Validate Claude Code managed settings for Kontext hooks",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path := claudemanaged.DefaultManagedSettingsPath()
+			if len(args) == 1 {
+				path = args[0]
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("read managed settings: %w", err)
+			}
+			if err := claudemanaged.Validate(data, kontextBinary); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Claude managed settings valid: %s\n", path)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&kontextBinary, "kontext-binary", claudemanaged.DefaultKontextBinary, "Kontext executable path expected in managed hooks")
+	return cmd
 }
 
 func startCmd() *cobra.Command {

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
 	"github.com/kontext-security/kontext-cli/internal/hook"
 	"github.com/kontext-security/kontext-cli/internal/run"
 	"github.com/zalando/go-keyring"
@@ -157,6 +159,69 @@ func TestHookCmdModeDoesNotDefaultFromEnv(t *testing.T) {
 	}
 }
 
+func TestClaudeManagedSettingsTemplateCmdPrintsValidJSON(t *testing.T) {
+	cmd := claudeManagedSettingsTemplateCmd()
+	cmd.SetArgs([]string{"--kontext-binary", "/opt/kontext/bin/kontext"})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	var settings claudemanaged.Settings
+	if err := json.Unmarshal(stdout.Bytes(), &settings); err != nil {
+		t.Fatalf("template is invalid JSON: %v", err)
+	}
+	if err := claudemanaged.Validate(stdout.Bytes(), "/opt/kontext/bin/kontext"); err != nil {
+		t.Fatalf("Validate(template) error = %v", err)
+	}
+}
+
+func TestClaudeManagedSettingsValidateCmdPassesGeneratedTemplate(t *testing.T) {
+	data, err := claudemanaged.TemplateJSON("/opt/kontext/bin/kontext")
+	if err != nil {
+		t.Fatalf("TemplateJSON() error = %v", err)
+	}
+	path := writeTempManagedSettings(t, data)
+
+	cmd := claudeManagedSettingsValidateCmd()
+	cmd.SetArgs([]string{path, "--kontext-binary", "/opt/kontext/bin/kontext"})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Claude managed settings valid") {
+		t.Fatalf("stdout = %q, want valid message", stdout.String())
+	}
+}
+
+func TestClaudeManagedSettingsValidateCmdRejectsShellFormHooks(t *testing.T) {
+	data := []byte(`{
+  "hooks": {
+    "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "/usr/local/bin/kontext", "args": ["hook", "session-start"], "timeout": 5}]}],
+    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "/usr/local/bin/kontext hook pre-tool-use", "timeout": 5}]}],
+    "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "/usr/local/bin/kontext", "args": ["hook", "post-tool-use"], "timeout": 5}]}],
+    "PostToolUseFailure": [{"matcher": "", "hooks": [{"type": "command", "command": "/usr/local/bin/kontext", "args": ["hook", "post-tool-use-failure"], "timeout": 5}]}],
+    "SessionEnd": [{"matcher": "", "hooks": [{"type": "command", "command": "/usr/local/bin/kontext", "args": ["hook", "session-end"], "timeout": 5}]}]
+  }
+}`)
+	path := writeTempManagedSettings(t, data)
+
+	cmd := claudeManagedSettingsValidateCmd()
+	cmd.SetArgs([]string{path})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want shell-form error")
+	}
+	if !strings.Contains(err.Error(), "shell-form Kontext command") {
+		t.Fatalf("error = %q, want shell-form error", err.Error())
+	}
+}
+
 func TestExpectedHookEventFromArgs(t *testing.T) {
 	event, err := expectedHookEventFromArgs([]string{"pre-tool-use"})
 	if err != nil {
@@ -173,6 +238,16 @@ func TestExpectedHookEventFromArgs(t *testing.T) {
 	if !strings.Contains(err.Error(), "unknown hook event alias") {
 		t.Fatalf("error = %q, want unknown alias", err.Error())
 	}
+}
+
+func writeTempManagedSettings(t *testing.T, data []byte) string {
+	t.Helper()
+
+	path := t.TempDir() + "/managed-settings.json"
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	return path
 }
 
 func TestLogoutCmdAlreadyLoggedOut(t *testing.T) {
