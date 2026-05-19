@@ -37,8 +37,7 @@ func commandHookGroups(command string) []hookGroup {
 // GenerateSettings creates a Claude Code settings.json with Kontext hooks
 // and returns the path to the generated file.
 func GenerateSettings(sessionDir, kontextBinary, agentName string) (string, error) {
-	hookCmd := fmt.Sprintf("%s hook --agent %s", kontextBinary, agentName)
-	return writeClaudeSettings(sessionDir, hookCmd)
+	return writeClaudeSettings(sessionDir, managedHookCommand(kontextBinary, agentName))
 }
 
 // GenerateLocalSettings creates a Claude Code settings.json that connects
@@ -79,6 +78,10 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
+func managedHookCommand(kontextBinary, agentName string) string {
+	return fmt.Sprintf("%s hook --agent %s", shellQuote(kontextBinary), shellQuote(agentName))
+}
+
 func VerifyBlockingHookSettings(settingsPath, kontextBinary, agentName string) error {
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
@@ -90,7 +93,7 @@ func VerifyBlockingHookSettings(settingsPath, kontextBinary, agentName string) e
 		return fmt.Errorf("parse settings: %w", err)
 	}
 
-	wantCommand := fmt.Sprintf("%s hook --agent %s", kontextBinary, agentName)
+	wantCommand := managedHookCommand(kontextBinary, agentName)
 	for _, group := range settings.Hooks["PreToolUse"] {
 		for _, hook := range group.Hooks {
 			if hook.Type == "command" && hook.Command == wantCommand && hook.Timeout > 0 {

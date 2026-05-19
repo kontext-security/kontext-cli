@@ -1160,7 +1160,7 @@ func TestGenerateSettingsWritesClaudeHooks(t *testing.T) {
 		t.Fatalf("settings.Hooks len = %d, want %d", len(settings.Hooks), len(wantEvents))
 	}
 
-	wantCommand := "/usr/local/bin/kontext hook --agent claude"
+	wantCommand := "'/usr/local/bin/kontext' hook --agent 'claude'"
 	for _, event := range wantEvents {
 		groups, ok := settings.Hooks[event]
 		if !ok {
@@ -1259,6 +1259,37 @@ func TestVerifyBlockingHookSettingsRequiresPreToolUseCommand(t *testing.T) {
 
 	if err := VerifyBlockingHookSettings(brokenPath, "/usr/local/bin/kontext", "claude"); err == nil {
 		t.Fatal("VerifyBlockingHookSettings() error = nil, want missing PreToolUse hook error")
+	}
+}
+
+func TestManagedHookSettingsQuoteCommandSegments(t *testing.T) {
+	t.Parallel()
+
+	sessionDir := t.TempDir()
+	kontextBinary := "/tmp/Kontext CLI/kontext"
+	settingsPath, err := GenerateSettings(sessionDir, kontextBinary, "claude")
+	if err != nil {
+		t.Fatalf("GenerateSettings() error = %v", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var settings claudeSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	wantCommand := "'/tmp/Kontext CLI/kontext' hook --agent 'claude'"
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		if got := settings.Hooks[event][0].Hooks[0].Command; got != wantCommand {
+			t.Fatalf("%s hook command = %q, want %q", event, got, wantCommand)
+		}
+	}
+	if err := VerifyBlockingHookSettings(settingsPath, kontextBinary, "claude"); err != nil {
+		t.Fatalf("VerifyBlockingHookSettings() error = %v", err)
 	}
 }
 
