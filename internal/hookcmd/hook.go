@@ -1,6 +1,7 @@
 package hookcmd
 
 import (
+	"fmt"
 	"io"
 	"os"
 
@@ -13,8 +14,16 @@ func Run(a agent.Agent, evaluate func(hook.Event) (hook.Result, error)) {
 	os.Exit(run(os.Stdin, os.Stdout, os.Stderr, a, evaluate))
 }
 
+func RunWithExpectedEvent(a agent.Agent, expected hook.HookName, evaluate func(hook.Event) (hook.Result, error)) {
+	os.Exit(runWithExpectedEvent(os.Stdin, os.Stdout, os.Stderr, a, expected, evaluate))
+}
+
 func run(stdin io.Reader, stdout, stderr io.Writer, a agent.Agent, evaluate func(hook.Event) (hook.Result, error)) int {
-	codec := agentCodec{agentName: a.Name(), agent: a}
+	return runWithExpectedEvent(stdin, stdout, stderr, a, "", evaluate)
+}
+
+func runWithExpectedEvent(stdin io.Reader, stdout, stderr io.Writer, a agent.Agent, expected hook.HookName, evaluate func(hook.Event) (hook.Result, error)) int {
+	codec := agentCodec{agentName: a.Name(), agent: a, expected: expected}
 	sink := hookruntime.SinkFunc(evaluate)
 	return hookruntime.Run(stdin, stdout, stderr, codec, sink)
 }
@@ -22,6 +31,7 @@ func run(stdin io.Reader, stdout, stderr io.Writer, a agent.Agent, evaluate func
 type agentCodec struct {
 	agentName string
 	agent     agent.Agent
+	expected  hook.HookName
 }
 
 func (c agentCodec) DecodeHookEvent(input []byte) (hook.Event, error) {
@@ -31,6 +41,9 @@ func (c agentCodec) DecodeHookEvent(input []byte) (hook.Event, error) {
 	}
 	if event.Agent == "" {
 		event.Agent = c.agentName
+	}
+	if c.expected != "" && event.HookName != c.expected {
+		return hook.Event{}, fmt.Errorf("hook event alias %q does not match stdin event %q", c.expected, event.HookName)
 	}
 	return event, nil
 }

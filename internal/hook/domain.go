@@ -8,9 +8,11 @@ import (
 type HookName string
 
 const (
+	HookSessionStart      HookName = "SessionStart"
 	HookPreToolUse        HookName = "PreToolUse"
 	HookPostToolUse       HookName = "PostToolUse"
 	HookPostToolUseFailed HookName = "PostToolUseFailure"
+	HookSessionEnd        HookName = "SessionEnd"
 	HookUserPromptSubmit  HookName = "UserPromptSubmit"
 )
 

@@ -12,6 +12,7 @@ import (
 
 type stubAgent struct {
 	decodeErr         error
+	event             hook.HookName
 	encodeErr         error
 	allowUpdatedInput map[string]any
 	blockingDecision  hook.Decision
@@ -24,7 +25,11 @@ func (s *stubAgent) DecodeHookInput(input []byte) (hook.Event, error) {
 	if s.decodeErr != nil {
 		return hook.Event{}, s.decodeErr
 	}
-	return hook.Event{HookName: hook.HookPreToolUse}, nil
+	event := s.event
+	if event == "" {
+		event = hook.HookPreToolUse
+	}
+	return hook.Event{HookName: event}, nil
 }
 
 func (s *stubAgent) EncodeHookResult(event hook.Event, result hook.Result) ([]byte, error) {
@@ -136,6 +141,25 @@ func TestRunReturnsErrorWhenWriteFails(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "failed to write hook output") {
 		t.Fatalf("stderr = %q, want write failure", stderr.String())
+	}
+}
+
+func TestRunWithExpectedEventRejectsMismatch(t *testing.T) {
+	t.Parallel()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := runWithExpectedEvent(strings.NewReader(`{"hook_event_name":"PostToolUse"}`), stdout, stderr, &stubAgent{event: hook.HookPostToolUse}, hook.HookPreToolUse, func(hook.Event) (hook.Result, error) {
+		t.Fatal("evaluate should not be called")
+		return hook.Result{}, nil
+	})
+
+	if code != 2 {
+		t.Fatalf("runWithExpectedEvent() exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "does not match stdin event") {
+		t.Fatalf("stderr = %q, want mismatch error", stderr.String())
 	}
 }
 
