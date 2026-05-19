@@ -22,7 +22,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "==> starting local daemon on ${BASE_URL}"
-KONTEXT_NOTIFY=0 go run ./cmd/kontext guard start --skip-hook-install --no-open \
+go run ./cmd/kontext guard start --skip-hook-install --no-open \
   --addr "127.0.0.1:${PORT}" \
   --db "$DB_PATH" \
   --socket "$SOCKET_PATH" >"$LOG_PATH" 2>&1 &

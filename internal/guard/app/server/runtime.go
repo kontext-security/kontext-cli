@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/kontext-security/kontext-cli/internal/guard/app/notify"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 	"github.com/kontext-security/kontext-cli/internal/hook"
@@ -83,7 +82,6 @@ func (r guardHookRuntime) decideAndRecord(ctx context.Context, event risk.HookEv
 		return risk.RiskDecision{}, err
 	}
 	decision.EventID = record.ID
-	notify.Decision(decision)
 	return decision, nil
 }
 
