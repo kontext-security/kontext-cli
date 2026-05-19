@@ -622,6 +622,7 @@ func TestBuildHookEventRequestEnrichesBashPreToolUseWithGitContext(t *testing.T)
 	runTestGit(t, repoDir, "add", "README.md")
 	runTestGit(t, repoDir, "-c", "user.name=Kontext Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
 	runTestGit(t, repoDir, "remote", "add", "origin", "https://token:x-oauth-basic@github.com/kontext-security/kontext-cli.git")
+	runTestGit(t, repoDir, "remote", "add", "backup", "https://oauth2:secret@gitlab.com/kontext-security/kontext-cli.git")
 
 	got := buildHookEventRequestFromEvent(hook.Event{
 		SessionID: "session-123",
@@ -645,8 +646,14 @@ func TestBuildHookEventRequestEnrichesBashPreToolUseWithGitContext(t *testing.T)
 	if remotes["origin"] != "https://github.com/kontext-security/kontext-cli.git" {
 		t.Fatalf("origin remote = %v, want sanitized GitHub URL", remotes["origin"])
 	}
+	if remotes["backup"] != "https://gitlab.com/kontext-security/kontext-cli.git" {
+		t.Fatalf("backup remote = %v, want sanitized GitLab URL", remotes["backup"])
+	}
 	if strings.Contains(string(got.ToolInput), "token") || strings.Contains(string(got.ToolInput), "x-oauth-basic") {
 		t.Fatalf("ToolInput leaked credential-bearing remote: %s", got.ToolInput)
+	}
+	if strings.Contains(string(got.ToolInput), "oauth2:secret") {
+		t.Fatalf("ToolInput leaked backup remote credentials: %s", got.ToolInput)
 	}
 }
 

@@ -320,20 +320,40 @@ func collectGitContext(cwd string) (map[string]any, bool) {
 		git["branch"] = branch
 	}
 
-	remoteNames := strings.Fields(runGit(gitPath, cwd, "remote"))
-	remotes := map[string]string{}
-	for _, name := range remoteNames {
-		remoteURL := strings.TrimSpace(runGit(gitPath, cwd, "remote", "get-url", name))
-		if remoteURL == "" {
-			continue
-		}
-		remotes[name] = sanitizeGitRemoteURL(remoteURL)
-	}
+	remotes := gitRemoteURLs(gitPath, cwd)
 	if len(remotes) > 0 {
 		git["remotes"] = remotes
 	}
 
 	return git, true
+}
+
+func gitRemoteURLs(gitPath, cwd string) map[string]string {
+	output := runGit(gitPath, cwd, "config", "--get-regexp", "^remote\\..*\\.url$")
+	if output == "" {
+		return nil
+	}
+
+	remotes := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		key := fields[0]
+		if !strings.HasPrefix(key, "remote.") || !strings.HasSuffix(key, ".url") {
+			continue
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".url")
+		if name == "" {
+			continue
+		}
+		remotes[name] = sanitizeGitRemoteURL(strings.Join(fields[1:], " "))
+	}
+	if len(remotes) == 0 {
+		return nil
+	}
+	return remotes
 }
 
 func trustedGitPath() (string, bool) {
