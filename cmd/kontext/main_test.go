@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/hook"
+	"github.com/kontext-security/kontext-cli/internal/installation"
 	"github.com/kontext-security/kontext-cli/internal/run"
 	"github.com/zalando/go-keyring"
 )
@@ -144,6 +146,119 @@ func TestGuardCmdRoutesToLocalGuardMode(t *testing.T) {
 	}
 }
 
+func TestStatusJSONReportsUnmanaged(t *testing.T) {
+	cmd := statusCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("Set json error = %v", err)
+	}
+	if err := cmd.Flags().Set("managed-config", filepathForTest(t, "missing-managed.json")); err != nil {
+		t.Fatalf("Set managed-config error = %v", err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	var payload statusPayload
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got := payload.Managed.State; got != "unmanaged" {
+		t.Fatalf("state = %q, want unmanaged", got)
+	}
+	if got := payload.Managed.Validation.Status; got != "not_configured" {
+		t.Fatalf("validation status = %q, want not_configured", got)
+	}
+}
+
+func TestStatusJSONReportsManagedActiveAndDoesNotLeakEnvToken(t *testing.T) {
+	t.Setenv("KONTEXT_INSTALL_TOKEN", "super-secret-token")
+	managedPath := filepathForTest(t, "managed.json")
+	installationPath := filepathForTest(t, "installation.json")
+	if err := os.WriteFile(managedPath, []byte(`{
+  "version": "managed-install-v1",
+  "organization_id": "org_example",
+  "cloud_url": "https://api.kontext.security",
+  "mode": "observe",
+  "agent": "claude",
+  "credentials": {
+    "install_token_ref": "env:KONTEXT_INSTALL_TOKEN"
+  }
+}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(managed) error = %v", err)
+	}
+	if _, err := installation.Ensure(context.Background(), installationPath); err != nil {
+		t.Fatalf("Ensure() error = %v", err)
+	}
+
+	cmd := statusCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatalf("Set json error = %v", err)
+	}
+	if err := cmd.Flags().Set("managed-config", managedPath); err != nil {
+		t.Fatalf("Set managed-config error = %v", err)
+	}
+	if err := cmd.Flags().Set("installation-state", installationPath); err != nil {
+		t.Fatalf("Set installation-state error = %v", err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if strings.Contains(stdout.String(), "super-secret-token") {
+		t.Fatalf("status leaked env token: %s", stdout.String())
+	}
+	var payload statusPayload
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got := payload.Managed.State; got != "managed_active" {
+		t.Fatalf("state = %q, want managed_active: %s", got, stdout.String())
+	}
+	if got := payload.Managed.CredentialSource; got != "env:KONTEXT_INSTALL_TOKEN" {
+		t.Fatalf("credential source = %q, want env ref", got)
+	}
+	if payload.Managed.InstallationID == "" {
+		t.Fatal("InstallationID is empty")
+	}
+}
+
+func TestStatusDoesNotCreateInstallationState(t *testing.T) {
+	managedPath := filepathForTest(t, "managed.json")
+	installationPath := filepathForTest(t, "installation.json")
+	if err := os.WriteFile(managedPath, []byte(`{
+  "version": "managed-install-v1",
+  "organization_id": "org_example",
+  "cloud_url": "https://api.kontext.security",
+  "mode": "observe",
+  "agent": "claude",
+  "credentials": {
+    "install_token_ref": "keychain:kontext-managed-install-token"
+  }
+}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(managed) error = %v", err)
+	}
+	cmd := statusCmd()
+	if err := cmd.Flags().Set("managed-config", managedPath); err != nil {
+		t.Fatalf("Set managed-config error = %v", err)
+	}
+	if err := cmd.Flags().Set("installation-state", installationPath); err != nil {
+		t.Fatalf("Set installation-state error = %v", err)
+	}
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("RunE() error = %v", err)
+	}
+	if _, err := os.Stat(installationPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("installation state was created or stat failed unexpectedly: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Managed endpoint: invalid") {
+		t.Fatalf("stdout = %q, want invalid status", stdout.String())
+	}
+}
+
 func TestHookCmdModeDoesNotDefaultFromEnv(t *testing.T) {
 	t.Setenv("KONTEXT_MODE", "observe")
 
@@ -155,6 +270,11 @@ func TestHookCmdModeDoesNotDefaultFromEnv(t *testing.T) {
 	if flag.DefValue != "" {
 		t.Fatalf("--mode default = %q, want empty", flag.DefValue)
 	}
+}
+
+func filepathForTest(t *testing.T, name string) string {
+	t.Helper()
+	return fmt.Sprintf("%s/%s", t.TempDir(), name)
 }
 
 func TestLogoutCmdAlreadyLoggedOut(t *testing.T) {
