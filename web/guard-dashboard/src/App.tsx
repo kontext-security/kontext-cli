@@ -85,7 +85,10 @@ export default function App() {
       .then((next) => {
         const safe = applySessions(next);
         const current = selectedRef.current;
-        const toLoad = safe.some((s) => s.session_id === current) ? current : safe[0]?.session_id;
+        const currentSessionID = safe.find((s) => s.current)?.session_id;
+        const toLoad = safe.some((s) => s.session_id === current)
+          ? current
+          : currentSessionID ?? safe[0]?.session_id;
         if (toLoad) {
           if (toLoad !== current) {
             selectSession(toLoad);
@@ -155,6 +158,10 @@ export default function App() {
     () => sessions.find((s) => s.session_id === selectedSessionID),
     [sessions, selectedSessionID],
   );
+  const currentSession = useMemo(
+    () => sessions.find((s) => s.current),
+    [sessions],
+  );
   const loading = sessions.length === 0 && !error;
 
   return (
@@ -162,7 +169,7 @@ export default function App() {
       <div className="grid h-screen grid-cols-[252px_1fr] bg-background text-foreground">
         <Sidebar
           sessions={sessions}
-          currentCount={selectedSession?.actions ?? events.length}
+          currentSession={currentSession}
           selectedID={selectedSessionID}
           onSelect={selectSession}
         />

@@ -51,6 +51,7 @@ type SessionSummary struct {
 	Warnings  int       `json:"warnings"`
 	Actions   int       `json:"actions"`
 	LatestAt  time.Time `json:"latest_at"`
+	Current   bool      `json:"current,omitempty"`
 }
 
 type SessionRecord struct {

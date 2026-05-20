@@ -30,10 +30,11 @@ const (
 )
 
 type Server struct {
-	store       *sqlite.Store
-	policyStore *policyconfig.Store
-	core        *runtimecore.Core
-	mux         *http.ServeMux
+	store            *sqlite.Store
+	policyStore      *policyconfig.Store
+	core             *runtimecore.Core
+	mux              *http.ServeMux
+	currentSessionID string
 }
 
 type ProcessResponse struct {
@@ -47,6 +48,7 @@ type Options struct {
 	Judge                judge.Judge
 	PolicyConfig         policy.Config
 	PolicyConfigProvider PolicyConfigProvider
+	CurrentSessionID     string
 }
 
 type PolicyProfileResponse struct {
@@ -83,10 +85,10 @@ func NewServerWithOptions(store *sqlite.Store, opts Options) (*Server, error) {
 			configProvider = policyStoreConfigProvider{store: policyStore}
 		}
 	}
-	return NewServerWithPolicyConfig(store, NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
+	return NewServerWithPolicyConfigAndOptions(store, NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
 		Judge:                opts.Judge,
 		PolicyConfigProvider: configProvider,
-	}), policyStore)
+	}), policyStore, opts)
 }
 
 // NewServerWithPolicy creates a Guard server with an injected policy provider.
@@ -101,6 +103,10 @@ func NewServerWithPolicy(store *sqlite.Store, policy PolicyProvider) (*Server, e
 }
 
 func NewServerWithPolicyConfig(store *sqlite.Store, policy PolicyProvider, policyStore *policyconfig.Store) (*Server, error) {
+	return NewServerWithPolicyConfigAndOptions(store, policy, policyStore, Options{})
+}
+
+func NewServerWithPolicyConfigAndOptions(store *sqlite.Store, policy PolicyProvider, policyStore *policyconfig.Store, opts Options) (*Server, error) {
 	if policyStore == nil {
 		var err error
 		policyStore, err = openPolicyStoreForSQLite(store)
@@ -121,7 +127,13 @@ func NewServerWithPolicyConfig(store *sqlite.Store, policy PolicyProvider, polic
 	if err != nil {
 		return nil, fmt.Errorf("create runtime core: %w", err)
 	}
-	server := &Server{store: store, policyStore: policyStore, core: core, mux: http.NewServeMux()}
+	server := &Server{
+		store:            store,
+		policyStore:      policyStore,
+		core:             core,
+		mux:              http.NewServeMux(),
+		currentSessionID: strings.TrimSpace(opts.CurrentSessionID),
+	}
 	server.routes()
 	return server, nil
 }
@@ -230,7 +242,30 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	sessions = s.withCurrentSession(r.Context(), sessions)
 	writeJSON(w, http.StatusOK, sessions)
+}
+
+func (s *Server) withCurrentSession(ctx context.Context, sessions []sqlite.SessionSummary) []sqlite.SessionSummary {
+	if s.currentSessionID == "" {
+		return sessions
+	}
+	for i := range sessions {
+		if sessions[i].SessionID == s.currentSessionID {
+			sessions[i].Current = true
+			return sessions
+		}
+	}
+	record, err := s.store.Session(ctx, s.currentSessionID)
+	if err != nil {
+		return sessions
+	}
+	return append([]sqlite.SessionSummary{{
+		SessionID: record.ID,
+		Actions:   0,
+		LatestAt:  record.UpdatedAt,
+		Current:   true,
+	}}, sessions...)
 }
 
 func (s *Server) handlePolicyProfile(w http.ResponseWriter, _ *http.Request) {
