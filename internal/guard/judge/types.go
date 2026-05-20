@@ -23,42 +23,15 @@ const (
 )
 
 type Input struct {
-	Agent               string               `json:"agent,omitempty"`
-	HookEvent           string               `json:"hook_event"`
-	ToolName            string               `json:"tool_name,omitempty"`
-	CWDClass            string               `json:"cwd_class,omitempty"`
-	ToolInput           ToolInput            `json:"tool_input"`
-	NormalizedEvent     NormalizedEvent      `json:"normalized_event"`
-	DeterministicPolicy DeterministicContext `json:"deterministic_policy"`
+	ToolName           string    `json:"tool_name,omitempty"`
+	ExplicitUserIntent bool      `json:"explicit_user_intent,omitempty"`
+	ToolInput          ToolInput `json:"tool_input"`
 }
 
 type ToolInput struct {
-	CommandRedacted string `json:"command_redacted,omitempty"`
-	PathRedacted    string `json:"path_redacted,omitempty"`
-	RequestSummary  string `json:"request_summary,omitempty"`
-}
-
-type NormalizedEvent struct {
-	Type               string   `json:"type"`
-	Provider           string   `json:"provider,omitempty"`
-	ProviderCategory   string   `json:"provider_category,omitempty"`
-	Operation          string   `json:"operation,omitempty"`
-	OperationClass     string   `json:"operation_class,omitempty"`
-	ResourceClass      string   `json:"resource_class,omitempty"`
-	Environment        string   `json:"environment,omitempty"`
-	CredentialObserved bool     `json:"credential_observed"`
-	DirectAPICall      bool     `json:"direct_api_call"`
-	ExplicitUserIntent bool     `json:"explicit_user_intent"`
-	PathClass          string   `json:"path_class,omitempty"`
-	CommandSummary     string   `json:"command_summary,omitempty"`
-	RequestSummary     string   `json:"request_summary,omitempty"`
-	Signals            []string `json:"signals,omitempty"`
-}
-
-type DeterministicContext struct {
-	Decision      string   `json:"decision"`
-	MatchedRules  []string `json:"matched_rules,omitempty"`
-	PolicyVersion string   `json:"policy_version"`
+	Command string `json:"command,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Request string `json:"request,omitempty"`
 }
 
 type Output struct {
@@ -139,8 +112,14 @@ func ValidateOutput(output Output) error {
 		return errors.New("too many categories")
 	}
 	for _, category := range output.Categories {
-		if strings.TrimSpace(category) == "" {
+		category = strings.TrimSpace(category)
+		if category == "" {
 			return errors.New("empty category")
+		}
+		if category == "short_snake_case_category" ||
+			category == "one_or_more_specific_risk_or_safety_labels" ||
+			category == "one_or_more_short_snake_case_labels" {
+			return fmt.Errorf("placeholder category %q", category)
 		}
 	}
 	return nil

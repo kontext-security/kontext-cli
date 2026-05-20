@@ -220,7 +220,7 @@ func TestConfigureManagedJudgeFailsOpenWhenModelMissing(t *testing.T) {
 	if !strings.Contains(status, "unavailable") {
 		t.Fatalf("status = %q, want unavailable", status)
 	}
-	_, err = localJudge.Decide(context.Background(), judge.Input{HookEvent: "PreToolUse"})
+	_, err = localJudge.Decide(context.Background(), judge.Input{})
 	if judge.FailureKind(err) != judge.FailureUnavailable {
 		t.Fatalf("FailureKind(err) = %q, want unavailable", judge.FailureKind(err))
 	}

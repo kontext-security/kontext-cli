@@ -298,7 +298,7 @@ func TestResolveLlamaServerModelDownloadsCustomRevision(t *testing.T) {
 
 func TestUnavailableJudgeFailsWithMetadata(t *testing.T) {
 	localJudge := UnavailableJudge{Runtime: DefaultLlamaServerRuntime, Model: "qwen", Err: os.ErrNotExist}
-	_, err := localJudge.Decide(context.Background(), Input{HookEvent: "PreToolUse"})
+	_, err := localJudge.Decide(context.Background(), Input{})
 	if FailureKind(err) != FailureUnavailable {
 		t.Fatalf("FailureKind(err) = %q, want unavailable", FailureKind(err))
 	}

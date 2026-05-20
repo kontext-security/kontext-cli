@@ -9,13 +9,13 @@ import (
 )
 
 type Fixture struct {
-	ID                  string               `json:"id"`
-	Description         string               `json:"description"`
-	HookEvent           FixtureHookEvent     `json:"hook_event"`
-	NormalizedEvent     NormalizedEvent      `json:"normalized_event"`
-	DeterministicPolicy DeterministicContext `json:"deterministic_policy"`
-	JudgeExpected       FixtureExpected      `json:"judge_expected"`
-	Notes               string               `json:"notes"`
+	ID                  string                   `json:"id"`
+	Description         string                   `json:"description"`
+	HookEvent           FixtureHookEvent         `json:"hook_event"`
+	NormalizedEvent     FixtureNormalizedEvent   `json:"normalized_event"`
+	DeterministicPolicy FixtureDeterministicRule `json:"deterministic_policy"`
+	JudgeExpected       FixtureExpected          `json:"judge_expected"`
+	Notes               string                   `json:"notes"`
 }
 
 type FixtureHookEvent struct {
@@ -31,6 +31,25 @@ type FixtureExpected struct {
 	RiskLevel       RiskLevel `json:"risk_level"`
 	Categories      []string  `json:"categories"`
 	ReasonContains  []string  `json:"reason_contains"`
+}
+
+type FixtureNormalizedEvent struct {
+	Type               string   `json:"type"`
+	ProviderCategory   string   `json:"provider_category,omitempty"`
+	OperationClass     string   `json:"operation_class,omitempty"`
+	ResourceClass      string   `json:"resource_class,omitempty"`
+	Environment        string   `json:"environment,omitempty"`
+	PathClass          string   `json:"path_class,omitempty"`
+	CommandSummary     string   `json:"command_summary,omitempty"`
+	RequestSummary     string   `json:"request_summary,omitempty"`
+	ExplicitUserIntent bool     `json:"explicit_user_intent"`
+	Signals            []string `json:"signals,omitempty"`
+}
+
+type FixtureDeterministicRule struct {
+	Decision      string   `json:"decision"`
+	MatchedRules  []string `json:"matched_rules,omitempty"`
+	PolicyVersion string   `json:"policy_version"`
 }
 
 func ReadFixtures(r io.Reader) ([]Fixture, error) {
@@ -54,19 +73,30 @@ func ReadFixtures(r io.Reader) ([]Fixture, error) {
 }
 
 func InputFromFixture(fixture Fixture) Input {
-	return Input{
-		Agent:     fixture.HookEvent.Agent,
-		HookEvent: fixture.HookEvent.HookEventName,
-		ToolName:  fixture.HookEvent.ToolName,
-		CWDClass:  "unknown",
-		ToolInput: ToolInput{
-			CommandRedacted: fixture.NormalizedEvent.CommandSummary,
-			PathRedacted:    fixture.NormalizedEvent.PathClass,
-			RequestSummary:  fixture.NormalizedEvent.RequestSummary,
-		},
-		NormalizedEvent:     fixture.NormalizedEvent,
-		DeterministicPolicy: fixture.DeterministicPolicy,
+	toolInput := ToolInput{
+		Command: fixture.NormalizedEvent.CommandSummary,
+		Path:    pathClassFromFixture(fixture),
 	}
+	if toolInput.Command == "" && toolInput.Path == "" {
+		toolInput.Request = fixture.NormalizedEvent.RequestSummary
+	}
+	return Input{
+		ToolName:           fixture.HookEvent.ToolName,
+		ExplicitUserIntent: fixture.NormalizedEvent.ExplicitUserIntent,
+		ToolInput:          toolInput,
+	}
+}
+
+func pathClassFromFixture(fixture Fixture) string {
+	if fixture.NormalizedEvent.PathClass != "" {
+		return fixture.NormalizedEvent.PathClass
+	}
+	for _, key := range []string{"file_path", "path", "filename"} {
+		if value, ok := fixture.HookEvent.ToolInput[key].(string); ok && value != "" {
+			return "project_file"
+		}
+	}
+	return ""
 }
 
 func CompareFixtureOutput(output Output, expected FixtureExpected) []string {

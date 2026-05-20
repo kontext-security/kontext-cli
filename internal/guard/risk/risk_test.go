@@ -15,6 +15,25 @@ func TestNormalizeCredentialFileRead(t *testing.T) {
 	}
 }
 
+func TestNormalizeRelativeCloudCredentialFileRead(t *testing.T) {
+	for _, path := range []string{
+		".aws/credentials",
+		"./.gcloud/application_default_credentials.json",
+		".config/railway/config.json",
+		"nested/.aws/config",
+	} {
+		t.Run(path, func(t *testing.T) {
+			event := NormalizeHookEvent(HookEvent{ToolName: "Read", ToolInput: map[string]any{"file_path": path}})
+			if event.Type != EventCredentialAccess {
+				t.Fatalf("type = %s, want %s", event.Type, EventCredentialAccess)
+			}
+			if event.PathClass != "cloud_credentials" {
+				t.Fatalf("path class = %s, want cloud_credentials", event.PathClass)
+			}
+		})
+	}
+}
+
 func TestNormalizeShellCredentialAccess(t *testing.T) {
 	event := NormalizeHookEvent(HookEvent{ToolName: "Bash", ToolInput: map[string]any{"command": "cat .env"}})
 	if event.Type != EventCredentialAccess {
@@ -136,6 +155,23 @@ func TestDeterministicDecisionAllowsNormalToolCalls(t *testing.T) {
 	}
 	if decision.Decision != DecisionAllow {
 		t.Fatalf("decision = %s", decision.Decision)
+	}
+}
+
+func TestDeterministicDecisionBlocksRelativeCloudCredentialRead(t *testing.T) {
+	decision, err := DecideRisk(HookEvent{
+		HookEventName: "PreToolUse",
+		ToolName:      "Read",
+		ToolInput:     map[string]any{"file_path": ".aws/credentials"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Decision != DecisionDeny {
+		t.Fatalf("decision = %s, want %s", decision.Decision, DecisionDeny)
+	}
+	if decision.ReasonCode != "credential_access_without_intent" {
+		t.Fatalf("reason code = %s", decision.ReasonCode)
 	}
 }
 

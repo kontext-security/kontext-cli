@@ -27,6 +27,17 @@ func TestParseOutputRejectsAsk(t *testing.T) {
 	}
 }
 
+func TestParseOutputRejectsPlaceholderCategory(t *testing.T) {
+	for _, placeholder := range []string{"short_snake_case_category", "one_or_more_specific_risk_or_safety_labels", "one_or_more_short_snake_case_labels"} {
+		t.Run(placeholder, func(t *testing.T) {
+			_, err := ParseOutput(`{"decision":"allow","risk_level":"low","categories":["` + placeholder + `"],"reason":"Looks safe."}`)
+			if err == nil {
+				t.Fatal("ParseOutput() error = nil, want placeholder category rejection")
+			}
+		})
+	}
+}
+
 func TestOpenAICompatibleJudgeCallsChatCompletions(t *testing.T) {
 	var request openAIChatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,8 +62,8 @@ func TestOpenAICompatibleJudgeCallsChatCompletions(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := judge.Decide(context.Background(), Input{
-		HookEvent: "PreToolUse",
-		ToolName:  "Read",
+		ToolName:  "Bash",
+		ToolInput: ToolInput{Command: "npx prisma migrate deploy"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -62,6 +73,17 @@ func TestOpenAICompatibleJudgeCallsChatCompletions(t *testing.T) {
 	}
 	if !strings.HasPrefix(request.Messages[1].Content, "/no_think") {
 		t.Fatalf("user message should disable thinking, got %q", request.Messages[1].Content)
+	}
+	if strings.Contains(request.Messages[0].Content, "/no_think") {
+		t.Fatalf("system message should not include thinking control token, got %q", request.Messages[0].Content)
+	}
+	if !strings.Contains(request.Messages[1].Content, `"command":"npx prisma migrate deploy"`) {
+		t.Fatalf("user message missing command, got %q", request.Messages[1].Content)
+	}
+	for _, noisyField := range []string{"normalized_event", "deterministic_policy", "explicit_user_intent", "normal_tool_call"} {
+		if strings.Contains(request.Messages[1].Content, noisyField) {
+			t.Fatalf("user message includes noisy field %q: %q", noisyField, request.Messages[1].Content)
+		}
 	}
 	if request.MaxTokens != 256 {
 		t.Fatalf("max tokens = %d, want 256", request.MaxTokens)
@@ -90,7 +112,7 @@ func TestOpenAICompatibleJudgeDoesNotDisableThinkingForGenericModel(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := localJudge.Decide(context.Background(), Input{HookEvent: "PreToolUse"}); err != nil {
+	if _, err := localJudge.Decide(context.Background(), Input{}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.HasPrefix(request.Messages[1].Content, "/no_think") {
@@ -118,7 +140,7 @@ func TestOpenAICompatibleJudgeCanExplicitlyDisableThinking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := localJudge.Decide(context.Background(), Input{HookEvent: "PreToolUse"}); err != nil {
+	if _, err := localJudge.Decide(context.Background(), Input{}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(request.Messages[1].Content, "/no_think") {
@@ -140,7 +162,7 @@ func TestOpenAICompatibleJudgeClassifiesTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = judge.Decide(context.Background(), Input{HookEvent: "PreToolUse"})
+	_, err = judge.Decide(context.Background(), Input{})
 	if FailureKind(err) != FailureTimeout {
 		t.Fatalf("FailureKind(err) = %q, err=%v", FailureKind(err), err)
 	}
@@ -166,7 +188,7 @@ func TestOpenAICompatibleJudgeDoesNotFollowRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = localJudge.Decide(context.Background(), Input{HookEvent: "PreToolUse"})
+	_, err = localJudge.Decide(context.Background(), Input{})
 	if FailureKind(err) != FailureUnavailable {
 		t.Fatalf("FailureKind(err) = %q, err=%v", FailureKind(err), err)
 	}

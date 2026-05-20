@@ -8,8 +8,8 @@ import (
 
 func TestLaunchFixturesValidateContract(t *testing.T) {
 	fixtures := loadLaunchFixtures(t)
-	if len(fixtures) != 50 {
-		t.Fatalf("fixtures = %d, want 50", len(fixtures))
+	if len(fixtures) != 51 {
+		t.Fatalf("fixtures = %d, want 51", len(fixtures))
 	}
 	ids := map[string]bool{}
 	counts := map[string]int{}
@@ -59,7 +59,7 @@ func TestLaunchFixturesValidateContract(t *testing.T) {
 		}
 	}
 	wantCounts := map[string]int{
-		"safe":     12,
+		"safe":     13,
 		"deny":     8,
 		"risky":    12,
 		"trap":     8,
@@ -79,13 +79,22 @@ func TestLaunchFixturesMapToJudgeInput(t *testing.T) {
 			continue
 		}
 		input := InputFromFixture(fixture)
-		if input.Agent == "" || input.HookEvent == "" || input.ToolName == "" {
+		if input.ToolName == "" {
 			t.Fatalf("%s mapped judge input missing hook metadata: %+v", fixture.ID, input)
 		}
-		if input.ToolName == "Bash" && input.ToolInput.CommandRedacted == "" {
+		if input.ToolName == "Bash" && input.ToolInput.Command == "" {
 			t.Fatalf("%s Bash fixture missing command summary for judge input", fixture.ID)
 		}
-		if input.ToolInput.CommandRedacted == "" && input.ToolInput.PathRedacted == "" && input.ToolInput.RequestSummary == "" {
+		if input.ToolInput.Command != fixture.NormalizedEvent.CommandSummary {
+			t.Fatalf("%s command = %q, want normalized summary %q", fixture.ID, input.ToolInput.Command, fixture.NormalizedEvent.CommandSummary)
+		}
+		if fixture.NormalizedEvent.PathClass != "" && input.ToolInput.Path != fixture.NormalizedEvent.PathClass {
+			t.Fatalf("%s path = %q, want normalized path class %q", fixture.ID, input.ToolInput.Path, fixture.NormalizedEvent.PathClass)
+		}
+		if input.ExplicitUserIntent != fixture.NormalizedEvent.ExplicitUserIntent {
+			t.Fatalf("%s explicit intent = %t, want %t", fixture.ID, input.ExplicitUserIntent, fixture.NormalizedEvent.ExplicitUserIntent)
+		}
+		if input.ToolInput.Command == "" && input.ToolInput.Path == "" && input.ToolInput.Request == "" {
 			t.Fatalf("%s mapped judge input has empty tool_input", fixture.ID)
 		}
 	}

@@ -75,7 +75,7 @@ func (p RiskPolicyProvider) DecideHook(ctx context.Context, event risk.HookEvent
 		return deterministicAllowDecision(riskEvent, policyResult), nil
 	}
 
-	result, err := p.judge.Decide(ctx, judgeInputFromRiskEvent(event, riskEvent, policyResult))
+	result, err := p.judge.Decide(ctx, judgeInputFromRiskEvent(event, riskEvent))
 	if err != nil {
 		return judgeFailOpenDecision(riskEvent, p.judge, err), nil
 	}
@@ -192,58 +192,55 @@ func applyPolicyMetadata(event *risk.RiskEvent, result guardpolicy.Result) {
 	event.PolicySignals = result.MatchedSignals
 }
 
-func judgeInputFromRiskEvent(event risk.HookEvent, riskEvent risk.RiskEvent, policyResult guardpolicy.Result) judge.Input {
+func judgeInputFromRiskEvent(event risk.HookEvent, riskEvent risk.RiskEvent) judge.Input {
+	toolInput := judge.ToolInput{
+		Command: riskEvent.CommandSummary,
+		Path:    pathClassForJudge(event.ToolInput, riskEvent.PathClass),
+	}
+	if toolInput.Command == "" && toolInput.Path == "" {
+		toolInput.Request = riskEvent.RequestSummary
+	}
 	return judge.Input{
-		Agent:     event.Agent,
-		HookEvent: event.HookEventName,
-		ToolName:  event.ToolName,
-		CWDClass:  cwdClass(event.CWD),
-		ToolInput: judge.ToolInput{
-			CommandRedacted: riskEvent.CommandSummary,
-			PathRedacted:    riskEvent.PathClass,
-			RequestSummary:  riskEvent.RequestSummary,
-		},
-		NormalizedEvent: judge.NormalizedEvent{
-			Type:               string(riskEvent.Type),
-			Provider:           riskEvent.Provider,
-			ProviderCategory:   riskEvent.ProviderCategory,
-			Operation:          riskEvent.Operation,
-			OperationClass:     riskEvent.OperationClass,
-			ResourceClass:      riskEvent.ResourceClass,
-			Environment:        riskEvent.Environment,
-			CredentialObserved: riskEvent.CredentialObserved,
-			DirectAPICall:      riskEvent.DirectAPICall,
-			ExplicitUserIntent: riskEvent.ExplicitUserIntent,
-			PathClass:          riskEvent.PathClass,
-			CommandSummary:     riskEvent.CommandSummary,
-			RequestSummary:     riskEvent.RequestSummary,
-			Signals:            riskEvent.Signals,
-		},
-		DeterministicPolicy: judge.DeterministicContext{
-			Decision:      string(policyResult.Decision),
-			MatchedRules:  matchedPolicyRules(policyResult),
-			PolicyVersion: policyResult.PolicyVersion,
-		},
+		ToolName:           event.ToolName,
+		ExplicitUserIntent: riskEvent.ExplicitUserIntent,
+		ToolInput:          toolInput,
 	}
 }
 
-func matchedPolicyRules(result guardpolicy.Result) []string {
-	if !result.Matched || result.RuleID == "" {
-		return nil
+func pathClassForJudge(input map[string]any, normalizedClass string) string {
+	if normalizedClass != "" {
+		return normalizedClass
 	}
-	return []string{result.RuleID}
+	for _, key := range []string{"file_path", "path", "filename"} {
+		if value, ok := input[key].(string); ok {
+			if value != "" {
+				return judgePathClass(value)
+			}
+		}
+	}
+	return ""
 }
 
-func cwdClass(cwd string) string {
-	cwd = strings.TrimSpace(cwd)
-	if cwd == "" {
-		return "unknown"
+func judgePathClass(path string) string {
+	clean := strings.ToLower(filepath.ToSlash(filepath.Clean(path)))
+	base := filepath.Base(clean)
+	switch base {
+	case ".env", ".npmrc", ".pypirc", ".netrc":
+		return "env_file"
 	}
-	base := strings.ToLower(filepath.Base(cwd))
-	if base == "" || base == "." || base == string(filepath.Separator) {
-		return "unknown"
+	if pathHasSegmentPrefix(clean, ".aws") ||
+		pathHasSegmentPrefix(clean, ".gcloud") ||
+		pathHasSegmentPrefix(clean, ".config/railway") {
+		return "cloud_credentials"
 	}
-	return "project"
+	return "project_file"
+}
+
+func pathHasSegmentPrefix(clean, prefix string) bool {
+	return clean == prefix ||
+		strings.HasPrefix(clean, prefix+"/") ||
+		strings.Contains(clean, "/"+prefix+"/") ||
+		strings.HasSuffix(clean, "/"+prefix)
 }
 
 func judgeMetadata(localJudge judge.Judge) judge.Metadata {
