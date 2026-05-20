@@ -979,3 +979,74 @@ func TestStoreListsSessions(t *testing.T) {
 		t.Fatalf("sessions = %+v", sessions)
 	}
 }
+
+func TestSessionsMarksCurrentSession(t *testing.T) {
+	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server, err := NewServerWithOptions(store, Options{CurrentSessionID: "current-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sessionID := range []string{"previous-session", "current-session"} {
+		if _, err := server.ProcessHookEvent(context.Background(), risk.HookEvent{
+			SessionID:     sessionID,
+			HookEventName: "PreToolUse",
+			ToolName:      "Read",
+			ToolInput:     map[string]any{"file_path": "README.md"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var sessions []sqlite.SessionSummary
+	if err := json.Unmarshal(response.Body.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("sessions = %+v", sessions)
+	}
+	for _, session := range sessions {
+		if session.SessionID == "current-session" && !session.Current {
+			t.Fatalf("current session not marked: %+v", sessions)
+		}
+		if session.SessionID == "previous-session" && session.Current {
+			t.Fatalf("previous session marked current: %+v", sessions)
+		}
+	}
+}
+
+func TestSessionsIncludesCurrentSessionBeforeActions(t *testing.T) {
+	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.OpenSession(context.Background(), "current-session", "claude", "/tmp/project", "wrapper_owned", "current-session"); err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewServerWithOptions(store, Options{CurrentSessionID: "current-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var sessions []sqlite.SessionSummary
+	if err := json.Unmarshal(response.Body.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != "current-session" || !sessions[0].Current || sessions[0].Actions != 0 {
+		t.Fatalf("sessions = %+v", sessions)
+	}
+}

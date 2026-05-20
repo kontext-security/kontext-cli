@@ -19,7 +19,7 @@ export const SAMPLE_POLICY: PolicyProfile = {
 };
 
 export const SAMPLE_SESSIONS: Session[] = [
-  { session_id: SAMPLE_SESSION_ID, actions: 9 },
+  { session_id: SAMPLE_SESSION_ID, actions: 9, current: true },
 ];
 
 export const SAMPLE_EVENTS: Event[] = [

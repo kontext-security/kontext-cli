@@ -65,6 +65,28 @@ func TestStartRejectsUnsafeSessionID(t *testing.T) {
 	}
 }
 
+func TestStartRejectsUnsafeSessionIDBeforeJudgeConfig(t *testing.T) {
+	t.Setenv("KONTEXT_JUDGE_TIMEOUT", "not-a-duration")
+
+	host, err := Start(context.Background(), Options{
+		AgentName:          "claude",
+		SessionID:          "../escape",
+		CWD:                t.TempDir(),
+		DBPath:             filepath.Join(t.TempDir(), "guard.db"),
+		JudgeConfigFromEnv: true,
+	})
+	if err == nil {
+		_ = host.Close(context.Background())
+		t.Fatal("Start() error = nil, want unsafe session ID error")
+	}
+	if strings.Contains(err.Error(), "KONTEXT_JUDGE_TIMEOUT") {
+		t.Fatalf("error = %v, want session ID validation before judge config", err)
+	}
+	if !strings.Contains(err.Error(), "runtime session ID") {
+		t.Fatalf("error = %v, want unsafe session ID error", err)
+	}
+}
+
 func TestStartDoesNotChmodCustomDBParent(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "project")
 	if err := os.Mkdir(parent, 0o755); err != nil {
