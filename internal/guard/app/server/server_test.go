@@ -986,7 +986,7 @@ func TestSessionsMarksCurrentSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	server, err := NewServerWithOptions(store, Options{CurrentSessionID: "current-session"})
+	server, err := NewServerWithOptions(store, Options{CurrentSessionID: "current-session", Mode: "enforce"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1020,6 +1020,12 @@ func TestSessionsMarksCurrentSession(t *testing.T) {
 		if session.SessionID == "previous-session" && session.Current {
 			t.Fatalf("previous session marked current: %+v", sessions)
 		}
+		if session.SessionID == "current-session" && session.Mode != "enforce" {
+			t.Fatalf("current session mode = %q, want enforce", session.Mode)
+		}
+		if session.SessionID == "previous-session" && session.Mode != "" {
+			t.Fatalf("previous session mode = %q, want empty", session.Mode)
+		}
 	}
 }
 
@@ -1032,7 +1038,7 @@ func TestSessionsIncludesCurrentSessionBeforeActions(t *testing.T) {
 	if _, err := store.OpenSession(context.Background(), "current-session", "claude", "/tmp/project", "wrapper_owned", "current-session"); err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewServerWithOptions(store, Options{CurrentSessionID: "current-session"})
+	server, err := NewServerWithOptions(store, Options{CurrentSessionID: "current-session", Mode: "observe"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1046,7 +1052,77 @@ func TestSessionsIncludesCurrentSessionBeforeActions(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &sessions); err != nil {
 		t.Fatal(err)
 	}
-	if len(sessions) != 1 || sessions[0].SessionID != "current-session" || !sessions[0].Current || sessions[0].Actions != 0 {
+	if len(sessions) != 1 || sessions[0].SessionID != "current-session" || !sessions[0].Current || sessions[0].Actions != 0 || sessions[0].Mode != "observe" {
 		t.Fatalf("sessions = %+v", sessions)
+	}
+}
+
+func TestCurrentSessionDefaultsToObserveMode(t *testing.T) {
+	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server, err := NewServerWithOptions(store, Options{CurrentSessionID: "current-session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.ProcessHookEvent(context.Background(), risk.HookEvent{
+		SessionID:     "current-session",
+		HookEventName: "PreToolUse",
+		ToolName:      "Read",
+		ToolInput:     map[string]any{"file_path": "README.md"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var sessions []sqlite.SessionSummary
+	if err := json.Unmarshal(response.Body.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].Mode != "observe" {
+		t.Fatalf("sessions = %+v, want current observe mode", sessions)
+	}
+}
+
+func TestSessionsKeepPersistedModeAfterSessionChanges(t *testing.T) {
+	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	enforceServer, err := NewServerWithOptions(store, Options{CurrentSessionID: "enforced-session", Mode: "enforce"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enforceServer.ProcessHookEvent(context.Background(), risk.HookEvent{
+		SessionID:     "enforced-session",
+		HookEventName: "PreToolUse",
+		ToolName:      "Read",
+		ToolInput:     map[string]any{"file_path": "README.md"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	observeServer, err := NewServerWithOptions(store, Options{CurrentSessionID: "observe-session", Mode: "observe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	observeServer.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	var sessions []sqlite.SessionSummary
+	if err := json.Unmarshal(response.Body.Bytes(), &sessions); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != "enforced-session" || sessions[0].Current || sessions[0].Mode != "enforce" {
+		t.Fatalf("sessions = %+v, want historical enforce mode", sessions)
 	}
 }

@@ -14,9 +14,9 @@ import {
   technicalExplanation,
 } from "./helpers";
 import { Dd, DecisionDot, Dt } from "./shared";
-import type { Event } from "./types";
+import type { Event, GuardMode } from "./types";
 
-export function Inspector({ event }: { event: Event }) {
+export function Inspector({ event, mode }: { event: Event; mode: GuardMode }) {
   const r = event.risk_event ?? {};
   const tone = decisionTone[event.decision];
   const timestamp = dateTime(event.created_at);
@@ -35,7 +35,7 @@ export function Inspector({ event }: { event: Event }) {
       <SheetHeader className="flex min-w-0 flex-row items-center gap-2 border-b bg-background px-6 py-3.5 pr-14 space-y-0">
         <DecisionDot kind={event.decision} />
         <SheetTitle className={cn("shrink-0 text-[13px] font-medium", tone.text)}>
-          {decisionLabel(event.decision)}
+          {decisionLabel(event.decision, mode)}
         </SheetTitle>
         <span className="ml-2 min-w-0 break-words font-mono text-[12px] text-muted-foreground [overflow-wrap:anywhere]">
           {prettyTool(event.tool_name)}

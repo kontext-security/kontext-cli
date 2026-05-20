@@ -2,7 +2,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { decisionLabel, decisionTone } from "./helpers";
-import type { Counts, Decision, Tab } from "./types";
+import type { Counts, Decision, GuardMode, Tab } from "./types";
 
 const DECISION_KINDS: Decision[] = ["deny", "allow"];
 
@@ -11,11 +11,13 @@ export function StatRow({
   active,
   onSelect,
   loading,
+  mode,
 }: {
   counts: Counts;
   active: Tab;
   onSelect: (t: Tab) => void;
   loading: boolean;
+  mode: GuardMode;
 }) {
   return (
     <section className="overflow-hidden rounded-xl border bg-card shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.04)]">
@@ -30,7 +32,7 @@ export function StatRow({
           <StatTile
             key={id}
             id={id}
-            label={decisionLabel(id)}
+            label={decisionLabel(id, mode)}
             count={counts[id]}
             total={counts.all}
             active={active === id}
@@ -39,7 +41,7 @@ export function StatRow({
           />
         ))}
       </div>
-      <RatioStrip counts={counts} />
+      <RatioStrip counts={counts} mode={mode} />
     </section>
   );
 }
@@ -148,11 +150,11 @@ function StatTile({
   );
 }
 
-function RatioStrip({ counts }: { counts: Counts }) {
+function RatioStrip({ counts, mode }: { counts: Counts; mode: GuardMode }) {
   const segments = DECISION_KINDS.map((kind) => ({
     count: counts[kind],
     color: decisionTone[kind].bg,
-    label: decisionLabel(kind),
+    label: decisionLabel(kind, mode),
   })).filter((s) => s.count > 0);
 
   return (

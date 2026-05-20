@@ -1,5 +1,7 @@
 export type Decision = "allow" | "deny";
 
+export type GuardMode = "observe" | "enforce";
+
 export type Tab = "all" | "deny" | "allow";
 
 export type LogView = "decisions" | "observed";
@@ -62,6 +64,7 @@ export type Session = {
   session_id: string;
   actions: number;
   current?: boolean;
+  mode?: GuardMode;
 };
 
 export type PolicyProfile = {

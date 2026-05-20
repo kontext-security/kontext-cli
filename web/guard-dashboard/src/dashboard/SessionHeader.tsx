@@ -9,6 +9,13 @@ export function SessionHeader({
   session?: Session;
   loading: boolean;
 }) {
+  const mode = session?.mode ?? "observe";
+  const modeLabel = mode === "enforce" ? "Enforce mode" : "Observe mode";
+  const modeHint =
+    mode === "enforce"
+      ? "Blocking deny decisions before the tool runs."
+      : "Recording decisions but not enforcing them.";
+
   return (
     <header className="flex items-center justify-between gap-4 border-b bg-background px-10 py-5">
       <div className="flex min-w-0 items-center gap-3">
@@ -30,10 +37,10 @@ export function SessionHeader({
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="cursor-default text-[11.5px] text-muted-foreground">
-            Observe mode
+            {modeLabel}
           </span>
         </TooltipTrigger>
-        <TooltipContent side="bottom">Recording decisions but not enforcing them.</TooltipContent>
+        <TooltipContent side="bottom">{modeHint}</TooltipContent>
       </Tooltip>
     </header>
   );

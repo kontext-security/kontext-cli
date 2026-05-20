@@ -4,6 +4,7 @@ import type {
   EventBuckets,
   EventGroups,
   EventPartitions,
+  GuardMode,
   ObservedActivityEvent,
   Session,
 } from "./types";
@@ -66,7 +67,8 @@ export function sameSessions(a: Session[], b: Session[]): boolean {
     if (
       a[i].session_id !== b[i].session_id ||
       a[i].actions !== b[i].actions ||
-      a[i].current !== b[i].current
+      a[i].current !== b[i].current ||
+      a[i].mode !== b[i].mode
     ) {
       return false;
     }
@@ -155,9 +157,11 @@ export function dateTime(value?: string): string {
   }).format(ts);
 }
 
-export function decisionLabel(decision: Decision): string {
-  if (decision === "deny") return "Would deny";
-  return "Allow";
+export function decisionLabel(decision: Decision, mode: GuardMode): string {
+  if (mode === "enforce") {
+    return decision === "deny" ? "Denied" : "Allowed";
+  }
+  return decision === "deny" ? "Would deny" : "Would allow";
 }
 
 export const decisionTone: Record<
