@@ -197,14 +197,26 @@ func judgeInputFromRiskEvent(event risk.HookEvent, riskEvent risk.RiskEvent) jud
 		Command: riskEvent.CommandSummary,
 		Path:    pathClassForJudge(event.ToolInput, riskEvent.PathClass),
 	}
-	if toolInput.Command == "" && toolInput.Path == "" {
-		toolInput.Request = riskEvent.RequestSummary
+	if toolInput.Command == "" {
+		if toolInput.Path != "" {
+			toolInput.Request = sanitizedPathRequest(event.ToolName, toolInput.Path)
+		} else {
+			toolInput.Request = riskEvent.RequestSummary
+		}
 	}
 	return judge.Input{
 		ToolName:           event.ToolName,
 		ExplicitUserIntent: riskEvent.ExplicitUserIntent,
 		ToolInput:          toolInput,
 	}
+}
+
+func sanitizedPathRequest(toolName, pathClass string) string {
+	action := strings.TrimSpace(toolName)
+	if action == "" {
+		action = "Tool"
+	}
+	return action + " " + pathClass
 }
 
 func pathClassForJudge(input map[string]any, normalizedClass string) string {

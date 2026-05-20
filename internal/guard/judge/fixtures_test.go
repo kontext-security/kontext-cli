@@ -8,8 +8,8 @@ import (
 
 func TestLaunchFixturesValidateContract(t *testing.T) {
 	fixtures := loadLaunchFixtures(t)
-	if len(fixtures) != 51 {
-		t.Fatalf("fixtures = %d, want 51", len(fixtures))
+	if len(fixtures) != 55 {
+		t.Fatalf("fixtures = %d, want 55", len(fixtures))
 	}
 	ids := map[string]bool{}
 	counts := map[string]int{}
@@ -59,7 +59,7 @@ func TestLaunchFixturesValidateContract(t *testing.T) {
 		}
 	}
 	wantCounts := map[string]int{
-		"safe":     13,
+		"safe":     17,
 		"deny":     8,
 		"risky":    12,
 		"trap":     8,

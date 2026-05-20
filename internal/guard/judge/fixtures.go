@@ -77,14 +77,26 @@ func InputFromFixture(fixture Fixture) Input {
 		Command: fixture.NormalizedEvent.CommandSummary,
 		Path:    pathClassFromFixture(fixture),
 	}
-	if toolInput.Command == "" && toolInput.Path == "" {
-		toolInput.Request = fixture.NormalizedEvent.RequestSummary
+	if toolInput.Command == "" {
+		if toolInput.Path != "" {
+			toolInput.Request = sanitizedPathRequest(fixture.HookEvent.ToolName, toolInput.Path)
+		} else {
+			toolInput.Request = fixture.NormalizedEvent.RequestSummary
+		}
 	}
 	return Input{
 		ToolName:           fixture.HookEvent.ToolName,
 		ExplicitUserIntent: fixture.NormalizedEvent.ExplicitUserIntent,
 		ToolInput:          toolInput,
 	}
+}
+
+func sanitizedPathRequest(toolName, pathClass string) string {
+	action := strings.TrimSpace(toolName)
+	if action == "" {
+		action = "Tool"
+	}
+	return action + " " + pathClass
 }
 
 func pathClassFromFixture(fixture Fixture) string {
