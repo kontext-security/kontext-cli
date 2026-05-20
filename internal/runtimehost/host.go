@@ -20,6 +20,7 @@ import (
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
 	"github.com/kontext-security/kontext-cli/internal/guard/judgeruntime"
+	"github.com/kontext-security/kontext-cli/internal/hook"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
 	"github.com/kontext-security/kontext-cli/internal/runtimecore"
 )
@@ -154,6 +155,7 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		SessionID:   serviceSessionID,
 		AgentName:   opts.AgentName,
 		AsyncIngest: !opts.DisableAsyncIngest,
+		Transform:   clientResultTransform(mode),
 		Diagnostic:  opts.Diagnostic,
 	})
 	if err != nil {
@@ -203,6 +205,27 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 	}
 
 	return host, nil
+}
+
+func clientResultTransform(mode guardhookruntime.Mode) func(hook.Event, hook.Result) hook.Result {
+	if mode != guardhookruntime.ModeObserve {
+		return nil
+	}
+	return func(event hook.Event, result hook.Result) hook.Result {
+		result.Mode = string(mode)
+		if result.Decision == "" {
+			result.Decision = hook.DecisionAllow
+		}
+		if event.HookName.CanBlock() {
+			decision := result.Decision
+			if result.Reason == "" {
+				result.Reason = "no reason provided"
+			}
+			result.Reason = "Kontext observe mode: would " + string(decision) + "; " + result.Reason
+		}
+		result.Decision = hook.DecisionAllow
+		return result
+	}
 }
 
 func (h *Host) Close(ctx context.Context) error {
