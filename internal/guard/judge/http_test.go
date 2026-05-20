@@ -28,9 +28,13 @@ func TestParseOutputRejectsAsk(t *testing.T) {
 }
 
 func TestParseOutputRejectsPlaceholderCategory(t *testing.T) {
-	_, err := ParseOutput(`{"decision":"allow","risk_level":"low","categories":["short_snake_case_category"],"reason":"Looks safe."}`)
-	if err == nil {
-		t.Fatal("ParseOutput() error = nil, want placeholder category rejection")
+	for _, placeholder := range []string{"short_snake_case_category", "one_or_more_specific_risk_or_safety_labels", "one_or_more_short_snake_case_labels"} {
+		t.Run(placeholder, func(t *testing.T) {
+			_, err := ParseOutput(`{"decision":"allow","risk_level":"low","categories":["` + placeholder + `"],"reason":"Looks safe."}`)
+			if err == nil {
+				t.Fatal("ParseOutput() error = nil, want placeholder category rejection")
+			}
+		})
 	}
 }
 

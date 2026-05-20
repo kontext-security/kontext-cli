@@ -39,6 +39,7 @@ type FixtureNormalizedEvent struct {
 	OperationClass     string   `json:"operation_class,omitempty"`
 	ResourceClass      string   `json:"resource_class,omitempty"`
 	Environment        string   `json:"environment,omitempty"`
+	PathClass          string   `json:"path_class,omitempty"`
 	CommandSummary     string   `json:"command_summary,omitempty"`
 	RequestSummary     string   `json:"request_summary,omitempty"`
 	ExplicitUserIntent bool     `json:"explicit_user_intent"`
@@ -73,22 +74,26 @@ func ReadFixtures(r io.Reader) ([]Fixture, error) {
 
 func InputFromFixture(fixture Fixture) Input {
 	toolInput := ToolInput{
-		Command: stringValue(fixture.HookEvent.ToolInput, "command", "cmd", "script"),
-		Path:    stringValue(fixture.HookEvent.ToolInput, "file_path", "path", "filename"),
+		Command: fixture.NormalizedEvent.CommandSummary,
+		Path:    pathClassFromFixture(fixture),
 	}
 	if toolInput.Command == "" && toolInput.Path == "" {
 		toolInput.Request = fixture.NormalizedEvent.RequestSummary
 	}
 	return Input{
-		ToolName:  fixture.HookEvent.ToolName,
-		ToolInput: toolInput,
+		ToolName:           fixture.HookEvent.ToolName,
+		ExplicitUserIntent: fixture.NormalizedEvent.ExplicitUserIntent,
+		ToolInput:          toolInput,
 	}
 }
 
-func stringValue(input map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := input[key].(string); ok {
-			return value
+func pathClassFromFixture(fixture Fixture) string {
+	if fixture.NormalizedEvent.PathClass != "" {
+		return fixture.NormalizedEvent.PathClass
+	}
+	for _, key := range []string{"file_path", "path", "filename"} {
+		if value, ok := fixture.HookEvent.ToolInput[key].(string); ok && value != "" {
+			return "project_file"
 		}
 	}
 	return ""

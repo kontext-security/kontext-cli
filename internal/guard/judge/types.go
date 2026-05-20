@@ -23,8 +23,9 @@ const (
 )
 
 type Input struct {
-	ToolName  string    `json:"tool_name,omitempty"`
-	ToolInput ToolInput `json:"tool_input"`
+	ToolName           string    `json:"tool_name,omitempty"`
+	ExplicitUserIntent bool      `json:"explicit_user_intent,omitempty"`
+	ToolInput          ToolInput `json:"tool_input"`
 }
 
 type ToolInput struct {
@@ -115,7 +116,9 @@ func ValidateOutput(output Output) error {
 		if category == "" {
 			return errors.New("empty category")
 		}
-		if category == "short_snake_case_category" || category == "one_or_more_specific_risk_or_safety_labels" {
+		if category == "short_snake_case_category" ||
+			category == "one_or_more_specific_risk_or_safety_labels" ||
+			category == "one_or_more_short_snake_case_labels" {
 			return fmt.Errorf("placeholder category %q", category)
 		}
 	}

@@ -568,7 +568,7 @@ func TestJudgePolicyAllowsFromLocalJudge(t *testing.T) {
 	if localJudge.calls != 1 {
 		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
 	}
-	if localJudge.input.ToolName != "Read" || localJudge.input.ToolInput.Path != "README.md" {
+	if localJudge.input.ToolName != "Read" || localJudge.input.ToolInput.Path != "project_file" {
 		t.Fatalf("judge input = %+v", localJudge.input)
 	}
 	if decision.Decision != risk.DecisionAllow || decision.ReasonCode != risk.DecisionStageJudgeAllow {
@@ -619,6 +619,76 @@ func TestJudgePolicyRedactsCredentialValuesFromJudgeInput(t *testing.T) {
 	}
 	if !strings.Contains(got, "[redacted-credential]") {
 		t.Fatalf("judge input missing redaction marker: %+v", localJudge.input)
+	}
+}
+
+func TestJudgePolicyPreservesExplicitIntentForJudgeInput(t *testing.T) {
+	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	localJudge := &recordingJudge{
+		result: judge.Result{
+			Output: judge.Output{
+				Decision:   judge.DecisionAllow,
+				RiskLevel:  judge.RiskLevelMedium,
+				Categories: []string{"explicit_user_intent"},
+				Reason:     "Approved preview action.",
+			},
+		},
+	}
+	server, err := NewServerWithOptions(store, Options{Judge: localJudge})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = server.ProcessHookEvent(context.Background(), risk.HookEvent{
+		SessionID:     "s1",
+		HookEventName: "PreToolUse",
+		Agent:         "claude",
+		ToolName:      "Bash",
+		ToolInput:     map[string]any{"command": "npm run deploy:preview approved_by_user"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if localJudge.calls != 1 {
+		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
+	}
+	if !localJudge.input.ExplicitUserIntent {
+		t.Fatalf("judge input missing explicit intent: %+v", localJudge.input)
+	}
+}
+
+func TestJudgeInputClassifiesCredentialPathForNonReadTools(t *testing.T) {
+	tests := []struct {
+		name      string
+		path      string
+		wantClass string
+	}{
+		{name: "env file", path: ".env", wantClass: "env_file"},
+		{name: "relative aws credentials", path: ".aws/credentials", wantClass: "cloud_credentials"},
+		{name: "dot relative gcloud credentials", path: "./.gcloud/application_default_credentials.json", wantClass: "cloud_credentials"},
+		{name: "relative railway config", path: ".config/railway/config.json", wantClass: "cloud_credentials"},
+		{name: "nested aws credentials", path: "nested/.aws/config", wantClass: "cloud_credentials"},
+		{name: "normal project file", path: "README.md", wantClass: "project_file"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := judgeInputFromRiskEvent(
+				risk.HookEvent{
+					ToolName:  "Write",
+					ToolInput: map[string]any{"file_path": tt.path},
+				},
+				risk.RiskEvent{RequestSummary: "Write " + tt.path},
+			)
+			if input.ToolInput.Path != tt.wantClass {
+				t.Fatalf("judge input path = %q, want %q: %+v", input.ToolInput.Path, tt.wantClass, input)
+			}
+			if strings.Contains(input.ToolInput.Request, tt.path) {
+				t.Fatalf("judge input leaked raw path in request: %+v", input)
+			}
+		})
 	}
 }
 
@@ -725,7 +795,7 @@ func TestJudgePolicyUsesActiveProfileForDeterministicRules(t *testing.T) {
 	if localJudge.calls != 1 {
 		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
 	}
-	if localJudge.input.ToolName != "Read" || localJudge.input.ToolInput.Path != ".env" {
+	if localJudge.input.ToolName != "Read" || localJudge.input.ToolInput.Path != "env_file" {
 		t.Fatalf("judge input = %+v", localJudge.input)
 	}
 	if decision.Decision != risk.DecisionAllow || decision.RiskEvent.PolicyProfile != string(policy.ProfileRelaxed) {
@@ -773,7 +843,7 @@ func TestJudgePolicyFallsBackWhenActivePolicyConfigInvalid(t *testing.T) {
 	if localJudge.calls != 1 {
 		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
 	}
-	if localJudge.input.ToolName != "Read" || localJudge.input.ToolInput.Path != "README.md" {
+	if localJudge.input.ToolName != "Read" || localJudge.input.ToolInput.Path != "project_file" {
 		t.Fatalf("judge input = %+v", localJudge.input)
 	}
 	if decision.RiskEvent.PolicyVersion != policy.DefaultPolicyVersion || decision.RiskEvent.PolicyProfile != string(policy.ProfileBalanced) {

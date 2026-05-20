@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
 	guardpolicy "github.com/kontext-security/kontext-cli/internal/guard/policy"
@@ -193,24 +195,52 @@ func applyPolicyMetadata(event *risk.RiskEvent, result guardpolicy.Result) {
 func judgeInputFromRiskEvent(event risk.HookEvent, riskEvent risk.RiskEvent) judge.Input {
 	toolInput := judge.ToolInput{
 		Command: riskEvent.CommandSummary,
-		Path:    pathFromToolInput(event.ToolInput),
+		Path:    pathClassForJudge(event.ToolInput, riskEvent.PathClass),
 	}
 	if toolInput.Command == "" && toolInput.Path == "" {
 		toolInput.Request = riskEvent.RequestSummary
 	}
 	return judge.Input{
-		ToolName:  event.ToolName,
-		ToolInput: toolInput,
+		ToolName:           event.ToolName,
+		ExplicitUserIntent: riskEvent.ExplicitUserIntent,
+		ToolInput:          toolInput,
 	}
 }
 
-func pathFromToolInput(input map[string]any) string {
+func pathClassForJudge(input map[string]any, normalizedClass string) string {
+	if normalizedClass != "" {
+		return normalizedClass
+	}
 	for _, key := range []string{"file_path", "path", "filename"} {
 		if value, ok := input[key].(string); ok {
-			return value
+			if value != "" {
+				return judgePathClass(value)
+			}
 		}
 	}
 	return ""
+}
+
+func judgePathClass(path string) string {
+	clean := strings.ToLower(filepath.ToSlash(filepath.Clean(path)))
+	base := filepath.Base(clean)
+	switch base {
+	case ".env", ".npmrc", ".pypirc", ".netrc":
+		return "env_file"
+	}
+	if pathHasSegmentPrefix(clean, ".aws") ||
+		pathHasSegmentPrefix(clean, ".gcloud") ||
+		pathHasSegmentPrefix(clean, ".config/railway") {
+		return "cloud_credentials"
+	}
+	return "project_file"
+}
+
+func pathHasSegmentPrefix(clean, prefix string) bool {
+	return clean == prefix ||
+		strings.HasPrefix(clean, prefix+"/") ||
+		strings.Contains(clean, "/"+prefix+"/") ||
+		strings.HasSuffix(clean, "/"+prefix)
 }
 
 func judgeMetadata(localJudge judge.Judge) judge.Metadata {
