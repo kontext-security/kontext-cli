@@ -52,6 +52,7 @@ type SessionSummary struct {
 	Actions   int       `json:"actions"`
 	LatestAt  time.Time `json:"latest_at"`
 	Current   bool      `json:"current,omitempty"`
+	Mode      string    `json:"mode,omitempty"`
 }
 
 type SessionRecord struct {
@@ -61,6 +62,7 @@ type SessionRecord struct {
 	Source     string     `json:"source,omitempty"`
 	Status     string     `json:"status,omitempty"`
 	ExternalID string     `json:"external_id,omitempty"`
+	Mode       string     `json:"mode,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at"`
 	ClosedAt   *time.Time `json:"closed_at,omitempty"`
@@ -116,6 +118,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		  source text not null default 'daemon_observed',
 		  status text not null default 'open',
 		  external_id text,
+		  mode text,
 	  closed_at text,
 	  created_at text not null,
 	  updated_at text not null
@@ -259,6 +262,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		{name: "source", def: "text not null default 'daemon_observed'"},
 		{name: "status", def: "text not null default 'open'"},
 		{name: "external_id", def: "text"},
+		{name: "mode", def: "text"},
 		{name: "closed_at", def: "text"},
 	} {
 		if err := s.ensureColumn(ctx, "agent_sessions", column.name, column.def); err != nil {
@@ -295,14 +299,18 @@ func (s *Store) ensureColumn(ctx context.Context, table, name, def string) error
 }
 
 func (s *Store) OpenSession(ctx context.Context, sessionID, agent, cwd, source, externalID string) (SessionRecord, error) {
+	return s.OpenSessionWithMode(ctx, sessionID, agent, cwd, source, externalID, "")
+}
+
+func (s *Store) OpenSessionWithMode(ctx context.Context, sessionID, agent, cwd, source, externalID, mode string) (SessionRecord, error) {
 	now := time.Now().UTC()
 	sessionID = normalizeSessionID(sessionID)
 	if source == "" {
 		source = "daemon_observed"
 	}
 	_, err := s.db.ExecContext(ctx, `
-insert into agent_sessions(id, agent, cwd, source, status, external_id, closed_at, created_at, updated_at)
-values(?, ?, ?, ?, 'open', ?, null, ?, ?)
+insert into agent_sessions(id, agent, cwd, source, status, external_id, mode, closed_at, created_at, updated_at)
+values(?, ?, ?, ?, 'open', ?, ?, null, ?, ?)
 on conflict(id) do update set
   agent = coalesce(nullif(excluded.agent, ''), agent_sessions.agent),
   cwd = coalesce(nullif(excluded.cwd, ''), agent_sessions.cwd),
@@ -313,9 +321,10 @@ on conflict(id) do update set
   end,
   status = 'open',
   external_id = coalesce(nullif(excluded.external_id, ''), agent_sessions.external_id),
+  mode = coalesce(nullif(excluded.mode, ''), agent_sessions.mode),
   closed_at = null,
   updated_at = excluded.updated_at
-	`, sessionID, agent, cwd, source, externalID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	`, sessionID, agent, cwd, source, externalID, mode, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	if err != nil {
 		return SessionRecord{}, err
 	}
@@ -323,16 +332,21 @@ on conflict(id) do update set
 }
 
 func (s *Store) EnsureObservedSession(ctx context.Context, sessionID, agent, cwd string) (SessionRecord, error) {
+	return s.EnsureObservedSessionWithMode(ctx, sessionID, agent, cwd, "")
+}
+
+func (s *Store) EnsureObservedSessionWithMode(ctx context.Context, sessionID, agent, cwd, mode string) (SessionRecord, error) {
 	now := time.Now().UTC()
 	sessionID = normalizeSessionID(sessionID)
 	_, err := s.db.ExecContext(ctx, `
-insert into agent_sessions(id, agent, cwd, source, status, created_at, updated_at)
-values(?, ?, ?, 'daemon_observed', 'open', ?, ?)
+insert into agent_sessions(id, agent, cwd, source, status, mode, created_at, updated_at)
+values(?, ?, ?, 'daemon_observed', 'open', ?, ?, ?)
 on conflict(id) do update set
   agent = coalesce(nullif(excluded.agent, ''), agent_sessions.agent),
   cwd = coalesce(nullif(excluded.cwd, ''), agent_sessions.cwd),
+  mode = coalesce(nullif(excluded.mode, ''), agent_sessions.mode),
   updated_at = excluded.updated_at
-	`, sessionID, agent, cwd, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	`, sessionID, agent, cwd, mode, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	if err != nil {
 		return SessionRecord{}, err
 	}
@@ -353,7 +367,7 @@ where id = ?
 func (s *Store) Session(ctx context.Context, sessionID string) (SessionRecord, error) {
 	row := s.db.QueryRowContext(ctx, `
 select id, coalesce(agent, ''), coalesce(cwd, ''), source, status, coalesce(external_id, ''),
-  created_at, updated_at, closed_at
+  coalesce(mode, ''), created_at, updated_at, closed_at
 from agent_sessions
 where id = ?
 	`, sessionID)
@@ -975,16 +989,18 @@ from (
 
 func (s *Store) Sessions(ctx context.Context) ([]SessionSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
-select session_id,
+select actions.session_id,
 	  sum(critical) as critical,
 	  0 as warnings,
 	  count(*) as actions,
-	  max(latest_at) as latest_at
+	  max(latest_at) as latest_at,
+	  coalesce(agent_sessions.mode, '') as mode
 from (
   select session_id, case when decision_result = 'ALLOW' then 0 else 1 end as critical, updated_at as latest_at
   from authorization_actions
-)
-group by session_id
+	) actions
+left join agent_sessions on agent_sessions.id = actions.session_id
+group by actions.session_id, agent_sessions.mode
 order by latest_at desc
 	`)
 	if err != nil {
@@ -995,7 +1011,7 @@ order by latest_at desc
 	for rows.Next() {
 		var item SessionSummary
 		var latest string
-		if err := rows.Scan(&item.SessionID, &item.Critical, &item.Warnings, &item.Actions, &latest); err != nil {
+		if err := rows.Scan(&item.SessionID, &item.Critical, &item.Warnings, &item.Actions, &latest, &item.Mode); err != nil {
 			return nil, err
 		}
 		latestAt, err := parseStoredTime("session latest_at", latest)
@@ -1012,19 +1028,21 @@ func (s *Store) SessionSummary(ctx context.Context, sessionID string) (SessionSu
 	var item SessionSummary
 	var latest string
 	row := s.db.QueryRowContext(ctx, `
-select session_id,
+select actions.session_id,
 	  sum(critical),
 	  0,
 	  count(*),
-	  max(latest_at)
+	  max(latest_at),
+	  coalesce(agent_sessions.mode, '')
 from (
   select session_id, case when decision_result = 'ALLOW' then 0 else 1 end as critical, updated_at as latest_at
   from authorization_actions
-)
-where session_id = ?
-group by session_id
+  where session_id = ?
+	) actions
+left join agent_sessions on agent_sessions.id = actions.session_id
+group by actions.session_id, agent_sessions.mode
 	`, sessionID)
-	if err := row.Scan(&item.SessionID, &item.Critical, &item.Warnings, &item.Actions, &latest); err != nil {
+	if err := row.Scan(&item.SessionID, &item.Critical, &item.Warnings, &item.Actions, &latest, &item.Mode); err != nil {
 		return SessionSummary{}, err
 	}
 	latestAt, err := parseStoredTime("session latest_at", latest)
@@ -1116,6 +1134,7 @@ func scanSession(scanner interface{ Scan(...any) error }) (SessionRecord, error)
 		&record.Source,
 		&record.Status,
 		&record.ExternalID,
+		&record.Mode,
 		&created,
 		&updated,
 		&closed,

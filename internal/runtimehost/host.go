@@ -105,6 +105,7 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 	localServer, closeStore, err := server.OpenDefaultServerWithOptions(dbPath, server.Options{
 		Judge:            localJudge,
 		CurrentSessionID: sessionID,
+		Mode:             string(mode),
 	})
 	if err != nil {
 		closeJudge()

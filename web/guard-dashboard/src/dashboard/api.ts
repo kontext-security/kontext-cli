@@ -1,5 +1,5 @@
 import { API } from "./config";
-import type { Decision, Event, PolicyProfile, PolicyProfileID, RiskEvent, Session } from "./types";
+import type { Decision, Event, GuardMode, PolicyProfile, PolicyProfileID, RiskEvent, Session } from "./types";
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -73,6 +73,16 @@ function policyProfileID(value: unknown): PolicyProfileID | undefined {
   }
 }
 
+function guardMode(value: unknown): GuardMode | undefined {
+  switch (value) {
+    case "observe":
+    case "enforce":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
 function parseRiskEvent(value: unknown): RiskEvent | undefined {
   if (!isObject(value)) return undefined;
   return {
@@ -119,10 +129,15 @@ function parseSession(value: unknown): Session | undefined {
   ) {
     return undefined;
   }
+  const mode = guardMode(value.mode);
+  if (value.mode !== undefined && !mode) return undefined;
+  const current = value.current === true;
+  if (current && !mode) return undefined;
   return {
     session_id: value.session_id,
     actions: value.actions,
-    current: value.current === true,
+    current,
+    mode,
   };
 }
 

@@ -19,7 +19,7 @@ import { SessionHeader } from "@/dashboard/SessionHeader";
 import { Sidebar } from "@/dashboard/Sidebar";
 import { StatRow } from "@/dashboard/StatRow";
 import { Block } from "@/dashboard/shared";
-import type { Event, LogView, PolicyProfile, PolicyProfileID, Session, Tab } from "@/dashboard/types";
+import type { Event, GuardMode, LogView, PolicyProfile, PolicyProfileID, Session, Tab } from "@/dashboard/types";
 
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -48,6 +48,10 @@ export default function App() {
   }, [selectedSessionID]);
 
   function selectSession(id: string) {
+    if (selectedRef.current !== id) {
+      setEvents([]);
+      setOpenId(null);
+    }
     selectedRef.current = id;
     setSelectedSessionID(id);
   }
@@ -162,6 +166,7 @@ export default function App() {
     () => sessions.find((s) => s.current),
     [sessions],
   );
+  const sessionMode: GuardMode = selectedSession?.mode ?? "observe";
   const loading = sessions.length === 0 && !error;
 
   return (
@@ -194,7 +199,13 @@ export default function App() {
                 label="Decision Summary"
                 description="What Guard decided this session."
               >
-                <StatRow counts={counts} active={tab} onSelect={setTab} loading={loading} />
+                <StatRow
+                  counts={counts}
+                  active={tab}
+                  onSelect={setTab}
+                  loading={loading}
+                  mode={sessionMode}
+                />
               </Block>
 
               {error && (
@@ -217,6 +228,7 @@ export default function App() {
                   onOpen={setOpenId}
                   onViewChange={setLogView}
                   onClearFilter={() => setTab("all")}
+                  mode={sessionMode}
                 />
               </Block>
             </div>
@@ -228,7 +240,7 @@ export default function App() {
             side="right"
             className="w-[540px] max-w-[92vw] overflow-x-hidden p-0 sm:max-w-[540px]"
           >
-            {opened && <Inspector event={opened} />}
+            {opened && <Inspector event={opened} mode={sessionMode} />}
           </SheetContent>
         </Sheet>
       </div>

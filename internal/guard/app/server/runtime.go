@@ -11,12 +11,14 @@ import (
 )
 
 type guardHookRuntime struct {
-	store  *sqlite.Store
-	policy PolicyProvider
+	store            *sqlite.Store
+	policy           PolicyProvider
+	currentSessionID string
+	mode             string
 }
 
-func newGuardHookRuntime(store *sqlite.Store, policy PolicyProvider) guardHookRuntime {
-	return guardHookRuntime{store: store, policy: policy}
+func newGuardHookRuntime(store *sqlite.Store, policy PolicyProvider, currentSessionID, mode string) guardHookRuntime {
+	return guardHookRuntime{store: store, policy: policy, currentSessionID: currentSessionID, mode: mode}
 }
 
 func (r guardHookRuntime) OpenSession(ctx context.Context, session runtimecore.Session) (runtimecore.Session, error) {
@@ -24,7 +26,7 @@ func (r guardHookRuntime) OpenSession(ctx context.Context, session runtimecore.S
 	if source == "" {
 		source = string(runtimecore.SessionSourceDaemonObserved)
 	}
-	record, err := r.store.OpenSession(ctx, session.ID, session.Agent, session.CWD, source, session.ExternalID)
+	record, err := r.store.OpenSessionWithMode(ctx, session.ID, session.Agent, session.CWD, source, session.ExternalID, r.modeForSession(session.ID))
 	if err != nil {
 		return runtimecore.Session{}, err
 	}
@@ -42,7 +44,7 @@ func (r guardHookRuntime) CloseSession(ctx context.Context, sessionID string) er
 }
 
 func (r guardHookRuntime) EnsureSessionForEvent(ctx context.Context, event hook.Event) (hook.Event, error) {
-	session, err := r.store.EnsureObservedSession(ctx, event.SessionID, event.Agent, event.CWD)
+	session, err := r.store.EnsureObservedSessionWithMode(ctx, event.SessionID, event.Agent, event.CWD, r.modeForSession(event.SessionID))
 	if err != nil {
 		return hook.Event{}, err
 	}
@@ -51,6 +53,13 @@ func (r guardHookRuntime) EnsureSessionForEvent(ctx context.Context, event hook.
 		event.Agent = session.Agent
 	}
 	return event, nil
+}
+
+func (r guardHookRuntime) modeForSession(sessionID string) string {
+	if sessionID == "" || sessionID != r.currentSessionID {
+		return ""
+	}
+	return r.mode
 }
 
 func (r guardHookRuntime) EvaluateHook(ctx context.Context, event hook.Event) (hook.Result, error) {

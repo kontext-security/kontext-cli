@@ -35,6 +35,7 @@ type Server struct {
 	core             *runtimecore.Core
 	mux              *http.ServeMux
 	currentSessionID string
+	mode             string
 }
 
 type ProcessResponse struct {
@@ -49,6 +50,7 @@ type Options struct {
 	PolicyConfig         policy.Config
 	PolicyConfigProvider PolicyConfigProvider
 	CurrentSessionID     string
+	Mode                 string
 }
 
 type PolicyProfileResponse struct {
@@ -122,7 +124,12 @@ func NewServerWithPolicyConfigAndOptions(store *sqlite.Store, policy PolicyProvi
 			PolicyConfigProvider: policyStoreConfigProvider{store: policyStore},
 		})
 	}
-	runtime := newGuardHookRuntime(store, policy)
+	currentSessionID := strings.TrimSpace(opts.CurrentSessionID)
+	mode := strings.TrimSpace(opts.Mode)
+	if currentSessionID != "" && mode == "" {
+		mode = "observe"
+	}
+	runtime := newGuardHookRuntime(store, policy, currentSessionID, mode)
 	core, err := runtimecore.New(runtime)
 	if err != nil {
 		return nil, fmt.Errorf("create runtime core: %w", err)
@@ -132,7 +139,8 @@ func NewServerWithPolicyConfigAndOptions(store *sqlite.Store, policy PolicyProvi
 		policyStore:      policyStore,
 		core:             core,
 		mux:              http.NewServeMux(),
-		currentSessionID: strings.TrimSpace(opts.CurrentSessionID),
+		currentSessionID: currentSessionID,
+		mode:             mode,
 	}
 	server.routes()
 	return server, nil
@@ -253,6 +261,9 @@ func (s *Server) withCurrentSession(ctx context.Context, sessions []sqlite.Sessi
 	for i := range sessions {
 		if sessions[i].SessionID == s.currentSessionID {
 			sessions[i].Current = true
+			if mode := s.modeForSession(sessions[i].SessionID); mode != "" {
+				sessions[i].Mode = mode
+			}
 			return sessions
 		}
 	}
@@ -265,7 +276,15 @@ func (s *Server) withCurrentSession(ctx context.Context, sessions []sqlite.Sessi
 		Actions:   0,
 		LatestAt:  record.UpdatedAt,
 		Current:   true,
+		Mode:      s.modeForSession(record.ID),
 	}}, sessions...)
+}
+
+func (s *Server) modeForSession(sessionID string) string {
+	if sessionID == "" || sessionID != s.currentSessionID {
+		return ""
+	}
+	return s.mode
 }
 
 func (s *Server) handlePolicyProfile(w http.ResponseWriter, _ *http.Request) {
@@ -314,6 +333,9 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
+		}
+		if mode := s.modeForSession(sessionID); mode != "" {
+			summary.Mode = mode
 		}
 		writeJSON(w, http.StatusOK, summary)
 	case "events":

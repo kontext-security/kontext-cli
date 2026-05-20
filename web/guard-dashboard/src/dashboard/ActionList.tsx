@@ -9,7 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 import { decisionLabel, decisionSource, decisionTone, prettyTool, summaryOf } from "./helpers";
 import { DecisionDot } from "./shared";
-import type { Decision, Event, EventGroups, LogView, ObservedActivityEvent, Tab } from "./types";
+import type { Decision, Event, EventGroups, GuardMode, LogView, ObservedActivityEvent, Tab } from "./types";
 
 const VISIBLE_KINDS = {
   all: ["deny", "allow"],
@@ -26,6 +26,7 @@ export function ActionList({
   onOpen,
   onViewChange,
   onClearFilter,
+  mode,
 }: {
   tab: Tab;
   view: LogView;
@@ -35,12 +36,13 @@ export function ActionList({
   onOpen: (id: string) => void;
   onViewChange: (view: LogView) => void;
   onClearFilter: () => void;
+  mode: GuardMode;
 }) {
   const visibleDecisionGroups = VISIBLE_KINDS[tab]
     .map((kind) => ({ kind, items: decisionGroups[kind] }))
     .filter(({ items }) => items.length > 0);
   const decisionCount = decisionGroups.allow.length + decisionGroups.deny.length;
-  const filterLabel = view === "decisions" && tab !== "all" ? decisionLabel(tab) : null;
+  const filterLabel = view === "decisions" && tab !== "all" ? decisionLabel(tab, mode) : null;
 
   return (
     <section className="min-w-0 overflow-hidden rounded-xl border bg-card shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.04)]">
@@ -94,7 +96,7 @@ export function ActionList({
             visibleDecisionGroups.map(({ kind, items }, index) => (
               <Group
                 key={kind}
-                label={decisionLabel(kind)}
+                label={decisionLabel(kind, mode)}
                 count={items.length}
                 separated={index > 0}
               >
