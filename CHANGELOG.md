@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/kontext-security/kontext-cli/compare/v0.8.0...v0.8.1) (2026-05-20)
+
+
+### Bug Fixes
+
+* reflect guard mode in dashboard ([#190](https://github.com/kontext-security/kontext-cli/issues/190)) ([7540b9d](https://github.com/kontext-security/kontext-cli/commit/7540b9d30ee25e3dba9443c1e240d009f14199cc))
+
 ## [0.8.0](https://github.com/kontext-security/kontext-cli/compare/v0.7.0...v0.8.0) (2026-05-20)
 
 
