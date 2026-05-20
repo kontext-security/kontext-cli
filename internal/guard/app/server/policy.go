@@ -198,9 +198,12 @@ func judgeInputFromRiskEvent(event risk.HookEvent, riskEvent risk.RiskEvent) jud
 		Path:    pathClassForJudge(event.ToolInput, riskEvent.PathClass),
 	}
 	if toolInput.Command == "" {
-		if toolInput.Path != "" {
+		switch {
+		case toolInput.Path != "":
 			toolInput.Request = sanitizedPathRequest(event.ToolName, toolInput.Path)
-		} else {
+		case strings.EqualFold(event.ToolName, "Skill"):
+			toolInput.Request = skillRequest(event.ToolInput)
+		default:
 			toolInput.Request = riskEvent.RequestSummary
 		}
 	}
@@ -217,6 +220,15 @@ func sanitizedPathRequest(toolName, pathClass string) string {
 		action = "Tool"
 	}
 	return action + " " + pathClass
+}
+
+func skillRequest(input map[string]any) string {
+	name, _ := input["skill"].(string)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "Skill"
+	}
+	return "Skill " + name
 }
 
 func pathClassForJudge(input map[string]any, normalizedClass string) string {

@@ -712,6 +712,32 @@ func TestJudgeInputDescribesPathOnlyLocalReads(t *testing.T) {
 	}
 }
 
+func TestJudgeInputIncludesSkillName(t *testing.T) {
+	input := judgeInputFromRiskEvent(
+		risk.HookEvent{
+			ToolName:  "Skill",
+			ToolInput: map[string]any{"skill": "review", "args": "ignored"},
+		},
+		risk.RiskEvent{RequestSummary: "Skill"},
+	)
+	if input.ToolInput.Request != "Skill review" {
+		t.Fatalf("judge input request = %q, want %q", input.ToolInput.Request, "Skill review")
+	}
+}
+
+func TestJudgeInputSkillWithoutNameFallsBack(t *testing.T) {
+	input := judgeInputFromRiskEvent(
+		risk.HookEvent{
+			ToolName:  "Skill",
+			ToolInput: map[string]any{},
+		},
+		risk.RiskEvent{RequestSummary: "Skill"},
+	)
+	if input.ToolInput.Request != "Skill" {
+		t.Fatalf("judge input request = %q, want %q", input.ToolInput.Request, "Skill")
+	}
+}
+
 func TestJudgePolicyFailsOpenWhenJudgeUnavailable(t *testing.T) {
 	store, err := sqlite.OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {
