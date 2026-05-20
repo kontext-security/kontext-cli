@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.8.0](https://github.com/kontext-security/kontext-cli/compare/v0.7.0...v0.8.0) (2026-05-20)
+
+
+### Features
+
+* **claude:** add managed settings contract ([#179](https://github.com/kontext-security/kontext-cli/issues/179)) ([0d4f469](https://github.com/kontext-security/kontext-cli/commit/0d4f4690bfb2b1c5f67295fda412a878d92e2607))
+* **claude:** expose managed settings CLI ([#180](https://github.com/kontext-security/kontext-cli/issues/180)) ([82539d6](https://github.com/kontext-security/kontext-cli/commit/82539d660efb5fb89b1d82c6f2a13283d36acd53))
+* **claudemanaged:** mark lifecycle hooks async ([#189](https://github.com/kontext-security/kontext-cli/issues/189)) ([de5d20c](https://github.com/kontext-security/kontext-cli/commit/de5d20c47e79a99dfd394f051d831ea578fe7f8b))
+* **guard-dashboard:** split decision log from observed activity ([#186](https://github.com/kontext-security/kontext-cli/issues/186)) ([1ef9bf1](https://github.com/kontext-security/kontext-cli/commit/1ef9bf141a391b527d5f5702d350e7efb42c6fdd))
+* **guard:** add authorization ledger ([#178](https://github.com/kontext-security/kontext-cli/issues/178)) ([02e4300](https://github.com/kontext-security/kontext-cli/commit/02e43008e794b42a278359097960a10ca4ce6564))
+* **guard:** improve local judge startup progress ([#188](https://github.com/kontext-security/kontext-cli/issues/188)) ([66b9a43](https://github.com/kontext-security/kontext-cli/commit/66b9a435a91bee77256a0952bf31933795d1b8dd))
+* **managed:** add installation identity store ([#176](https://github.com/kontext-security/kontext-cli/issues/176)) ([958c2c1](https://github.com/kontext-security/kontext-cli/commit/958c2c1883434595324508dbe40984eca41d9cdc))
+* **managed:** add managed config contract ([#175](https://github.com/kontext-security/kontext-cli/issues/175)) ([213b6a6](https://github.com/kontext-security/kontext-cli/commit/213b6a67b1ea7f6eea118b670e832de6e3f0002a))
+
+
+### Bug Fixes
+
+* **ENG-332:** remove macOS guard notifications ([#163](https://github.com/kontext-security/kontext-cli/issues/163)) ([487daaa](https://github.com/kontext-security/kontext-cli/commit/487daaa91f557d5a69d31e487ee536adc398bfde))
+* optimize internal/credential template entry ordering ([#182](https://github.com/kontext-security/kontext-cli/issues/182)) ([5244bdd](https://github.com/kontext-security/kontext-cli/commit/5244bddb605d0a5fa4f04f7aae5e6f08043b6b88))
+
 ## [0.7.0](https://github.com/kontext-security/kontext-cli/compare/v0.6.0...v0.7.0) (2026-05-18)
 
 
