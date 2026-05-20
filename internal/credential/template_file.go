@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -52,15 +51,14 @@ func LoadTemplateFile(path string) (*TemplateFile, error) {
 	}
 
 	type effectiveAssignment struct {
-		entry     *Entry
-		invalid   *InvalidPlaceholder
-		lastIndex int
+		entry   *Entry
+		invalid *InvalidPlaceholder
 	}
 
 	assignments := make(map[string]effectiveAssignment)
 	seenKeys := make(map[string]struct{})
+	assignmentOrder := make([]string, 0)
 	scanner := bufio.NewScanner(f)
-	lineIndex := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		trimmed := strings.TrimSpace(line)
@@ -92,8 +90,8 @@ func LoadTemplateFile(path string) (*TemplateFile, error) {
 		value := strings.TrimSpace(parts[1])
 		normalizedValue := normalizePlaceholderValue(value)
 		result.ExistingValues[envVar] = value
-		assignment := effectiveAssignment{lastIndex: lineIndex}
-		lineIndex++
+		assignment := effectiveAssignment{}
+		assignmentOrder = append(assignmentOrder, envVar)
 
 		matches := placeholder.FindStringSubmatch(normalizedValue)
 		if matches != nil {
@@ -131,12 +129,18 @@ func LoadTemplateFile(path string) (*TemplateFile, error) {
 	}
 
 	keys := make([]string, 0, len(assignments))
-	for envVar := range assignments {
+	seenAssignments := make(map[string]struct{}, len(assignments))
+	for i := len(assignmentOrder) - 1; i >= 0; i-- {
+		envVar := assignmentOrder[i]
+		if _, exists := seenAssignments[envVar]; exists {
+			continue
+		}
+		seenAssignments[envVar] = struct{}{}
 		keys = append(keys, envVar)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return assignments[keys[i]].lastIndex < assignments[keys[j]].lastIndex
-	})
+	for i, j := 0, len(keys)-1; i < j; i, j = i+1, j-1 {
+		keys[i], keys[j] = keys[j], keys[i]
+	}
 	for _, envVar := range keys {
 		assignment := assignments[envVar]
 		if assignment.invalid != nil {
