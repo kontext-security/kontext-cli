@@ -29,18 +29,19 @@ const (
 )
 
 type LlamaServerOptions struct {
-	BinaryPath     string
-	ModelPath      string
-	HFRepo         string
-	HFFile         string
-	HFRevision     string
-	CacheDir       string
-	Host           string
-	Port           int
-	StartupTimeout time.Duration
-	HTTPClient     *http.Client
-	Stdout         io.Writer
-	Stderr         io.Writer
+	BinaryPath       string
+	ModelPath        string
+	HFRepo           string
+	HFFile           string
+	HFRevision       string
+	CacheDir         string
+	Host             string
+	Port             int
+	StartupTimeout   time.Duration
+	HTTPClient       *http.Client
+	Stdout           io.Writer
+	Stderr           io.Writer
+	DownloadProgress DownloadProgressHandler
 }
 
 type LlamaServer struct {
@@ -49,6 +50,26 @@ type LlamaServer struct {
 	wait    chan error
 	cmd     *exec.Cmd
 }
+
+type DownloadProgressEvent string
+
+const (
+	DownloadProgressCacheCheck DownloadProgressEvent = "cache_check"
+	DownloadProgressCacheHit   DownloadProgressEvent = "cache_hit"
+	DownloadProgressStart      DownloadProgressEvent = "download_start"
+	DownloadProgressUpdate     DownloadProgressEvent = "download_update"
+	DownloadProgressDone       DownloadProgressEvent = "download_done"
+	DownloadProgressError      DownloadProgressEvent = "download_error"
+)
+
+type DownloadProgress struct {
+	Event        DownloadProgressEvent
+	CurrentBytes int64
+	TotalBytes   int64
+	Err          error
+}
+
+type DownloadProgressHandler func(DownloadProgress)
 
 func StartLlamaServer(ctx context.Context, opts LlamaServerOptions) (*LlamaServer, error) {
 	opts = normalizeLlamaServerOptions(opts)
@@ -134,12 +155,21 @@ func ResolveLlamaServerModel(ctx context.Context, opts LlamaServerOptions) (stri
 	if err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(cachedPath); err == nil {
+	emitDownloadProgress(opts.DownloadProgress, DownloadProgress{
+		Event: DownloadProgressCacheCheck,
+	})
+	if info, err := os.Stat(cachedPath); err == nil {
+		size := info.Size()
+		emitDownloadProgress(opts.DownloadProgress, DownloadProgress{
+			Event:        DownloadProgressCacheHit,
+			CurrentBytes: size,
+			TotalBytes:   size,
+		})
 		return cachedPath, nil
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	if err := downloadHFModel(ctx, opts.HTTPClient, repo, revision, file, cachedPath); err != nil {
+	if err := downloadHFModel(ctx, opts.HTTPClient, repo, revision, file, cachedPath, opts.DownloadProgress); err != nil {
 		return "", err
 	}
 	return cachedPath, nil
@@ -282,7 +312,7 @@ func normalizeLlamaServerOptions(opts LlamaServerOptions) LlamaServerOptions {
 	return opts
 }
 
-func downloadHFModel(ctx context.Context, client *http.Client, repo, revision, file, targetPath string) error {
+func downloadHFModel(ctx context.Context, client *http.Client, repo, revision, file, targetPath string, progress DownloadProgressHandler) error {
 	if client == nil {
 		client = &http.Client{Timeout: DefaultLlamaServerDownloadTimeout}
 	}
@@ -296,26 +326,99 @@ func downloadHFModel(ctx context.Context, client *http.Client, repo, revision, f
 	req.Header.Set("User-Agent", "kontext-guard")
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("download judge model: %w", err)
+		wrapped := fmt.Errorf("download judge model: %w", err)
+		emitDownloadProgress(progress, DownloadProgress{Event: DownloadProgressError, Err: wrapped})
+		return wrapped
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("download judge model returned %s", resp.Status)
+		err := fmt.Errorf("download judge model returned %s", resp.Status)
+		emitDownloadProgress(progress, DownloadProgress{Event: DownloadProgressError, Err: err})
+		return err
 	}
+	totalBytes := resp.ContentLength
+	if totalBytes < 0 {
+		totalBytes = 0
+	}
+	emitDownloadProgress(progress, DownloadProgress{
+		Event:      DownloadProgressStart,
+		TotalBytes: totalBytes,
+	})
 	tmp, err := os.CreateTemp(filepath.Dir(targetPath), filepath.Base(targetPath)+".*.tmp")
 	if err != nil {
+		emitDownloadProgress(progress, DownloadProgress{Event: DownloadProgressError, Err: err})
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
-		_ = tmp.Close()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	reader := &progressReader{
+		reader: resp.Body,
+		onProgress: func(current int64) {
+			emitDownloadProgress(progress, DownloadProgress{
+				Event:        DownloadProgressUpdate,
+				CurrentBytes: current,
+				TotalBytes:   totalBytes,
+			})
+		},
+	}
+	written, err := io.Copy(tmp, reader)
+	if err != nil {
+		err = closeAndRemoveTemp(tmp, tmpPath, err)
+		removeTemp = false
+		emitDownloadProgress(progress, DownloadProgress{Event: DownloadProgressError, Err: err})
 		return err
 	}
 	if err := tmp.Close(); err != nil {
+		err = errors.Join(err, os.Remove(tmpPath))
+		removeTemp = false
+		emitDownloadProgress(progress, DownloadProgress{Event: DownloadProgressError, Err: err})
 		return err
 	}
-	return os.Rename(tmpPath, targetPath)
+	if err := os.Rename(tmpPath, targetPath); err != nil {
+		err = errors.Join(err, os.Remove(tmpPath))
+		removeTemp = false
+		emitDownloadProgress(progress, DownloadProgress{Event: DownloadProgressError, Err: err})
+		return err
+	}
+	removeTemp = false
+	emitDownloadProgress(progress, DownloadProgress{
+		Event:        DownloadProgressDone,
+		CurrentBytes: written,
+		TotalBytes:   written,
+	})
+	return nil
+}
+
+func closeAndRemoveTemp(tmp *os.File, path string, cause error) error {
+	return errors.Join(cause, tmp.Close(), os.Remove(path))
+}
+
+type progressReader struct {
+	reader     io.Reader
+	current    int64
+	onProgress func(int64)
+}
+
+func (r *progressReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.current += int64(n)
+		if r.onProgress != nil {
+			r.onProgress(r.current)
+		}
+	}
+	return n, err
+}
+
+func emitDownloadProgress(progress DownloadProgressHandler, event DownloadProgress) {
+	if progress != nil {
+		progress(event)
+	}
 }
 
 func hfResolveURL(repo, revision, file string) string {

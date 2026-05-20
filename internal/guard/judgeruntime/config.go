@@ -15,18 +15,19 @@ import (
 )
 
 type Config struct {
-	URL            string
-	Model          string
-	Timeout        time.Duration
-	Managed        bool
-	ServerBin      string
-	ModelPath      string
-	HFRepo         string
-	HFFile         string
-	HFRevision     string
-	CacheDir       string
-	Port           int
-	StartupTimeout time.Duration
+	URL              string
+	Model            string
+	Timeout          time.Duration
+	Managed          bool
+	ServerBin        string
+	ModelPath        string
+	HFRepo           string
+	HFFile           string
+	HFRevision       string
+	CacheDir         string
+	Port             int
+	StartupTimeout   time.Duration
+	DownloadProgress judge.DownloadProgressHandler
 }
 
 func ConfigFromEnv(dbPath string, managedDefault bool) (Config, error) {
@@ -114,15 +115,16 @@ func configureManaged(ctx context.Context, cfg Config) (judge.Judge, func(), str
 		return nil, closeFn, "", err
 	}
 	server, err := judge.StartLlamaServer(ctx, judge.LlamaServerOptions{
-		BinaryPath:     cfg.ServerBin,
-		ModelPath:      modelPath,
-		HFRepo:         hfRepo,
-		HFFile:         hfFile,
-		HFRevision:     cfg.HFRevision,
-		CacheDir:       cfg.CacheDir,
-		Host:           host,
-		Port:           port,
-		StartupTimeout: cfg.StartupTimeout,
+		BinaryPath:       cfg.ServerBin,
+		ModelPath:        modelPath,
+		HFRepo:           hfRepo,
+		HFFile:           hfFile,
+		HFRevision:       cfg.HFRevision,
+		CacheDir:         cfg.CacheDir,
+		Host:             host,
+		Port:             port,
+		StartupTimeout:   cfg.StartupTimeout,
+		DownloadProgress: cfg.DownloadProgress,
 	})
 	if err != nil {
 		unavailable := judge.UnavailableJudge{
