@@ -37,7 +37,7 @@ export function Inspector({ event }: { event: Event }) {
         <SheetTitle className={cn("shrink-0 text-[13px] font-medium", tone.text)}>
           {decisionLabel(event.decision)}
         </SheetTitle>
-        <span className="ml-2 min-w-0 break-words font-mono text-[10.5px] uppercase tracking-[0.2em] text-muted-foreground [overflow-wrap:anywhere]">
+        <span className="ml-2 min-w-0 break-words font-mono text-[12px] text-muted-foreground [overflow-wrap:anywhere]">
           {prettyTool(event.tool_name)}
         </span>
       </SheetHeader>
@@ -156,8 +156,8 @@ export function Inspector({ event }: { event: Event }) {
           )}
 
           {event.reason_code && (
-            <div className="border-t pt-4 font-mono text-[10.5px] uppercase tracking-[0.2em] text-muted-foreground">
-              decision code · <span className="text-foreground/70">{event.reason_code}</span>
+            <div className="border-t pt-4 text-[11.5px] text-muted-foreground">
+              Decision code · <span className="font-mono text-foreground/70">{event.reason_code}</span>
             </div>
           )}
         </div>
@@ -184,7 +184,7 @@ function formatDurationMs(value?: number): string {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0 max-w-full space-y-2.5 overflow-x-hidden">
-      <h3 className="font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+      <h3 className="text-[11.5px] font-medium text-muted-foreground">
         {title}
       </h3>
       {children}

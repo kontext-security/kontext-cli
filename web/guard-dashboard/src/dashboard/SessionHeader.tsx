@@ -29,7 +29,7 @@ export function SessionHeader({
 
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className="cursor-default text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+          <span className="cursor-default text-[11.5px] text-muted-foreground">
             Observe mode
           </span>
         </TooltipTrigger>

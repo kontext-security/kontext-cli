@@ -1,4 +1,12 @@
-import type { Decision, Event, EventBuckets, EventGroups, Session } from "./types";
+import type {
+  Decision,
+  Event,
+  EventBuckets,
+  EventGroups,
+  EventPartitions,
+  ObservedActivityEvent,
+  Session,
+} from "./types";
 
 const DETERMINISTIC_REASON_CODES = new Set([
   "production_mutation",
@@ -14,7 +22,7 @@ const DETERMINISTIC_STAGES = new Set(["deterministic_deny", "deterministic_allow
 
 export function bucket(events: Event[]): EventBuckets {
   const groups: EventGroups = { deny: [], allow: [] };
-  for (const e of events) groups[e.decision]?.push(e);
+  for (const e of events) groups[e.decision].push(e);
   return {
     counts: {
       all: events.length,
@@ -23,6 +31,23 @@ export function bucket(events: Event[]): EventBuckets {
     },
     groups,
   };
+}
+
+export function isObservedActivity(e: Event): e is ObservedActivityEvent {
+  return e.reason_code === "async_telemetry" || e.risk_event?.decision_stage === "async_telemetry";
+}
+
+export function partitionEvents(events: Event[]): EventPartitions {
+  const decisionEvents: Event[] = [];
+  const observedActivityEvents: ObservedActivityEvent[] = [];
+  for (const event of events) {
+    if (isObservedActivity(event)) {
+      observedActivityEvents.push(event);
+    } else {
+      decisionEvents.push(event);
+    }
+  }
+  return { decisionEvents, observedActivityEvents };
 }
 
 export function summaryOf(e: Event, fallback = "—"): string {
@@ -67,7 +92,7 @@ export function humanReason(e: Event): string {
 export function technicalExplanation(e: Event): string {
   const r = e.risk_event ?? {};
   if (e.reason_code === "async_telemetry") {
-    return "Not a live gate. Recorded after execution for local session history.";
+    return "Not a live gate. Recorded after execution for session context.";
   }
   if (r.decision_stage === "judge_allow") {
     return "Deterministic policy allowed this action, then the local judge allowed it.";
@@ -92,7 +117,7 @@ export function technicalExplanation(e: Event): string {
 export function decisionSource(e: Event): string {
   const stage = e.risk_event?.decision_stage;
   if (stage && JUDGE_STAGES.has(stage)) return "Local LLM judge";
-  if (e.reason_code === "async_telemetry") return "Trace history";
+  if (isObservedActivity(e)) return "Observed";
   if (isDeterministicGuard(e)) return "Deterministic policy";
   return "Guard policy";
 }
@@ -124,7 +149,7 @@ export function dateTime(value?: string): string {
   }).format(ts);
 }
 
-export function decisionLabel(decision: Event["decision"]): string {
+export function decisionLabel(decision: Decision): string {
   if (decision === "deny") return "Would deny";
   return "Allow";
 }

@@ -21,7 +21,7 @@ export function PolicyPanel({
   onActivate: (id: PolicyProfileID) => void;
   onRetry: () => void;
 }) {
-  const active = profile?.profile ?? "balanced";
+  const active = profile?.profile ?? null;
   const isLoading = !profile && !error;
 
   return (
@@ -30,8 +30,8 @@ export function PolicyPanel({
         <div className="flex items-baseline gap-3">
           <h2 className="text-[15px] font-semibold tracking-tight">Policy profile</h2>
           {profile && (
-            <span className="font-mono text-[11px] text-muted-foreground">
-              {profileLabel(profile.profile)} profile
+            <span className="text-[12.5px] text-muted-foreground">
+              {profileLabel(profile.profile)} profile active.
             </span>
           )}
         </div>
@@ -41,16 +41,22 @@ export function PolicyPanel({
       <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
         {isLoading
           ? POLICY_PROFILES.map((p) => <PolicyCardSkeleton key={p.id} />)
-          : POLICY_PROFILES.map((p) => (
-              <PolicyCard
-                key={p.id}
-                profile={p}
-                active={p.id === active}
-                pending={p.id === pending}
-                disabled={!profile || !!pending}
-                onActivate={() => onActivate(p.id)}
-              />
-            ))}
+          : POLICY_PROFILES.map((p) => {
+              const isActive = active === p.id;
+              return (
+                <PolicyCard
+                  key={p.id}
+                  profile={p}
+                  active={isActive}
+                  pending={p.id === pending}
+                  disabled={!profile || !!pending}
+                  label={
+                    isActive ? "Active profile" : profile ? "Tap to activate" : "Unavailable"
+                  }
+                  onActivate={() => onActivate(p.id)}
+                />
+              );
+            })}
       </div>
 
       {error && (
@@ -62,7 +68,7 @@ export function PolicyPanel({
           <button
             type="button"
             onClick={onRetry}
-            className="shrink-0 font-mono text-[10.5px] uppercase tracking-[0.18em] text-destructive underline-offset-4 hover:underline"
+            className="shrink-0 text-[11.5px] font-medium text-destructive underline-offset-4 hover:underline"
           >
             Retry
           </button>
@@ -78,7 +84,7 @@ function PolicyVersionChip({ profile }: { profile: PolicyProfile }) {
       <HoverCardTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground transition-colors hover:text-foreground"
+          className="inline-flex items-center gap-1.5 font-mono text-[11.5px] text-muted-foreground transition-colors hover:text-foreground"
         >
           <Info className="h-3 w-3" />
           {profile.version}
@@ -110,12 +116,14 @@ function PolicyCard({
   active,
   pending,
   disabled,
+  label,
   onActivate,
 }: {
   profile: PolicyProfileDef;
   active: boolean;
   pending: boolean;
   disabled: boolean;
+  label: string;
   onActivate: () => void;
 }) {
   const steps = STEP_DOTS[profile.id];
@@ -152,14 +160,14 @@ function PolicyCard({
         </span>
       )}
 
-      <div className="flex items-center justify-between px-5 pt-4">
+      <div className="flex h-4 items-center justify-between px-5 pt-4 box-content">
         <StepDots filled={steps} active={active} />
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 leading-none">
           {profile.recommended && !pending && (
             <span
               className={cn(
-                "font-mono text-[9.5px] font-medium uppercase tracking-[0.18em]",
-                active ? "text-white/70" : "text-muted-foreground",
+                "text-[11px] font-medium",
+                active ? "text-white/75" : "text-muted-foreground",
               )}
             >
               Recommended
@@ -168,8 +176,8 @@ function PolicyCard({
           {pending && (
             <span
               className={cn(
-                "inline-flex items-center gap-1 font-mono text-[9.5px] uppercase tracking-[0.18em]",
-                active ? "text-white/70" : "text-muted-foreground",
+                "inline-flex items-center gap-1 text-[11px]",
+                active ? "text-white/75" : "text-muted-foreground",
               )}
             >
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -203,11 +211,11 @@ function PolicyCard({
 
       <div
         className={cn(
-          "mt-3 border-t px-5 py-2.5 font-mono text-[10px] uppercase tracking-[0.22em]",
+          "mt-3 border-t px-5 py-2.5 text-[11.5px] font-medium",
           active ? "border-white/15 text-white" : "border-border text-muted-foreground/70",
         )}
       >
-        {active ? "Active profile" : "Tap to activate"}
+        {label}
       </div>
     </button>
   );

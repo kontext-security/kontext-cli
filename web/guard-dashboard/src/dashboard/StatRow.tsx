@@ -1,18 +1,10 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { decisionTone } from "./helpers";
+import { decisionLabel, decisionTone } from "./helpers";
 import type { Counts, Decision, Tab } from "./types";
 
-const DECISION_TILES: { id: Decision; label: string }[] = [
-  { id: "deny", label: "Would deny" },
-  { id: "allow", label: "Allowed" },
-];
-
-const RATIO_KINDS: { kind: Decision; label: string }[] = [
-  { kind: "deny", label: "Would deny" },
-  { kind: "allow", label: "Allow" },
-];
+const DECISION_KINDS: Decision[] = ["deny", "allow"];
 
 export function StatRow({
   counts,
@@ -34,16 +26,16 @@ export function StatRow({
         onClick={() => onSelect("all")}
       />
       <div className="grid divide-y md:grid-cols-2 md:divide-x md:divide-y-0">
-        {DECISION_TILES.map((t) => (
+        {DECISION_KINDS.map((id) => (
           <StatTile
-            key={t.id}
-            id={t.id}
-            label={t.label}
-            count={counts[t.id]}
+            key={id}
+            id={id}
+            label={decisionLabel(id)}
+            count={counts[id]}
             total={counts.all}
-            active={active === t.id}
+            active={active === id}
             loading={loading}
-            onClick={() => onSelect(t.id)}
+            onClick={() => onSelect(id)}
           />
         ))}
       </div>
@@ -142,14 +134,14 @@ function StatTile({
       <div className="flex flex-col leading-tight">
         <span
           className={cn(
-            "font-mono text-[10px] font-medium uppercase tracking-[0.22em]",
+            "text-[12px] font-medium",
             active ? "text-foreground" : "text-muted-foreground",
           )}
         >
           {label}
         </span>
         <span className="mt-1 text-[11px] text-muted-foreground/70">
-          {pct}% of session
+          {pct}% of decisions
         </span>
       </div>
     </button>
@@ -157,10 +149,10 @@ function StatTile({
 }
 
 function RatioStrip({ counts }: { counts: Counts }) {
-  const segments = RATIO_KINDS.map((k) => ({
-    count: counts[k.kind],
-    color: decisionTone[k.kind].bg,
-    label: k.label,
+  const segments = DECISION_KINDS.map((kind) => ({
+    count: counts[kind],
+    color: decisionTone[kind].bg,
+    label: decisionLabel(kind),
   })).filter((s) => s.count > 0);
 
   return (
@@ -186,9 +178,9 @@ function RatioStrip({ counts }: { counts: Counts }) {
             ))
           )}
         </div>
-        <div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+        <div className="flex items-center gap-3 text-[11.5px] text-muted-foreground">
           {segments.length === 0 ? (
-            <span>No activity yet</span>
+            <span>No decisions yet</span>
           ) : (
             segments.map((s) => (
               <span key={s.label} className="inline-flex items-center gap-1.5">

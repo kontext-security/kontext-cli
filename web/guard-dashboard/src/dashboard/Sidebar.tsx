@@ -1,15 +1,15 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import type { Counts, Session } from "./types";
+import type { Session } from "./types";
 
 export function Sidebar({
   sessions,
-  counts,
+  currentCount,
   selectedID,
   onSelect,
 }: {
   sessions: Session[];
-  counts: Counts;
+  currentCount: number;
   selectedID: string;
   onSelect: (id: string) => void;
 }) {
@@ -20,11 +20,11 @@ export function Sidebar({
       </div>
 
       <ScrollArea className="flex-1 px-2">
-        <NavItem label="This session" count={counts.all} active />
+        <NavItem label="This session" count={currentCount} active />
 
         {sessions.length > 1 && (
           <>
-            <div className="px-2.5 pb-1.5 pt-6 text-[10.5px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            <div className="px-2.5 pb-1.5 pt-6 text-[11.5px] font-medium text-muted-foreground">
               Recent
             </div>
             <div className="flex flex-col gap-0.5">

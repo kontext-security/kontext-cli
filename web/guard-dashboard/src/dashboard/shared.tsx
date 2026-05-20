@@ -24,9 +24,11 @@ export function Block({
     <section className="mt-8 first:mt-0">
       {(label || description) && (
         <div className="mb-3.5 flex items-baseline gap-3">
-          {label && <h2 className="text-[15px] font-semibold tracking-tight">{label}</h2>}
+          {label && (
+            <h2 className="text-[15px] font-semibold tracking-tight">{label}</h2>
+          )}
           {description && (
-            <p className="text-[12.5px] text-muted-foreground">{description}</p>
+            <span className="text-[12.5px] text-muted-foreground">{description}</span>
           )}
         </div>
       )}
@@ -46,7 +48,7 @@ export function Kv({ k, v }: { k: string; v: string }) {
 
 export function Dt({ children }: { children: React.ReactNode }) {
   return (
-    <dt className="self-center break-words text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground [overflow-wrap:anywhere]">
+    <dt className="self-center break-words text-[12px] text-muted-foreground [overflow-wrap:anywhere]">
       {children}
     </dt>
   );
