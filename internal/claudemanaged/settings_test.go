@@ -45,6 +45,13 @@ func TestTemplateIncludesManagedKontextHooks(t *testing.T) {
 		if handler.Timeout != DefaultHookTimeout {
 			t.Fatalf("%s timeout = %d, want %d", event.Name, handler.Timeout, DefaultHookTimeout)
 		}
+		if event.Async {
+			if handler.Async == nil || !*handler.Async {
+				t.Fatalf("%s async = %v, want true", event.Name, handler.Async)
+			}
+		} else if handler.Async != nil {
+			t.Fatalf("%s async = %v, want omitted", event.Name, *handler.Async)
+		}
 	}
 }
 
@@ -65,6 +72,47 @@ func TestTemplateJSONUsesExecForm(t *testing.T) {
 	}
 	if err := Validate(data, "/usr/local/bin/kontext"); err != nil {
 		t.Fatalf("Validate(template) error = %v", err)
+	}
+}
+
+func TestTemplateJSONOnlyMarksLifecycleHooksAsync(t *testing.T) {
+	t.Parallel()
+
+	data, err := TemplateJSON("/usr/local/bin/kontext")
+	if err != nil {
+		t.Fatalf("TemplateJSON() error = %v", err)
+	}
+
+	var raw struct {
+		Hooks map[string][]struct {
+			Hooks []map[string]any `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	for _, event := range SupportedEvents {
+		groups, ok := raw.Hooks[event.Name.String()]
+		if !ok {
+			t.Fatalf("%s hook missing", event.Name)
+		}
+		if len(groups) != 1 {
+			t.Fatalf("%s groups = %d, want 1", event.Name, len(groups))
+		}
+		handlers := groups[0].Hooks
+		if len(handlers) != 1 {
+			t.Fatalf("%s handlers = %d, want 1", event.Name, len(handlers))
+		}
+		async, hasAsync := handlers[0]["async"]
+		if event.Async {
+			asyncBool, ok := async.(bool)
+			if !hasAsync || !ok || !asyncBool {
+				t.Fatalf("%s async = %v, want boolean true", event.Name, async)
+			}
+		} else if hasAsync {
+			t.Fatalf("%s async emitted, want omitted", event.Name)
+		}
 	}
 }
 
@@ -162,6 +210,32 @@ func TestValidateRejectsInvalidManagedSettings(t *testing.T) {
 				return settings
 			},
 			wantErr: "PreToolUse Kontext handler args missing",
+		},
+		{
+			name: "missing lifecycle async",
+			mutate: func(settings Settings) Settings {
+				settings.Hooks["SessionStart"][0].Hooks[0].Async = nil
+				return settings
+			},
+			wantErr: "SessionStart Kontext handler async must be true",
+		},
+		{
+			name: "false lifecycle async",
+			mutate: func(settings Settings) Settings {
+				value := false
+				settings.Hooks["SessionEnd"][0].Hooks[0].Async = &value
+				return settings
+			},
+			wantErr: "SessionEnd Kontext handler async must be true",
+		},
+		{
+			name: "async decision hook",
+			mutate: func(settings Settings) Settings {
+				value := true
+				settings.Hooks["PreToolUse"][0].Hooks[0].Async = &value
+				return settings
+			},
+			wantErr: "PreToolUse Kontext handler async must be omitted",
 		},
 		{
 			name: "restrictive matcher",
