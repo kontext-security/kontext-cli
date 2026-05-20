@@ -6,7 +6,7 @@ import type { Counts, Decision, Tab } from "./types";
 
 const DECISION_TILES: { id: Decision; label: string }[] = [
   { id: "deny", label: "Would deny" },
-  { id: "allow", label: "Allowed" },
+  { id: "allow", label: "Allow" },
 ];
 
 const RATIO_KINDS: { kind: Decision; label: string }[] = [

@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ActionList } from "@/dashboard/ActionList";
 import { activatePolicy, errorMessage, fetchEvents, fetchPolicy, fetchSessions } from "@/dashboard/api";
 import { API, USE_SAMPLE_DATA } from "@/dashboard/config";
-import { bucket, sameSessions } from "@/dashboard/helpers";
+import { bucket, isObservedActivity, sameSessions } from "@/dashboard/helpers";
 import { Inspector } from "@/dashboard/Inspector";
 import { PolicyPanel } from "@/dashboard/PolicyPanel";
 import {
@@ -21,11 +21,14 @@ import { StatRow } from "@/dashboard/StatRow";
 import { Block } from "@/dashboard/shared";
 import type { Event, PolicyProfile, PolicyProfileID, Session, Tab } from "@/dashboard/types";
 
+type LogView = "decisions" | "observed";
+
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selectedSessionID, setSelectedSessionID] = useState("");
   const [events, setEvents] = useState<Event[]>([]);
   const [tab, setTab] = useState<Tab>("all");
+  const [logView, setLogView] = useState<LogView>("decisions");
   const [openId, setOpenId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [policy, setPolicy] = useState<PolicyProfile | null>(null);
@@ -144,7 +147,14 @@ export default function App() {
       .finally(() => setPolicyPending(null));
   }
 
-  const { counts, groups } = useMemo(() => bucket(events), [events]);
+  const { decisionEvents, observedActivityEvents } = useMemo(
+    () => ({
+      decisionEvents: events.filter((event) => !isObservedActivity(event)),
+      observedActivityEvents: events.filter(isObservedActivity),
+    }),
+    [events],
+  );
+  const { counts, groups } = useMemo(() => bucket(decisionEvents), [decisionEvents]);
   const opened = useMemo(
     () => (openId ? events.find((e) => e.id === openId) ?? null : null),
     [openId, events],
@@ -165,14 +175,14 @@ export default function App() {
           onSelect={selectSession}
         />
 
-        <main className="flex min-h-0 flex-col overflow-hidden">
+        <main className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           <SessionHeader
             session={selectedSession}
             loading={loading}
           />
 
-          <ScrollArea className="flex-1">
-            <div className="px-10 pb-10 pt-8">
+          <ScrollArea className="min-w-0 flex-1">
+            <div className="min-w-0 px-10 pb-10 pt-8">
               <PolicyPanel
                 profile={policy}
                 pending={policyPending}
@@ -181,7 +191,11 @@ export default function App() {
                 onRetry={loadPolicy}
               />
 
-              <Block label="Activity" description="What was decided this session.">
+              <Block
+                label="Decision Summary"
+                description="What Guard decided this session."
+                help="Counts only pre-tool Guard decisions for this session."
+              >
                 <StatRow counts={counts} active={tab} onSelect={setTab} loading={loading} />
               </Block>
 
@@ -192,13 +206,19 @@ export default function App() {
                 </div>
               )}
 
-              <Block label="Log" description="Tool calls in chronological order.">
+              <Block
+                label="Session Log"
+                description="Pre-tool decisions and post-execution observations."
+                help="Decision Log shows pre-tool Guard authorization decisions. Observed Activity shows post-execution tool activity recorded for context, not enforcement."
+              >
                 <ActionList
                   tab={tab}
-                  groups={groups}
+                  view={logView}
+                  decisionGroups={groups}
+                  observedEvents={observedActivityEvents}
                   openId={openId}
                   onOpen={setOpenId}
-                  hasAny={events.length > 0}
+                  onViewChange={setLogView}
                 />
               </Block>
             </div>

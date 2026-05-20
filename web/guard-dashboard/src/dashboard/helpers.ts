@@ -25,6 +25,10 @@ export function bucket(events: Event[]): EventBuckets {
   };
 }
 
+export function isObservedActivity(e: Event): boolean {
+  return e.reason_code === "async_telemetry" || e.risk_event?.decision_stage === "async_telemetry";
+}
+
 export function summaryOf(e: Event, fallback = "—"): string {
   const r = e.risk_event ?? {};
   return r.command_summary || r.request_summary || r.path_class || r.type || fallback;
@@ -67,7 +71,7 @@ export function humanReason(e: Event): string {
 export function technicalExplanation(e: Event): string {
   const r = e.risk_event ?? {};
   if (e.reason_code === "async_telemetry") {
-    return "Not a live gate. Recorded after execution for local session history.";
+    return "Not a live gate. Recorded after execution for session context.";
   }
   if (r.decision_stage === "judge_allow") {
     return "Deterministic policy allowed this action, then the local judge allowed it.";
@@ -92,7 +96,7 @@ export function technicalExplanation(e: Event): string {
 export function decisionSource(e: Event): string {
   const stage = e.risk_event?.decision_stage;
   if (stage && JUDGE_STAGES.has(stage)) return "Local LLM judge";
-  if (e.reason_code === "async_telemetry") return "Trace history";
+  if (isObservedActivity(e)) return "Observed";
   if (isDeterministicGuard(e)) return "Deterministic policy";
   return "Guard policy";
 }
