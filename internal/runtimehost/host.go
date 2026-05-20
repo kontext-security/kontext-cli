@@ -70,6 +70,14 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	sessionID := strings.TrimSpace(opts.SessionID)
+	if sessionID == "" {
+		sessionID = NewSessionID()
+	}
+	if err := validateSessionID(sessionID); err != nil {
+		return nil, err
+	}
+
 	dbPath := strings.TrimSpace(opts.DBPath)
 	usingDefaultDBPath := false
 	if dbPath == "" {
@@ -95,7 +103,8 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		}
 	}
 	localServer, closeStore, err := server.OpenDefaultServerWithOptions(dbPath, server.Options{
-		Judge: localJudge,
+		Judge:            localJudge,
+		CurrentSessionID: sessionID,
 	})
 	if err != nil {
 		closeJudge()
@@ -107,15 +116,6 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		return nil, fmt.Errorf("secure runtime database: %w", err)
 	}
 
-	sessionID := strings.TrimSpace(opts.SessionID)
-	if sessionID == "" {
-		sessionID = NewSessionID()
-	}
-	if err := validateSessionID(sessionID); err != nil {
-		_ = closeStore()
-		closeJudge()
-		return nil, err
-	}
 	sessionDir := filepath.Join("/tmp", "kontext", sessionID)
 	if err := createSessionDir(sessionDir); err != nil {
 		_ = closeStore()

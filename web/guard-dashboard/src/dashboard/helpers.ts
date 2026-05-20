@@ -63,7 +63,13 @@ export function sameSessions(a: Session[], b: Session[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i].session_id !== b[i].session_id || a[i].actions !== b[i].actions) return false;
+    if (
+      a[i].session_id !== b[i].session_id ||
+      a[i].actions !== b[i].actions ||
+      a[i].current !== b[i].current
+    ) {
+      return false;
+    }
   }
   return true;
 }

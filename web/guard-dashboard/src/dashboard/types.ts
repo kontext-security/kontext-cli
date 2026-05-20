@@ -61,6 +61,7 @@ export type ObservedActivityEvent = Event &
 export type Session = {
   session_id: string;
   actions: number;
+  current?: boolean;
 };
 
 export type PolicyProfile = {

@@ -122,6 +122,7 @@ function parseSession(value: unknown): Session | undefined {
   return {
     session_id: value.session_id,
     actions: value.actions,
+    current: value.current === true,
   };
 }
 
