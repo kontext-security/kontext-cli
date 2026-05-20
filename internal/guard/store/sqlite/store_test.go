@@ -989,6 +989,68 @@ func TestEnsureObservedSessionPreservesExistingLifecycle(t *testing.T) {
 	}
 }
 
+func TestEnsureObservedSessionReopensClosedDaemonObservedSession(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if _, err := store.OpenSession(context.Background(), "session-123", "claude", "/tmp/project", "daemon_observed", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CloseSession(context.Background(), "session-123"); err != nil {
+		t.Fatal(err)
+	}
+
+	observed, err := store.EnsureObservedSession(context.Background(), "session-123", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observed.Source != "daemon_observed" || observed.Status != "open" || observed.ClosedAt != nil {
+		t.Fatalf("observed session = %+v, want reopened daemon-observed session", observed)
+	}
+}
+
+func TestCloseStaleDaemonObservedSessionsOnlyClosesDaemonObserved(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if _, err := store.OpenSession(context.Background(), "daemon-old", "claude", "/tmp/project", "daemon_observed", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.OpenSession(context.Background(), "wrapper-old", "claude", "/tmp/project", "wrapper_owned", "backend-123"); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(context.Background(), `
+update agent_sessions set updated_at = ? where id in ('daemon-old', 'wrapper-old')
+	`, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.CloseStaleDaemonObservedSessions(context.Background(), time.Now().UTC().Add(-30*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	daemon, err := store.Session(context.Background(), "daemon-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper, err := store.Session(context.Background(), "wrapper-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if daemon.Status != "closed" || daemon.ClosedAt == nil {
+		t.Fatalf("daemon session = %+v, want closed", daemon)
+	}
+	if wrapper.Status != "open" || wrapper.ClosedAt != nil {
+		t.Fatalf("wrapper session = %+v, want still open", wrapper)
+	}
+}
+
 func TestSessionsRejectsInvalidStoredTimestamp(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {

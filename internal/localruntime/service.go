@@ -3,6 +3,7 @@ package localruntime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"sync"
@@ -60,7 +61,9 @@ func NewService(opts Options) (*Service, error) {
 func (s *Service) SocketPath() string { return s.socketPath }
 
 func (s *Service) Start(ctx context.Context) error {
-	os.Remove(s.socketPath)
+	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove stale local runtime socket: %w", err)
+	}
 	ln, err := net.Listen("unix", s.socketPath)
 	if err != nil {
 		return err
@@ -81,10 +84,15 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	var shutdownErr error
 	if s.listener != nil {
-		_ = s.listener.Close()
+		if err := s.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			shutdownErr = errors.Join(shutdownErr, err)
+		}
 	}
-	_ = os.Remove(s.socketPath)
+	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		shutdownErr = errors.Join(shutdownErr, fmt.Errorf("remove local runtime socket: %w", err))
+	}
 
 	if s.serveDone != nil {
 		select {
@@ -93,7 +101,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 			if s.cancel != nil {
 				s.cancel()
 			}
-			return ctx.Err()
+			return errors.Join(shutdownErr, ctx.Err())
 		}
 	}
 
@@ -107,12 +115,12 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		if s.cancel != nil {
 			s.cancel()
 		}
-		return nil
+		return shutdownErr
 	case <-ctx.Done():
 		if s.cancel != nil {
 			s.cancel()
 		}
-		return ctx.Err()
+		return errors.Join(shutdownErr, ctx.Err())
 	}
 }
 
@@ -176,7 +184,9 @@ func (s *Service) ingestEvent(ctx context.Context, req *EvaluateRequest) {
 	}
 	if _, err := s.core.IngestEvent(ctx, event); err != nil {
 		s.diagnostic.Printf("local runtime ingest: %v\n", err)
+		return
 	}
+	s.closeSessionEnd(ctx, event)
 }
 
 func (s *Service) process(ctx context.Context, req *EvaluateRequest) EvaluateResult {
@@ -196,7 +206,17 @@ func (s *Service) process(ctx context.Context, req *EvaluateRequest) EvaluateRes
 		}
 		return EvaluateResultFromResult(processFailureResult(event))
 	}
+	s.closeSessionEnd(ctx, event)
 	return EvaluateResultFromResult(result)
+}
+
+func (s *Service) closeSessionEnd(ctx context.Context, event hook.Event) {
+	if event.HookName != hook.HookSessionEnd {
+		return
+	}
+	if err := s.core.CloseSession(ctx, event.SessionID); err != nil {
+		s.diagnostic.Printf("local runtime session close: %v\n", err)
+	}
 }
 
 func decodeFailureResult(req *EvaluateRequest) hook.Result {
