@@ -2,6 +2,8 @@ export type Decision = "allow" | "deny";
 
 export type Tab = "all" | "deny" | "allow";
 
+export type LogView = "decisions" | "observed";
+
 export type PolicyProfileID = "relaxed" | "balanced" | "strict";
 
 export type RiskEvent = {
@@ -50,6 +52,12 @@ export type Event = {
   risk_event?: RiskEvent;
 };
 
+export type ObservedActivityEvent = Event &
+  (
+    | { reason_code: "async_telemetry" }
+    | { risk_event: RiskEvent & { decision_stage: "async_telemetry" } }
+  );
+
 export type Session = {
   session_id: string;
   actions: number;
@@ -83,6 +91,11 @@ export type Counts = {
 };
 
 export type EventGroups = Record<Decision, Event[]>;
+
+export type EventPartitions = {
+  decisionEvents: Event[];
+  observedActivityEvents: ObservedActivityEvent[];
+};
 
 export type EventBuckets = {
   counts: Counts;

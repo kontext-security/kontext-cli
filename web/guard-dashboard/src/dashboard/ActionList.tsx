@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, Shield } from "lucide-react";
+import { ChevronDown, Shield, X } from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -7,67 +7,94 @@ import {
 } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { decisionSource, decisionTone, prettyTool, summaryOf } from "./helpers";
+import { decisionLabel, decisionSource, decisionTone, prettyTool, summaryOf } from "./helpers";
 import { DecisionDot } from "./shared";
-import type { Decision, Event, EventGroups, Tab } from "./types";
+import type { Decision, Event, EventGroups, LogView, ObservedActivityEvent, Tab } from "./types";
 
-const TITLES: Record<Tab, string> = {
-  all: "All actions",
-  deny: "Denied · this session",
-  allow: "Allowed · this session",
-};
-
-const GROUP_LABELS: Record<Decision, string> = {
-  deny: "Would deny",
-  allow: "Allow",
-};
-
-const VISIBLE_KINDS: Record<Tab, Decision[]> = {
+const VISIBLE_KINDS = {
   all: ["deny", "allow"],
   deny: ["deny"],
   allow: ["allow"],
-};
+} satisfies Record<Tab, readonly Decision[]>;
 
 export function ActionList({
   tab,
-  groups,
+  view,
+  decisionGroups,
+  observedEvents,
   openId,
   onOpen,
-  hasAny,
+  onViewChange,
+  onClearFilter,
 }: {
   tab: Tab;
-  groups: EventGroups;
+  view: LogView;
+  decisionGroups: EventGroups;
+  observedEvents: ObservedActivityEvent[];
   openId: string | null;
   onOpen: (id: string) => void;
-  hasAny: boolean;
+  onViewChange: (view: LogView) => void;
+  onClearFilter: () => void;
 }) {
+  const visibleDecisionGroups = VISIBLE_KINDS[tab]
+    .map((kind) => ({ kind, items: decisionGroups[kind] }))
+    .filter(({ items }) => items.length > 0);
+  const decisionCount = decisionGroups.allow.length + decisionGroups.deny.length;
+  const filterLabel = view === "decisions" && tab !== "all" ? decisionLabel(tab) : null;
+
   return (
-    <section className="overflow-hidden rounded-xl border bg-card shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.04)]">
-      <div className="flex items-center justify-between gap-3 border-b px-5 py-3">
-        <div className="flex items-baseline gap-2.5">
-          <h3 className="font-mono text-[10.5px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
-            {TITLES[tab]}
-          </h3>
-          {tab !== "all" && (
-            <span className="text-[11px] text-muted-foreground/80">
-              Click <span className="text-foreground">Total</span> to clear
-            </span>
-          )}
+    <section className="min-w-0 overflow-hidden rounded-xl border bg-card shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.04)]">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b px-5 py-3">
+        <div className="inline-flex shrink-0 items-center rounded-lg bg-muted p-1">
+          <LogTab
+            active={view === "decisions"}
+            label="Decision Log"
+            count={decisionCount}
+            onClick={() => onViewChange("decisions")}
+          />
+          <LogTab
+            active={view === "observed"}
+            label="Observed Activity"
+            count={observedEvents.length}
+            onClick={() => onViewChange("observed")}
+          />
         </div>
+
+        {filterLabel && (
+          <button
+            type="button"
+            onClick={onClearFilter}
+            className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-background px-2.5 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <span>Filtered: <span className="text-foreground">{filterLabel}</span></span>
+            <X className="h-3 w-3" />
+          </button>
+        )}
       </div>
 
-      {!hasAny ? (
-        <Empty />
-      ) : (
-        <div>
-          {VISIBLE_KINDS[tab]
-            .map((kind) => ({ kind, items: groups[kind] }))
-            .filter(({ items }) => items.length > 0)
-            .map(({ kind, items }, index) => (
+      <div className="grid">
+        <div
+          className={cn(
+            "col-start-1 row-start-1 min-w-0",
+            view !== "decisions" && "hidden",
+          )}
+          aria-hidden={view !== "decisions"}
+        >
+          {decisionCount === 0 ? (
+            <Empty
+              title="No decisions captured yet."
+              description="Pre-tool Guard decisions will appear here."
+            />
+          ) : visibleDecisionGroups.length === 0 ? (
+            <Empty
+              title={`No ${filterLabel?.toLowerCase() ?? "matching"} decisions.`}
+              description="Clear the filter to show all decisions."
+            />
+          ) : (
+            visibleDecisionGroups.map(({ kind, items }, index) => (
               <Group
                 key={kind}
-                label={GROUP_LABELS[kind]}
-                kind={kind}
+                label={decisionLabel(kind)}
                 count={items.length}
                 separated={index > 0}
               >
@@ -75,36 +102,95 @@ export function ActionList({
                   <Row key={e.id} event={e} active={openId === e.id} onClick={() => onOpen(e.id)} />
                 ))}
               </Group>
-            ))}
+            ))
+          )}
         </div>
-      )}
+        <div
+          className={cn(
+            "col-start-1 row-start-1 min-w-0",
+            view !== "observed" && "hidden",
+          )}
+          aria-hidden={view !== "observed"}
+        >
+          {observedEvents.length === 0 ? (
+            <Empty
+              title="No observed activity yet."
+              description="Post-execution tool activity will appear here."
+            />
+          ) : (
+            <Group label="Observed Activity" count={observedEvents.length}>
+              {observedEvents.map((e) => (
+                <Row key={e.id} event={e} active={openId === e.id} onClick={() => onOpen(e.id)} />
+              ))}
+            </Group>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
 
-function Empty() {
+function LogTab({
+  active,
+  label,
+  count,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  count: number;
+  onClick: () => void;
+}) {
   return (
-    <div className="flex flex-col items-center gap-2 px-8 py-16 text-center text-muted-foreground">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-medium transition-colors",
+        active
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      <span>{label}</span>
+      <span
+        className={cn(
+          "tabular-nums text-[11px] font-normal",
+          active ? "text-muted-foreground" : "text-muted-foreground/60",
+        )}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function Empty({
+  title = "No decisions captured yet.",
+  description = "Start Claude Code to populate this view.",
+}: {
+  title?: string;
+  description?: string;
+}) {
+  return (
+    <div className="flex min-h-[320px] flex-col items-center justify-center gap-2 px-8 py-16 text-center text-muted-foreground">
       <Shield className="h-5 w-5 text-muted-foreground/50" />
-      <p className="text-[13px]">No actions captured yet.</p>
-      <p className="text-[12px] text-muted-foreground/70">
-        Start Claude Code to populate this view.
-      </p>
+      <p className="text-[13px]">{title}</p>
+      <p className="text-[12px] text-muted-foreground/70">{description}</p>
     </div>
   );
 }
 
 function Group({
   label,
-  kind,
   count,
-  separated,
+  separated = false,
   children,
 }: {
   label: string;
-  kind: Decision;
   count: number;
-  separated: boolean;
+  separated?: boolean;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(true);
@@ -112,14 +198,13 @@ function Group({
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger
         className={cn(
-          "flex w-full items-center gap-2 border-b bg-muted/40 px-5 py-2 text-left text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted/40",
+          "flex w-full items-center gap-2 border-b bg-muted/40 px-5 py-2.5 text-left text-[13px] font-medium text-muted-foreground transition-colors hover:bg-muted/40",
           separated && "border-t",
         )}
       >
         <ChevronDown
           className={cn("h-3 w-3 transition-transform", !open && "-rotate-90")}
         />
-        <DecisionDot kind={kind} />
         <span className="text-foreground">{label}</span>
         <span className="tabular-nums text-[11px] text-muted-foreground">{count}</span>
       </CollapsibleTrigger>
@@ -146,7 +231,7 @@ function Row({
     <button
       onClick={onClick}
       className={cn(
-        "group relative grid w-full grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-4 border-b px-8 py-3 text-left transition-colors last:border-b-0",
+        "group relative grid w-full grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-4 border-b px-10 py-3 text-left transition-colors last:border-b-0",
         "hover:bg-muted/40",
         active && "bg-accent",
       )}
@@ -154,7 +239,7 @@ function Row({
       {active && <span className="absolute inset-y-0 left-0 w-[2px] bg-brand" />}
       <DecisionDot kind={event.decision} />
       <span className="flex min-w-0 items-baseline gap-2.5">
-        <span className="text-[13px] font-medium text-foreground">{prettyTool(event.tool_name)}</span>
+        <span className="text-[12px] font-medium text-foreground">{prettyTool(event.tool_name)}</span>
         <span className="truncate font-mono text-[12px] text-muted-foreground">{target}</span>
       </span>
       <span className="flex items-center gap-3">
