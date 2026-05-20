@@ -219,7 +219,19 @@ func sanitizedPathRequest(toolName, pathClass string) string {
 	if action == "" {
 		action = "Tool"
 	}
+	if isCredentialPathClass(pathClass) {
+		return action + " credential_path " + pathClass
+	}
 	return action + " " + pathClass
+}
+
+func isCredentialPathClass(pathClass string) bool {
+	switch pathClass {
+	case "credential_file", "env_file", "cloud_credentials":
+		return true
+	default:
+		return false
+	}
 }
 
 func skillRequest(input map[string]any) string {

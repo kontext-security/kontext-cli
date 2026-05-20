@@ -685,8 +685,12 @@ func TestJudgeInputClassifiesCredentialPathForNonReadTools(t *testing.T) {
 			if input.ToolInput.Path != tt.wantClass {
 				t.Fatalf("judge input path = %q, want %q: %+v", input.ToolInput.Path, tt.wantClass, input)
 			}
-			if input.ToolInput.Request != "Write "+tt.wantClass {
-				t.Fatalf("judge input request = %q, want sanitized path request for %s: %+v", input.ToolInput.Request, tt.wantClass, input)
+			wantRequest := "Write " + tt.wantClass
+			if tt.wantClass == "env_file" || tt.wantClass == "cloud_credentials" {
+				wantRequest = "Write credential_path " + tt.wantClass
+			}
+			if input.ToolInput.Request != wantRequest {
+				t.Fatalf("judge input request = %q, want %q: %+v", input.ToolInput.Request, wantRequest, input)
 			}
 			if strings.Contains(input.ToolInput.Request, tt.path) {
 				t.Fatalf("judge input leaked raw path in request: %+v", input)
