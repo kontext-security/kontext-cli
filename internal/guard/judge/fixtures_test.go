@@ -79,13 +79,13 @@ func TestLaunchFixturesMapToJudgeInput(t *testing.T) {
 			continue
 		}
 		input := InputFromFixture(fixture)
-		if input.Agent == "" || input.HookEvent == "" || input.ToolName == "" {
+		if input.ToolName == "" {
 			t.Fatalf("%s mapped judge input missing hook metadata: %+v", fixture.ID, input)
 		}
-		if input.ToolName == "Bash" && input.ToolInput.CommandRedacted == "" {
+		if input.ToolName == "Bash" && input.ToolInput.Command == "" {
 			t.Fatalf("%s Bash fixture missing command summary for judge input", fixture.ID)
 		}
-		if input.ToolInput.CommandRedacted == "" && input.ToolInput.PathRedacted == "" && input.ToolInput.RequestSummary == "" {
+		if input.ToolInput.Command == "" && input.ToolInput.Path == "" && input.ToolInput.Request == "" {
 			t.Fatalf("%s mapped judge input has empty tool_input", fixture.ID)
 		}
 	}

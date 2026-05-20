@@ -519,7 +519,7 @@ func TestJudgePolicyDeniesFromLocalJudge(t *testing.T) {
 	if localJudge.calls != 1 {
 		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
 	}
-	if localJudge.input.Agent != "claude" || localJudge.input.CWDClass != "project" {
+	if localJudge.input.ToolName != "Bash" || localJudge.input.ToolInput.Command != "python scripts/deploy.py --dry-run" {
 		t.Fatalf("judge input = %+v", localJudge.input)
 	}
 	if decision.Decision != risk.DecisionDeny || decision.ReasonCode != "judge_deny" {
@@ -568,11 +568,8 @@ func TestJudgePolicyAllowsFromLocalJudge(t *testing.T) {
 	if localJudge.calls != 1 {
 		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
 	}
-	if localJudge.input.NormalizedEvent.Type != string(risk.EventNormalToolCall) {
+	if localJudge.input.ToolName != "Read" || localJudge.input.ToolInput.Path != "README.md" {
 		t.Fatalf("judge input = %+v", localJudge.input)
-	}
-	if localJudge.input.DeterministicPolicy.Decision != "allow" || localJudge.input.DeterministicPolicy.PolicyVersion != policy.DefaultPolicyVersion {
-		t.Fatalf("deterministic context = %+v", localJudge.input.DeterministicPolicy)
 	}
 	if decision.Decision != risk.DecisionAllow || decision.ReasonCode != risk.DecisionStageJudgeAllow {
 		t.Fatalf("decision = %+v", decision)
@@ -616,7 +613,7 @@ func TestJudgePolicyRedactsCredentialValuesFromJudgeInput(t *testing.T) {
 	if localJudge.calls != 1 {
 		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
 	}
-	got := localJudge.input.ToolInput.CommandRedacted + " " + localJudge.input.ToolInput.RequestSummary + " " + localJudge.input.NormalizedEvent.CommandSummary + " " + localJudge.input.NormalizedEvent.RequestSummary
+	got := localJudge.input.ToolInput.Command
 	if strings.Contains(got, "real-secret-123") {
 		t.Fatalf("judge input leaked credential value: %+v", localJudge.input)
 	}
@@ -728,7 +725,7 @@ func TestJudgePolicyUsesActiveProfileForDeterministicRules(t *testing.T) {
 	if localJudge.calls != 1 {
 		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
 	}
-	if localJudge.input.NormalizedEvent.Type != string(risk.EventCredentialAccess) {
+	if localJudge.input.ToolName != "Read" || localJudge.input.ToolInput.Path != ".env" {
 		t.Fatalf("judge input = %+v", localJudge.input)
 	}
 	if decision.Decision != risk.DecisionAllow || decision.RiskEvent.PolicyProfile != string(policy.ProfileRelaxed) {
@@ -776,8 +773,8 @@ func TestJudgePolicyFallsBackWhenActivePolicyConfigInvalid(t *testing.T) {
 	if localJudge.calls != 1 {
 		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
 	}
-	if localJudge.input.DeterministicPolicy.PolicyVersion != policy.DefaultPolicyVersion {
-		t.Fatalf("deterministic context = %+v", localJudge.input.DeterministicPolicy)
+	if localJudge.input.ToolName != "Read" || localJudge.input.ToolInput.Path != "README.md" {
+		t.Fatalf("judge input = %+v", localJudge.input)
 	}
 	if decision.RiskEvent.PolicyVersion != policy.DefaultPolicyVersion || decision.RiskEvent.PolicyProfile != string(policy.ProfileBalanced) {
 		t.Fatalf("risk event = %+v", decision.RiskEvent)

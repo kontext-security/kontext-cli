@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"path/filepath"
-	"strings"
 
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
 	guardpolicy "github.com/kontext-security/kontext-cli/internal/guard/policy"
@@ -75,7 +73,7 @@ func (p RiskPolicyProvider) DecideHook(ctx context.Context, event risk.HookEvent
 		return deterministicAllowDecision(riskEvent, policyResult), nil
 	}
 
-	result, err := p.judge.Decide(ctx, judgeInputFromRiskEvent(event, riskEvent, policyResult))
+	result, err := p.judge.Decide(ctx, judgeInputFromRiskEvent(event, riskEvent))
 	if err != nil {
 		return judgeFailOpenDecision(riskEvent, p.judge, err), nil
 	}
@@ -192,58 +190,27 @@ func applyPolicyMetadata(event *risk.RiskEvent, result guardpolicy.Result) {
 	event.PolicySignals = result.MatchedSignals
 }
 
-func judgeInputFromRiskEvent(event risk.HookEvent, riskEvent risk.RiskEvent, policyResult guardpolicy.Result) judge.Input {
+func judgeInputFromRiskEvent(event risk.HookEvent, riskEvent risk.RiskEvent) judge.Input {
+	toolInput := judge.ToolInput{
+		Command: riskEvent.CommandSummary,
+		Path:    pathFromToolInput(event.ToolInput),
+	}
+	if toolInput.Command == "" && toolInput.Path == "" {
+		toolInput.Request = riskEvent.RequestSummary
+	}
 	return judge.Input{
-		Agent:     event.Agent,
-		HookEvent: event.HookEventName,
 		ToolName:  event.ToolName,
-		CWDClass:  cwdClass(event.CWD),
-		ToolInput: judge.ToolInput{
-			CommandRedacted: riskEvent.CommandSummary,
-			PathRedacted:    riskEvent.PathClass,
-			RequestSummary:  riskEvent.RequestSummary,
-		},
-		NormalizedEvent: judge.NormalizedEvent{
-			Type:               string(riskEvent.Type),
-			Provider:           riskEvent.Provider,
-			ProviderCategory:   riskEvent.ProviderCategory,
-			Operation:          riskEvent.Operation,
-			OperationClass:     riskEvent.OperationClass,
-			ResourceClass:      riskEvent.ResourceClass,
-			Environment:        riskEvent.Environment,
-			CredentialObserved: riskEvent.CredentialObserved,
-			DirectAPICall:      riskEvent.DirectAPICall,
-			ExplicitUserIntent: riskEvent.ExplicitUserIntent,
-			PathClass:          riskEvent.PathClass,
-			CommandSummary:     riskEvent.CommandSummary,
-			RequestSummary:     riskEvent.RequestSummary,
-			Signals:            riskEvent.Signals,
-		},
-		DeterministicPolicy: judge.DeterministicContext{
-			Decision:      string(policyResult.Decision),
-			MatchedRules:  matchedPolicyRules(policyResult),
-			PolicyVersion: policyResult.PolicyVersion,
-		},
+		ToolInput: toolInput,
 	}
 }
 
-func matchedPolicyRules(result guardpolicy.Result) []string {
-	if !result.Matched || result.RuleID == "" {
-		return nil
+func pathFromToolInput(input map[string]any) string {
+	for _, key := range []string{"file_path", "path", "filename"} {
+		if value, ok := input[key].(string); ok {
+			return value
+		}
 	}
-	return []string{result.RuleID}
-}
-
-func cwdClass(cwd string) string {
-	cwd = strings.TrimSpace(cwd)
-	if cwd == "" {
-		return "unknown"
-	}
-	base := strings.ToLower(filepath.Base(cwd))
-	if base == "" || base == "." || base == string(filepath.Separator) {
-		return "unknown"
-	}
-	return "project"
+	return ""
 }
 
 func judgeMetadata(localJudge judge.Judge) judge.Metadata {
