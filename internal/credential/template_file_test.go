@@ -217,6 +217,36 @@ func TestLoadTemplateFilePreservesLastDuplicatePlaceholderAssignment(t *testing.
 	}
 }
 
+func TestLoadTemplateFilePreservesLastAssignmentOrderWithoutSort(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), ".env.kontext")
+	content := strings.Join([]string{
+		"FIRST={{kontext:first}}",
+		"SECOND={{kontext:second}}",
+		"FIRST=literal",
+		"THIRD={{kontext:third}}",
+		"SECOND={{kontext:second-late}}",
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	doc, err := LoadTemplateFile(path)
+	if err != nil {
+		t.Fatalf("LoadTemplateFile() error = %v", err)
+	}
+	if got, want := len(doc.Entries), 2; got != want {
+		t.Fatalf("entries len = %d, want %d", got, want)
+	}
+	if got := doc.Entries[0].EnvVar; got != "THIRD" {
+		t.Fatalf("first entry env var = %q, want %q", got, "THIRD")
+	}
+	if got := doc.Entries[1].EnvVar; got != "SECOND" {
+		t.Fatalf("second entry env var = %q, want %q", got, "SECOND")
+	}
+}
+
 func TestLoadTemplateFileCollectsInvalidPlaceholders(t *testing.T) {
 	t.Parallel()
 
