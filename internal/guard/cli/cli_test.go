@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
+	"github.com/kontext-security/kontext-cli/internal/guard/judgeruntime"
 )
 
 func TestGuardHookCompatibilityCommandIsRetired(t *testing.T) {
@@ -203,7 +204,7 @@ func TestJudgeEvalChecksExpectedRiskCategoriesAndReason(t *testing.T) {
 }
 
 func TestConfigureManagedJudgeFailsOpenWhenModelMissing(t *testing.T) {
-	localJudge, closeJudge, status, err := configureLocalJudge(context.Background(), localJudgeConfig{
+	localJudge, closeJudge, status, err := judgeruntime.Configure(context.Background(), judgeruntime.Config{
 		Managed:   true,
 		ModelPath: filepath.Join(t.TempDir(), "missing.gguf"),
 		Model:     "qwen",
@@ -227,7 +228,7 @@ func TestConfigureManagedJudgeFailsOpenWhenModelMissing(t *testing.T) {
 
 func TestConfigureManagedJudgeUsesJudgeModelAsGGUFPath(t *testing.T) {
 	modelPath := filepath.Join(t.TempDir(), "qwen.gguf")
-	localJudge, closeJudge, status, err := configureLocalJudge(context.Background(), localJudgeConfig{
+	localJudge, closeJudge, status, err := judgeruntime.Configure(context.Background(), judgeruntime.Config{
 		Managed: true,
 		Model:   modelPath,
 		Port:    18083,
@@ -246,7 +247,7 @@ func TestConfigureManagedJudgeUsesJudgeModelAsGGUFPath(t *testing.T) {
 
 func TestResolvedJudgeCacheDirUsesParsedDBPath(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "custom", "guard.db")
-	got := resolvedJudgeCacheDir("", dbPath)
+	got := judgeruntime.ResolvedCacheDir("", dbPath)
 	want := filepath.Join(filepath.Dir(dbPath), "judge-models")
 	if got != want {
 		t.Fatalf("cache dir = %q, want %q", got, want)
@@ -254,14 +255,14 @@ func TestResolvedJudgeCacheDirUsesParsedDBPath(t *testing.T) {
 }
 
 func TestResolvedJudgeCacheDirPrefersExplicitValue(t *testing.T) {
-	got := resolvedJudgeCacheDir("/explicit/cache", filepath.Join(t.TempDir(), "guard.db"))
+	got := judgeruntime.ResolvedCacheDir("/explicit/cache", filepath.Join(t.TempDir(), "guard.db"))
 	if got != "/explicit/cache" {
 		t.Fatalf("cache dir = %q, want explicit cache", got)
 	}
 }
 
 func TestManagedJudgeListenConfigDefaultsToJudgePort(t *testing.T) {
-	host, port, baseURL, err := managedJudgeListenConfig("", 18081)
+	host, port, baseURL, err := judgeruntime.ManagedListenConfig("", 18081)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +272,7 @@ func TestManagedJudgeListenConfigDefaultsToJudgePort(t *testing.T) {
 }
 
 func TestManagedJudgeListenConfigAppliesJudgeURLPort(t *testing.T) {
-	host, port, baseURL, err := managedJudgeListenConfig("http://localhost:18082/v1", 18081)
+	host, port, baseURL, err := judgeruntime.ManagedListenConfig("http://localhost:18082/v1", 18081)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,11 +282,34 @@ func TestManagedJudgeListenConfigAppliesJudgeURLPort(t *testing.T) {
 }
 
 func TestManagedJudgeListenConfigRejectsHTTPS(t *testing.T) {
-	_, _, _, err := managedJudgeListenConfig("https://127.0.0.1:18082", 18081)
+	_, _, _, err := judgeruntime.ManagedListenConfig("https://127.0.0.1:18082", 18081)
 	if err == nil {
-		t.Fatal("managedJudgeListenConfig() error = nil, want HTTPS rejection")
+		t.Fatal("ManagedListenConfig() error = nil, want HTTPS rejection")
 	}
 	if !strings.Contains(err.Error(), "managed judge URL must use http") {
 		t.Fatalf("err = %v, want managed http error", err)
 	}
+}
+
+func TestLocalJudgeStatusLineSummarizesManagedJudge(t *testing.T) {
+	got := localJudgeStatusLine(fakeJudge{})
+	if got != "Local judge: ready" {
+		t.Fatalf("status line = %q, want ready", got)
+	}
+	if strings.Contains(got, "http://127.0.0.1:18080") || strings.Contains(got, "(llama-server)") {
+		t.Fatalf("status line leaked managed judge internals: %q", got)
+	}
+}
+
+func TestLocalJudgeStatusLineUsesStructuredUnavailableState(t *testing.T) {
+	got := localJudgeStatusLine(judge.UnavailableJudge{Model: "unavailable-model"})
+	if got != "Local judge: unavailable" {
+		t.Fatalf("status line = %q, want unavailable", got)
+	}
+}
+
+type fakeJudge struct{}
+
+func (fakeJudge) Decide(context.Context, judge.Input) (judge.Result, error) {
+	return judge.Result{}, nil
 }

@@ -35,20 +35,23 @@ type Options struct {
 	AllowNonLoopbackDashboard bool
 	JudgeConfigFromEnv        bool
 	JudgeManagedDefault       bool
+	JudgeDownloadProgress     judge.DownloadProgressHandler
 	Mode                      string
 	Diagnostic                diagnostic.Logger
 	Out                       io.Writer
 }
 
 type Host struct {
-	SessionID        string
-	SessionDir       string
-	SocketPath       string
-	DBPath           string
-	DashboardURL     string
-	DashboardErr     error
-	LocalJudgeStatus string
-	Mode             guardhookruntime.Mode
+	SessionID             string
+	SessionDir            string
+	SocketPath            string
+	DBPath                string
+	DashboardURL          string
+	DashboardErr          error
+	LocalJudgeStatus      string
+	LocalJudgeEnabled     bool
+	LocalJudgeUnavailable bool
+	Mode                  guardhookruntime.Mode
 
 	server           *server.Server
 	closeStore       func() error
@@ -85,6 +88,7 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		if err != nil {
 			return nil, err
 		}
+		judgeConfig.DownloadProgress = opts.JudgeDownloadProgress
 		localJudge, closeJudge, judgeStatus, err = judgeruntime.Configure(ctx, judgeConfig)
 		if err != nil {
 			return nil, err
@@ -124,15 +128,17 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 	}
 
 	host := &Host{
-		SessionID:        sessionID,
-		SessionDir:       sessionDir,
-		SocketPath:       socketPath,
-		DBPath:           dbPath,
-		LocalJudgeStatus: judgeStatus,
-		Mode:             mode,
-		server:           localServer,
-		closeStore:       closeStore,
-		closeJudge:       closeJudge,
+		SessionID:             sessionID,
+		SessionDir:            sessionDir,
+		SocketPath:            socketPath,
+		DBPath:                dbPath,
+		LocalJudgeStatus:      judgeStatus,
+		LocalJudgeEnabled:     localJudge != nil,
+		LocalJudgeUnavailable: judge.IsUnavailable(localJudge),
+		Mode:                  mode,
+		server:                localServer,
+		closeStore:            closeStore,
+		closeJudge:            closeJudge,
 	}
 
 	runtimeService, err := localruntime.NewService(localruntime.Options{

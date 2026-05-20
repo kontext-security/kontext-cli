@@ -7,6 +7,7 @@ import (
 
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/runtimehost"
+	"github.com/kontext-security/kontext-cli/internal/startupui"
 )
 
 // StartLocal launches an agent with a wrapper-owned local runtime.
@@ -25,17 +26,20 @@ func StartLocal(ctx context.Context, opts Options) error {
 		return err
 	}
 	cwd, _ := os.Getwd()
+	ui := startupui.New(os.Stderr)
+	ui.Header()
 	host, err := runtimehost.Start(ctx, runtimehost.Options{
-		AgentName:           opts.Agent,
-		CWD:                 cwd,
-		DBPath:              os.Getenv("KONTEXT_DB"),
-		DashboardAddr:       os.Getenv("KONTEXT_ADDR"),
-		StartDashboard:      true,
-		JudgeConfigFromEnv:  true,
-		JudgeManagedDefault: true,
-		Mode:                string(mode),
-		Diagnostic:          diagnostics,
-		Out:                 os.Stderr,
+		AgentName:             opts.Agent,
+		CWD:                   cwd,
+		DBPath:                os.Getenv("KONTEXT_DB"),
+		DashboardAddr:         os.Getenv("KONTEXT_ADDR"),
+		StartDashboard:        true,
+		JudgeConfigFromEnv:    true,
+		JudgeManagedDefault:   true,
+		JudgeDownloadProgress: ui.HandleDownloadProgress,
+		Mode:                  string(mode),
+		Diagnostic:            diagnostics,
+		Out:                   os.Stderr,
 	})
 	if err != nil {
 		return err
@@ -58,25 +62,14 @@ func StartLocal(ctx context.Context, opts Options) error {
 	env = append(env, "KONTEXT_SESSION_ID="+host.SessionID)
 	env = append(env, "KONTEXT_MODE="+string(host.Mode))
 
-	fmt.Fprintf(os.Stderr, "✓ Local session: %s\n", truncateID(host.SessionID))
-	if host.DashboardURL != "" {
-		fmt.Fprintf(os.Stderr, "✓ Dashboard: %s\n", host.DashboardURL)
+	ui.LocalJudgeReady(host.LocalJudgeEnabled, host.LocalJudgeUnavailable)
+	ui.DashboardReady(host.DashboardURL)
+	ui.Mode(string(host.Mode))
+	ui.LocalSessionReady()
+	ui.Launching(opts.Agent)
+	if err := ui.Err(); err != nil {
+		return fmt.Errorf("write startup output: %w", err)
 	}
-	if host.LocalJudgeStatus != "" {
-		fmt.Fprintf(os.Stderr, "✓ Local judge: %s\n", host.LocalJudgeStatus)
-	} else {
-		fmt.Fprintln(os.Stderr, "✓ Local judge: disabled")
-	}
-	printLocalMode(os.Stderr, string(host.Mode))
-	fmt.Fprintf(os.Stderr, "\nLaunching %s...\n\n", opts.Agent)
 
 	return launchAgentWithSettings(ctx, opts.Agent, agentPath, env, opts.Args, settingsPath)
-}
-
-func printLocalMode(out *os.File, mode string) {
-	if mode == "enforce" {
-		fmt.Fprintln(out, "Mode: enforce (deny decisions block supported pre-tool actions).")
-		return
-	}
-	fmt.Fprintln(out, "Mode: observe (agent actions run normally; decisions are recorded as would allow / would deny).")
 }

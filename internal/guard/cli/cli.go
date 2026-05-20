@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,9 +20,11 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/guard/app/server"
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
+	"github.com/kontext-security/kontext-cli/internal/guard/judgeruntime"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 	"github.com/kontext-security/kontext-cli/internal/hook"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
+	"github.com/kontext-security/kontext-cli/internal/startupui"
 )
 
 const (
@@ -126,24 +127,29 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 			return err
 		}
 	}
-	localJudge, closeJudge, judgeStatus, err := configureLocalJudge(ctx, localJudgeConfig{
-		URL:            *judgeURL,
-		Model:          *judgeModel,
-		Timeout:        *judgeTimeout,
-		Managed:        *judgeManaged,
-		ServerBin:      *judgeServerBin,
-		ModelPath:      *judgeModelPath,
-		HFRepo:         *judgeHFRepo,
-		HFFile:         *judgeHFFile,
-		HFRevision:     *judgeHFRevision,
-		CacheDir:       resolvedJudgeCacheDir(*judgeCacheDir, *dbPath),
-		Port:           *judgePort,
-		StartupTimeout: *judgeStartupTimeout,
+	ui := startupui.New(out)
+	localJudge, closeJudge, _, err := judgeruntime.Configure(ctx, judgeruntime.Config{
+		URL:              *judgeURL,
+		Model:            *judgeModel,
+		Timeout:          *judgeTimeout,
+		Managed:          *judgeManaged,
+		ServerBin:        *judgeServerBin,
+		ModelPath:        *judgeModelPath,
+		HFRepo:           *judgeHFRepo,
+		HFFile:           *judgeHFFile,
+		HFRevision:       *judgeHFRevision,
+		CacheDir:         judgeruntime.ResolvedCacheDir(*judgeCacheDir, *dbPath),
+		Port:             *judgePort,
+		StartupTimeout:   *judgeStartupTimeout,
+		DownloadProgress: ui.HandleDownloadProgress,
 	})
 	if err != nil {
 		return err
 	}
 	defer closeJudge()
+	if err := ui.Err(); err != nil {
+		return fmt.Errorf("write startup output: %w", err)
+	}
 	localServer, closeStore, err := server.OpenDefaultServerWithOptions(*dbPath, server.Options{
 		Judge: localJudge,
 	})
@@ -174,178 +180,15 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 	fmt.Fprintf(out, "Hook runtime: unix://%s\n", *socketPath)
 	fmt.Fprintln(out, "Mode: observe (Claude Code runs normally; decisions are recorded as would allow / would deny).")
 	fmt.Fprintf(out, "Dashboard: http://%s\n", *addr)
-	if localJudge != nil {
-		fmt.Fprintf(out, "Local judge: %s\n", judgeStatus)
-	} else {
-		fmt.Fprintln(out, "Local judge: disabled")
-	}
+	fmt.Fprintln(out, localJudgeStatusLine(localJudge))
 	if !*noOpen {
 		_ = browser.OpenURL("http://" + *addr)
 	}
 	return localServer.ListenAndServe(*addr)
 }
 
-type localJudgeConfig struct {
-	URL            string
-	Model          string
-	Timeout        time.Duration
-	Managed        bool
-	ServerBin      string
-	ModelPath      string
-	HFRepo         string
-	HFFile         string
-	HFRevision     string
-	CacheDir       string
-	Port           int
-	StartupTimeout time.Duration
-}
-
-func configureLocalJudge(ctx context.Context, cfg localJudgeConfig) (judge.Judge, func(), string, error) {
-	closeFn := func() {}
-	if cfg.Managed {
-		return configureManagedJudge(ctx, cfg)
-	}
-	if strings.TrimSpace(cfg.URL) == "" && strings.TrimSpace(cfg.Model) == "" {
-		return nil, closeFn, "", nil
-	}
-	if strings.TrimSpace(cfg.URL) == "" || strings.TrimSpace(cfg.Model) == "" {
-		return nil, closeFn, "", fmt.Errorf("--judge-url and --judge-model must be set together")
-	}
-	if err := validateLocalJudgeURL(cfg.URL); err != nil {
-		return nil, closeFn, "", err
-	}
-	localJudge, err := judge.NewOpenAICompatibleJudge(judge.HTTPOptions{
-		BaseURL: cfg.URL,
-		Model:   cfg.Model,
-		Timeout: cfg.Timeout,
-	})
-	if err != nil {
-		return nil, closeFn, "", err
-	}
-	return localJudge, closeFn, fmt.Sprintf("%s at %s", cfg.Model, cfg.URL), nil
-}
-
-func configureManagedJudge(ctx context.Context, cfg localJudgeConfig) (judge.Judge, func(), string, error) {
-	closeFn := func() {}
-	modelPath := strings.TrimSpace(cfg.ModelPath)
-	modelName := strings.TrimSpace(cfg.Model)
-	if modelPath == "" && looksLikeGGUFPath(modelName) {
-		modelPath = modelName
-		modelName = ""
-	}
-	hfRepo := strings.TrimSpace(cfg.HFRepo)
-	hfFile := strings.TrimSpace(cfg.HFFile)
-	if modelPath == "" && hfRepo == "" {
-		hfRepo = judge.DefaultLlamaServerHFRepo
-		if hfFile == "" {
-			hfFile = judge.DefaultLlamaServerHFFile
-		}
-	}
-	if modelName == "" {
-		modelName = managedJudgeModelName(modelPath, hfRepo, hfFile)
-	}
-	host, port, baseURL, err := managedJudgeListenConfig(cfg.URL, cfg.Port)
-	if err != nil {
-		return nil, closeFn, "", err
-	}
-	server, err := judge.StartLlamaServer(ctx, judge.LlamaServerOptions{
-		BinaryPath:     cfg.ServerBin,
-		ModelPath:      modelPath,
-		HFRepo:         hfRepo,
-		HFFile:         hfFile,
-		HFRevision:     cfg.HFRevision,
-		CacheDir:       cfg.CacheDir,
-		Host:           host,
-		Port:           port,
-		StartupTimeout: cfg.StartupTimeout,
-	})
-	if err != nil {
-		unavailable := judge.UnavailableJudge{
-			Runtime: judge.DefaultLlamaServerRuntime,
-			Model:   modelName,
-			Kind:    judge.FailureUnavailable,
-			Err:     err,
-		}
-		return unavailable, closeFn, fmt.Sprintf("%s unavailable (%v)", modelName, err), nil
-	}
-	closeFn = func() {
-		_ = server.Stop()
-	}
-	localJudge, err := judge.NewOpenAICompatibleJudge(judge.HTTPOptions{
-		BaseURL: baseURL,
-		Model:   modelName,
-		Runtime: judge.DefaultLlamaServerRuntime,
-		Timeout: cfg.Timeout,
-	})
-	if err != nil {
-		closeFn()
-		return nil, func() {}, "", err
-	}
-	return localJudge, closeFn, fmt.Sprintf("%s at %s (%s)", modelName, baseURL, judge.DefaultLlamaServerRuntime), nil
-}
-
-func managedJudgeListenConfig(rawURL string, port int) (string, int, string, error) {
-	if port <= 0 {
-		port = judge.DefaultLlamaServerPort
-	}
-	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
-		return judge.DefaultLlamaServerHost, port, managedJudgeBaseURL(judge.DefaultLlamaServerHost, port), nil
-	}
-	if err := validateLocalJudgeURL(rawURL); err != nil {
-		return "", 0, "", err
-	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return "", 0, "", fmt.Errorf("parse judge URL: %w", err)
-	}
-	if parsed.Scheme != "http" {
-		return "", 0, "", fmt.Errorf("managed judge URL must use http")
-	}
-	host := parsed.Hostname()
-	if host == "" {
-		return "", 0, "", fmt.Errorf("managed judge URL must include host")
-	}
-	if parsed.Port() != "" {
-		parsedPort, err := strconv.Atoi(parsed.Port())
-		if err != nil || parsedPort <= 0 {
-			return "", 0, "", fmt.Errorf("managed judge URL has invalid port %q", parsed.Port())
-		}
-		port = parsedPort
-	}
-	return host, port, managedJudgeBaseURL(host, port), nil
-}
-
-func managedJudgeBaseURL(host string, port int) string {
-	return (&url.URL{
-		Scheme: "http",
-		Host:   net.JoinHostPort(host, strconv.Itoa(port)),
-	}).String()
-}
-
-func looksLikeGGUFPath(value string) bool {
-	value = strings.TrimSpace(value)
-	return strings.HasSuffix(strings.ToLower(value), ".gguf") || strings.Contains(value, string(filepath.Separator))
-}
-
-func managedJudgeModelName(modelPath, hfRepo, hfFile string) string {
-	if strings.TrimSpace(hfRepo) != "" {
-		return strings.TrimSpace(hfRepo)
-	}
-	if strings.TrimSpace(modelPath) != "" {
-		return filepath.Base(modelPath)
-	}
-	if strings.TrimSpace(hfFile) != "" {
-		return strings.TrimSpace(hfFile)
-	}
-	return "local-judge"
-}
-
-func resolvedJudgeCacheDir(cacheDir, dbPath string) string {
-	if strings.TrimSpace(cacheDir) != "" {
-		return cacheDir
-	}
-	return defaultJudgeCacheDir(dbPath)
+func localJudgeStatusLine(localJudge judge.Judge) string {
+	return "Local judge: " + startupui.LocalJudgeSummary(localJudge != nil, judge.IsUnavailable(localJudge))
 }
 
 func verifyClaudeCode() error {

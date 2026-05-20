@@ -26,8 +26,13 @@ func (j UnavailableJudge) Decide(context.Context, Input) (Result, error) {
 }
 
 func (j UnavailableJudge) Metadata() Metadata {
+	kind := strings.TrimSpace(j.Kind)
+	if kind == "" {
+		kind = FailureUnavailable
+	}
 	return Metadata{
-		Runtime: strings.TrimSpace(j.Runtime),
-		Model:   strings.TrimSpace(j.Model),
+		Runtime:     strings.TrimSpace(j.Runtime),
+		Model:       strings.TrimSpace(j.Model),
+		FailureKind: kind,
 	}
 }
