@@ -3,6 +3,7 @@ package localruntime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"sync"
@@ -60,7 +61,9 @@ func NewService(opts Options) (*Service, error) {
 func (s *Service) SocketPath() string { return s.socketPath }
 
 func (s *Service) Start(ctx context.Context) error {
-	os.Remove(s.socketPath)
+	if err := removeStaleSocket(s.socketPath); err != nil {
+		return err
+	}
 	ln, err := net.Listen("unix", s.socketPath)
 	if err != nil {
 		return err
@@ -84,7 +87,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	if s.listener != nil {
 		_ = s.listener.Close()
 	}
-	_ = os.Remove(s.socketPath)
+	removeRuntimeSocket(s.socketPath)
 
 	if s.serveDone != nil {
 		select {
@@ -114,6 +117,31 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		}
 		return ctx.Err()
 	}
+}
+
+func removeStaleSocket(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("inspect socket path: %w", err)
+	}
+	if info.Mode().Type() != os.ModeSocket {
+		return fmt.Errorf("socket path %q exists and is not a Unix socket", path)
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove stale socket: %w", err)
+	}
+	return nil
+}
+
+func removeRuntimeSocket(path string) {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode().Type() != os.ModeSocket {
+		return
+	}
+	_ = os.Remove(path)
 }
 
 func (s *Service) acceptLoop(ctx context.Context, listener net.Listener, done chan<- struct{}) {

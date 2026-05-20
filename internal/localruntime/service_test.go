@@ -2,7 +2,9 @@ package localruntime
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -187,15 +189,79 @@ func TestServiceAllowsNonblockingHookPayloadDecodeFailure(t *testing.T) {
 	}
 }
 
-func newTestService(t *testing.T, runtime *stubRuntime, asyncIngest bool) *Service {
-	t.Helper()
+func TestServiceStartRejectsExistingRegularSocketPath(t *testing.T) {
+	t.Parallel()
 
-	core, err := runtimecore.New(runtime)
+	socketPath := tempSocketPath(t)
+	contents := []byte("do not delete")
+	if err := os.WriteFile(socketPath, contents, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	core, err := runtimecore.New(&stubRuntime{})
 	if err != nil {
 		t.Fatalf("runtimecore.New() error = %v", err)
 	}
+	service, err := NewService(Options{
+		SocketPath: socketPath,
+		Core:       core,
+		AgentName:  "claude",
+		Diagnostic: diagnostic.New(io.Discard, false),
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	if err := service.Start(context.Background()); err == nil {
+		t.Fatal("Start() error = nil, want existing regular file rejected")
+	}
+	got, err := os.ReadFile(socketPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(got) != string(contents) {
+		t.Fatalf("socket path contents = %q, want %q", got, contents)
+	}
+}
+
+func TestServiceStartRemovesStaleUnixSocket(t *testing.T) {
+	t.Parallel()
+
+	socketPath := tempSocketPath(t)
+	stale, err := net.Listen("unix", socketPath)
+	if err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			t.Skipf("Unix sockets unavailable: %v", err)
+		}
+		t.Fatalf("Listen() stale socket error = %v", err)
+	}
+	if unixListener, ok := stale.(*net.UnixListener); ok {
+		unixListener.SetUnlinkOnClose(false)
+	}
+	if err := stale.Close(); err != nil {
+		t.Fatalf("Close() stale socket error = %v", err)
+	}
+	if info, err := os.Lstat(socketPath); err != nil {
+		t.Fatalf("Lstat() stale socket error = %v", err)
+	} else if info.Mode().Type() != os.ModeSocket {
+		t.Fatalf("stale socket mode = %v, want socket", info.Mode())
+	}
+
+	service := newTestServiceWithOptions(t, Options{
+		SocketPath: socketPath,
+		Core:       mustTestCore(t, &stubRuntime{}),
+		AgentName:  "claude",
+		Diagnostic: diagnostic.New(io.Discard, false),
+	})
+	if _, err := os.Lstat(service.SocketPath()); err != nil {
+		t.Fatalf("Lstat() runtime socket error = %v", err)
+	}
+}
+
+func newTestService(t *testing.T, runtime *stubRuntime, asyncIngest bool) *Service {
+	t.Helper()
+
 	return newTestServiceWithOptions(t, Options{
-		Core:        core,
+		Core:        mustTestCore(t, runtime),
 		AgentName:   "claude",
 		AsyncIngest: asyncIngest,
 		Diagnostic:  diagnostic.New(io.Discard, false),
@@ -205,12 +271,9 @@ func newTestService(t *testing.T, runtime *stubRuntime, asyncIngest bool) *Servi
 func newTestServiceWithOptions(t *testing.T, opts Options) *Service {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("/tmp", "kontext-runtime-*")
-	if err != nil {
-		t.Fatalf("MkdirTemp() error = %v", err)
+	if opts.SocketPath == "" {
+		opts.SocketPath = tempSocketPath(t)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	opts.SocketPath = filepath.Join(dir, "kontext.sock")
 	if opts.AgentName == "" {
 		opts.AgentName = "claude"
 	}
@@ -234,6 +297,27 @@ func newTestServiceWithOptions(t *testing.T, opts Options) *Service {
 	}
 	t.Cleanup(service.Stop)
 	return service
+}
+
+func tempSocketPath(t *testing.T) string {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("/tmp", "kontext-runtime-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp() error = %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return filepath.Join(dir, "kontext.sock")
+}
+
+func mustTestCore(t *testing.T, runtime *stubRuntime) *runtimecore.Core {
+	t.Helper()
+
+	core, err := runtimecore.New(runtime)
+	if err != nil {
+		t.Fatalf("runtimecore.New() error = %v", err)
+	}
+	return core
 }
 
 type stubRuntime struct {
