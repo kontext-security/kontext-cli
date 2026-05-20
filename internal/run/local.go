@@ -37,7 +37,7 @@ func StartLocal(ctx context.Context, opts Options) error {
 		JudgeConfigFromEnv:    true,
 		JudgeManagedDefault:   true,
 		JudgeDownloadProgress: ui.HandleDownloadProgress,
-		Mode:                  string(mode),
+		Mode:                  mode,
 		Diagnostic:            diagnostics,
 		Out:                   os.Stderr,
 	})

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -159,6 +160,30 @@ func TestHookCmdModeDoesNotDefaultFromEnv(t *testing.T) {
 	}
 }
 
+func TestManagedObserveDoesNotOverrideEnvSocket(t *testing.T) {
+	writeManagedConfigForCmdTest(t)
+	t.Setenv("KONTEXT_SOCKET", filepath.Join(t.TempDir(), "kontext.sock"))
+
+	if shouldUseManagedObserve(false, false) {
+		t.Fatal("shouldUseManagedObserve() = true with KONTEXT_SOCKET set")
+	}
+}
+
+func TestManagedObserveEligibleWithManagedConfig(t *testing.T) {
+	writeManagedConfigForCmdTest(t)
+	t.Setenv("KONTEXT_SOCKET", "")
+
+	if !shouldUseManagedObserve(false, false) {
+		t.Fatal("shouldUseManagedObserve() = false with managed config")
+	}
+	if shouldUseManagedObserve(true, false) {
+		t.Fatal("shouldUseManagedObserve() = true with explicit socket")
+	}
+	if shouldUseManagedObserve(false, true) {
+		t.Fatal("shouldUseManagedObserve() = true with explicit mode")
+	}
+}
+
 func TestClaudeManagedSettingsTemplateCmdPrintsValidJSON(t *testing.T) {
 	cmd := claudeManagedSettingsTemplateCmd()
 	cmd.SetArgs([]string{"--kontext-binary", "/opt/kontext/bin/kontext"})
@@ -176,6 +201,22 @@ func TestClaudeManagedSettingsTemplateCmdPrintsValidJSON(t *testing.T) {
 	if err := claudemanaged.Validate(stdout.Bytes(), "/opt/kontext/bin/kontext"); err != nil {
 		t.Fatalf("Validate(template) error = %v", err)
 	}
+}
+
+func writeManagedConfigForCmdTest(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "managed.json")
+	if err := os.WriteFile(path, []byte(`{
+  "version": "managed-install-v1",
+  "organization_id": "org_123",
+  "cloud_url": "https://app.kontext.dev",
+  "mode": "observe",
+  "agent": "claude",
+  "credentials": {"install_token_ref": "env:KONTEXT_INSTALL_TOKEN"}
+}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	t.Setenv("KONTEXT_MANAGED_CONFIG", path)
 }
 
 func TestClaudeManagedSettingsValidateCmdPassesGeneratedTemplate(t *testing.T) {

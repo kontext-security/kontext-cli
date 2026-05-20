@@ -16,11 +16,13 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/agent"
 	"github.com/kontext-security/kontext-cli/internal/auth"
 	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
+	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	guardcli "github.com/kontext-security/kontext-cli/internal/guard/cli"
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/hook"
 	"github.com/kontext-security/kontext-cli/internal/hookcmd"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
+	"github.com/kontext-security/kontext-cli/internal/managedobserve"
 	"github.com/kontext-security/kontext-cli/internal/run"
 	"github.com/kontext-security/kontext-cli/internal/update"
 
@@ -45,6 +47,7 @@ func main() {
 	root.AddCommand(loginCmd())
 	root.AddCommand(logoutCmd())
 	root.AddCommand(hookCmd())
+	root.AddCommand(managedObserveDaemonCmd())
 	root.AddCommand(doctorCmd())
 	root.AddCommand(claudeCmd())
 	root.AddCommand(guardCmd())
@@ -285,6 +288,17 @@ func hookCmd() *cobra.Command {
 				os.Exit(2)
 			}
 
+			explicitSocket := cmd.Flags().Changed("socket")
+			explicitMode := cmd.Flags().Changed("mode")
+			if shouldUseManagedObserve(explicitSocket, explicitMode) {
+				lifecycle := managedobserve.NewLifecycle()
+				lifecycle.Diagnostic = diagnostic.New(cmd.ErrOrStderr(), diagnostic.EnabledFromEnv())
+				hookcmd.RunWithExpectedEvent(a, expectedEvent, func(e hook.Event) (hook.Result, error) {
+					return lifecycle.Process(context.Background(), e), nil
+				})
+				return nil
+			}
+
 			resolvedSocketPath := resolveHookSocketPath(socketPath)
 			if mode != "" {
 				hookMode, err := guardhookruntime.ParseMode(mode)
@@ -309,6 +323,43 @@ func hookCmd() *cobra.Command {
 	cmd.Flags().StringVar(&socketPath, "socket", "", "Unix socket path for local hook runtime")
 	cmd.Flags().StringVar(&mode, "mode", "", "hook mode: observe or enforce")
 
+	return cmd
+}
+
+func shouldUseManagedObserve(explicitSocket, explicitMode bool) bool {
+	return !explicitSocket && !explicitMode && os.Getenv("KONTEXT_SOCKET") == "" && managedobserve.Active()
+}
+
+func managedObserveDaemonCmd() *cobra.Command {
+	var socketPath, dbPath, idleTimeout string
+	cmd := &cobra.Command{
+		Use:    "managed-observe-daemon",
+		Short:  "Run the managed observe socket daemon",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			timeout := managedobserve.DefaultIdleTimeout()
+			if idleTimeout != "" {
+				parsed, err := time.ParseDuration(idleTimeout)
+				if err != nil || parsed <= 0 {
+					return fmt.Errorf("--idle-timeout must be a positive duration")
+				}
+				timeout = parsed
+			}
+			return managedobserve.RunDaemon(context.Background(), managedobserve.DaemonOptions{
+				SocketPath:  socketPath,
+				DBPath:      dbPath,
+				IdleTimeout: timeout,
+				Diagnostic:  diagnostic.New(cmd.ErrOrStderr(), diagnostic.EnabledFromEnv()),
+			})
+		},
+	}
+	cmd.Flags().StringVar(&socketPath, "socket", "", "managed observe socket path")
+	cmd.Flags().StringVar(&dbPath, "db", "", "managed observe database path")
+	cmd.Flags().StringVar(&idleTimeout, "idle-timeout", "", "managed observe stale session timeout")
+	_ = cmd.Flags().MarkHidden("socket")
+	_ = cmd.Flags().MarkHidden("db")
+	_ = cmd.Flags().MarkHidden("idle-timeout")
 	return cmd
 }
 

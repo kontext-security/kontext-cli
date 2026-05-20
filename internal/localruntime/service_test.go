@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -116,6 +117,66 @@ func TestServiceShutdownDrainsAsyncIngest(t *testing.T) {
 	case err := <-done:
 		if err != nil {
 			t.Fatalf("Shutdown() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown() did not return after async ingest completed")
+	}
+}
+
+func TestServiceShutdownDrainsAfterSocketRemoveError(t *testing.T) {
+	t.Parallel()
+
+	runtime := &stubRuntime{
+		ingestStarted: make(chan struct{}),
+		releaseIngest: make(chan struct{}),
+	}
+	service := newTestService(t, runtime, true)
+	client := NewClient(service.SocketPath())
+
+	result, err := client.Process(context.Background(), hook.Event{
+		SessionID: "agent-session",
+		HookName:  hook.HookPostToolUse,
+		ToolName:  "Bash",
+	})
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if result.Decision != hook.DecisionAllow {
+		t.Fatalf("Process().Decision = %q, want allow", result.Decision)
+	}
+	select {
+	case <-runtime.ingestStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("async ingest did not start")
+	}
+
+	nonEmptyDir := filepath.Join(t.TempDir(), "remove-error")
+	if err := os.Mkdir(nonEmptyDir, 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nonEmptyDir, "child"), []byte("busy"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	service.socketPath = nonEmptyDir
+
+	done := make(chan error, 1)
+	go func() {
+		done <- service.Shutdown(context.Background())
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("Shutdown() returned before async ingest drained: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(runtime.releaseIngest)
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Shutdown() error = nil, want socket remove error")
+		}
+		if !strings.Contains(err.Error(), "remove local runtime socket") {
+			t.Fatalf("Shutdown() error = %v, want socket remove error", err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Shutdown() did not return after async ingest completed")

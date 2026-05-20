@@ -345,6 +345,14 @@ on conflict(id) do update set
   agent = coalesce(nullif(excluded.agent, ''), agent_sessions.agent),
   cwd = coalesce(nullif(excluded.cwd, ''), agent_sessions.cwd),
   mode = coalesce(nullif(excluded.mode, ''), agent_sessions.mode),
+  status = case
+    when agent_sessions.source = 'wrapper_owned' then agent_sessions.status
+    else 'open'
+  end,
+  closed_at = case
+    when agent_sessions.source = 'wrapper_owned' then agent_sessions.closed_at
+    else null
+  end,
   updated_at = excluded.updated_at
 	`, sessionID, agent, cwd, mode, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	if err != nil {
@@ -361,6 +369,18 @@ update agent_sessions
 set status = 'closed', closed_at = ?, updated_at = ?
 where id = ?
 	`, now, now, sessionID)
+	return err
+}
+
+func (s *Store) CloseStaleDaemonObservedSessions(ctx context.Context, olderThan time.Time) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `
+update agent_sessions
+set status = 'closed', closed_at = ?, updated_at = ?
+where source = 'daemon_observed'
+  and status = 'open'
+  and updated_at < ?
+	`, now, now, olderThan.UTC().Format(time.RFC3339Nano))
 	return err
 }
 

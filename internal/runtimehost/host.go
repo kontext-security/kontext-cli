@@ -36,9 +36,11 @@ type Options struct {
 	JudgeConfigFromEnv        bool
 	JudgeManagedDefault       bool
 	JudgeDownloadProgress     judge.DownloadProgressHandler
-	Mode                      string
+	Mode                      guardhookruntime.Mode
 	Diagnostic                diagnostic.Logger
 	Out                       io.Writer
+	SkipInitialSession        bool
+	DisableAsyncIngest        bool
 }
 
 type Host struct {
@@ -66,7 +68,7 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 	if strings.TrimSpace(opts.AgentName) == "" {
 		return nil, errors.New("runtime host requires agent name")
 	}
-	mode, err := ResolveMode(opts.Mode)
+	mode, err := ResolveMode(string(opts.Mode))
 	if err != nil {
 		return nil, err
 	}
@@ -142,12 +144,16 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		closeJudge:            closeJudge,
 	}
 
+	serviceSessionID := sessionID
+	if opts.SkipInitialSession {
+		serviceSessionID = ""
+	}
 	runtimeService, err := localruntime.NewService(localruntime.Options{
 		SocketPath:  socketPath,
 		Core:        localServer.RuntimeCore(),
-		SessionID:   sessionID,
+		SessionID:   serviceSessionID,
 		AgentName:   opts.AgentName,
-		AsyncIngest: true,
+		AsyncIngest: !opts.DisableAsyncIngest,
 		Diagnostic:  opts.Diagnostic,
 	})
 	if err != nil {
@@ -164,17 +170,19 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	if _, err := localServer.RuntimeCore().OpenSession(ctx, runtimecore.Session{
-		ID:         sessionID,
-		Agent:      opts.AgentName,
-		CWD:        cwd,
-		Source:     runtimecore.SessionSourceWrapperOwned,
-		ExternalID: sessionID,
-	}); err != nil {
-		_ = host.Close(context.Background())
-		return nil, fmt.Errorf("open runtime session: %w", err)
+	if !opts.SkipInitialSession {
+		if _, err := localServer.RuntimeCore().OpenSession(ctx, runtimecore.Session{
+			ID:         sessionID,
+			Agent:      opts.AgentName,
+			CWD:        cwd,
+			Source:     runtimecore.SessionSourceWrapperOwned,
+			ExternalID: sessionID,
+		}); err != nil {
+			_ = host.Close(context.Background())
+			return nil, fmt.Errorf("open runtime session: %w", err)
+		}
+		host.sessionOpened = true
 	}
-	host.sessionOpened = true
 
 	if opts.StartDashboard {
 		addr, err := DashboardAddr(opts.DashboardAddr, opts.AllowNonLoopbackDashboard)
