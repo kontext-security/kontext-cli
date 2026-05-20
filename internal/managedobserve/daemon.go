@@ -43,6 +43,9 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	if dbPath == "" {
 		dbPath = DefaultDBPath()
 	}
+	if err := cleanupStaleSessions(ctx, dbPath, idleTimeoutOrDefault(opts.IdleTimeout)); err != nil {
+		opts.Diagnostic.Printf("managed observe cleanup: %v\n", err)
+	}
 
 	host, err := runtimehost.Start(ctx, runtimehost.Options{
 		AgentName:          managedconfig.Agent,
@@ -64,9 +67,6 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	}
 	cleanup := time.NewTicker(cleanupInterval(idleTimeout))
 	defer cleanup.Stop()
-	if err := cleanupStaleSessions(ctx, dbPath, idleTimeout); err != nil {
-		opts.Diagnostic.Printf("managed observe cleanup: %v\n", err)
-	}
 
 	for {
 		select {
@@ -78,6 +78,13 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			}
 		}
 	}
+}
+
+func idleTimeoutOrDefault(idleTimeout time.Duration) time.Duration {
+	if idleTimeout == 0 {
+		return DefaultIdleTimeout()
+	}
+	return idleTimeout
 }
 
 func cleanupStaleSessions(ctx context.Context, dbPath string, idleTimeout time.Duration) error {

@@ -23,6 +23,7 @@ type Service struct {
 	sessionID   string
 	agentName   string
 	asyncIngest bool
+	transform   func(hook.Event, hook.Result) hook.Result
 	onFailure   func(hook.Event, error) hook.Result
 	diagnostic  diagnostic.Logger
 	cancel      context.CancelFunc
@@ -36,6 +37,7 @@ type Options struct {
 	SessionID   string
 	AgentName   string
 	AsyncIngest bool
+	Transform   func(hook.Event, hook.Result) hook.Result
 	OnFailure   func(hook.Event, error) hook.Result
 	Diagnostic  diagnostic.Logger
 }
@@ -53,6 +55,7 @@ func NewService(opts Options) (*Service, error) {
 		sessionID:   opts.SessionID,
 		agentName:   opts.AgentName,
 		asyncIngest: opts.AsyncIngest,
+		transform:   opts.Transform,
 		onFailure:   opts.OnFailure,
 		diagnostic:  opts.Diagnostic,
 	}, nil
@@ -196,17 +199,24 @@ func (s *Service) process(ctx context.Context, req *EvaluateRequest) EvaluateRes
 		return EvaluateResultFromResult(decodeFailureResult(req))
 	}
 	if s.asyncIngest && !event.HookName.CanBlock() {
-		return EvaluateResultFromResult(hook.Result{Decision: hook.DecisionAllow})
+		return s.result(event, hook.Result{Decision: hook.DecisionAllow})
 	}
 	result, err := s.core.ProcessHook(ctx, event)
 	if err != nil {
 		s.diagnostic.Printf("local runtime process: %v\n", err)
 		if s.onFailure != nil {
-			return EvaluateResultFromResult(s.onFailure(event, err))
+			return s.result(event, s.onFailure(event, err))
 		}
-		return EvaluateResultFromResult(processFailureResult(event))
+		return s.result(event, processFailureResult(event))
 	}
 	s.closeSessionEnd(ctx, event)
+	return s.result(event, result)
+}
+
+func (s *Service) result(event hook.Event, result hook.Result) EvaluateResult {
+	if s.transform != nil {
+		result = s.transform(event, result)
+	}
 	return EvaluateResultFromResult(result)
 }
 

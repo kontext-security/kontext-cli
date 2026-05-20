@@ -30,7 +30,7 @@ func TestDaemonPreservesHookSessionIDs(t *testing.T) {
 			t.Fatalf("Process(%s) error = %v", sessionID, err)
 		}
 		if result.Decision != hook.DecisionAllow {
-			t.Fatalf("Process(%s) decision = %q, want allow", sessionID, result.Decision)
+			t.Fatalf("Process(%s) decision = %q reason = %q, want allow", sessionID, result.Decision, result.Reason)
 		}
 	}
 	stop()
