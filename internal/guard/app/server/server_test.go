@@ -568,7 +568,7 @@ func TestJudgePolicyAllowsFromLocalJudge(t *testing.T) {
 	if localJudge.calls != 1 {
 		t.Fatalf("judge calls = %d, want 1", localJudge.calls)
 	}
-	if localJudge.input.ToolName != "Read" || localJudge.input.ToolInput.Path != "project_file" {
+	if localJudge.input.ToolName != "Read" || localJudge.input.ToolInput.Path != "project_file" || localJudge.input.ToolInput.Request != "Read project_file" {
 		t.Fatalf("judge input = %+v", localJudge.input)
 	}
 	if decision.Decision != risk.DecisionAllow || decision.ReasonCode != risk.DecisionStageJudgeAllow {
@@ -685,10 +685,60 @@ func TestJudgeInputClassifiesCredentialPathForNonReadTools(t *testing.T) {
 			if input.ToolInput.Path != tt.wantClass {
 				t.Fatalf("judge input path = %q, want %q: %+v", input.ToolInput.Path, tt.wantClass, input)
 			}
+			wantRequest := "Write " + tt.wantClass
+			if tt.wantClass == "env_file" || tt.wantClass == "cloud_credentials" {
+				wantRequest = "Write credential_path " + tt.wantClass
+			}
+			if input.ToolInput.Request != wantRequest {
+				t.Fatalf("judge input request = %q, want %q: %+v", input.ToolInput.Request, wantRequest, input)
+			}
 			if strings.Contains(input.ToolInput.Request, tt.path) {
 				t.Fatalf("judge input leaked raw path in request: %+v", input)
 			}
 		})
+	}
+}
+
+func TestJudgeInputDescribesPathOnlyLocalReads(t *testing.T) {
+	rawPath := "/Users/michelosswald/.codex/worktrees/a693/kontext-cli/internal/guard/policy/types.go"
+	input := judgeInputFromRiskEvent(
+		risk.HookEvent{
+			ToolName:  "Read",
+			ToolInput: map[string]any{"file_path": rawPath},
+		},
+		risk.RiskEvent{RequestSummary: "Read " + rawPath},
+	)
+	if input.ToolInput.Path != "project_file" || input.ToolInput.Request != "Read project_file" {
+		t.Fatalf("judge input = %+v, want sanitized local project read", input)
+	}
+	if strings.Contains(input.ToolInput.Request, rawPath) || strings.Contains(input.ToolInput.Request, "/Users/") {
+		t.Fatalf("judge input leaked raw path in request: %+v", input)
+	}
+}
+
+func TestJudgeInputIncludesSkillName(t *testing.T) {
+	input := judgeInputFromRiskEvent(
+		risk.HookEvent{
+			ToolName:  "Skill",
+			ToolInput: map[string]any{"skill": "review", "args": "ignored"},
+		},
+		risk.RiskEvent{RequestSummary: "Skill"},
+	)
+	if input.ToolInput.Request != "Skill review" {
+		t.Fatalf("judge input request = %q, want %q", input.ToolInput.Request, "Skill review")
+	}
+}
+
+func TestJudgeInputSkillWithoutNameFallsBack(t *testing.T) {
+	input := judgeInputFromRiskEvent(
+		risk.HookEvent{
+			ToolName:  "Skill",
+			ToolInput: map[string]any{},
+		},
+		risk.RiskEvent{RequestSummary: "Skill"},
+	)
+	if input.ToolInput.Request != "Skill" {
+		t.Fatalf("judge input request = %q, want %q", input.ToolInput.Request, "Skill")
 	}
 }
 

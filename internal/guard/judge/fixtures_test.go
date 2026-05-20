@@ -8,8 +8,8 @@ import (
 
 func TestLaunchFixturesValidateContract(t *testing.T) {
 	fixtures := loadLaunchFixtures(t)
-	if len(fixtures) != 51 {
-		t.Fatalf("fixtures = %d, want 51", len(fixtures))
+	if len(fixtures) != 61 {
+		t.Fatalf("fixtures = %d, want 61", len(fixtures))
 	}
 	ids := map[string]bool{}
 	counts := map[string]int{}
@@ -59,7 +59,7 @@ func TestLaunchFixturesValidateContract(t *testing.T) {
 		}
 	}
 	wantCounts := map[string]int{
-		"safe":     13,
+		"safe":     23,
 		"deny":     8,
 		"risky":    12,
 		"trap":     8,
@@ -97,6 +97,36 @@ func TestLaunchFixturesMapToJudgeInput(t *testing.T) {
 		if input.ToolInput.Command == "" && input.ToolInput.Path == "" && input.ToolInput.Request == "" {
 			t.Fatalf("%s mapped judge input has empty tool_input", fixture.ID)
 		}
+	}
+}
+
+func TestInputFromFixtureMirrorsSkillRequestMapping(t *testing.T) {
+	input := InputFromFixture(Fixture{
+		HookEvent: FixtureHookEvent{
+			ToolName:  "Skill",
+			ToolInput: map[string]any{"skill": "review"},
+		},
+		NormalizedEvent: FixtureNormalizedEvent{
+			RequestSummary: "Skill",
+		},
+	})
+	if input.ToolInput.Request != "Skill review" {
+		t.Fatalf("request = %q, want %q", input.ToolInput.Request, "Skill review")
+	}
+}
+
+func TestInputFromFixturePreservesCredentialPathClass(t *testing.T) {
+	input := InputFromFixture(Fixture{
+		HookEvent: FixtureHookEvent{
+			ToolName:  "Write",
+			ToolInput: map[string]any{"file_path": ".env"},
+		},
+		NormalizedEvent: FixtureNormalizedEvent{
+			PathClass: "env_file",
+		},
+	})
+	if input.ToolInput.Request != "Write credential_path env_file" {
+		t.Fatalf("request = %q, want credential path context", input.ToolInput.Request)
 	}
 }
 
