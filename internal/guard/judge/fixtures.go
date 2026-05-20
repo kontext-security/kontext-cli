@@ -77,13 +77,49 @@ func InputFromFixture(fixture Fixture) Input {
 		Command: fixture.NormalizedEvent.CommandSummary,
 		Path:    pathClassFromFixture(fixture),
 	}
-	if toolInput.Command == "" && toolInput.Path == "" {
-		toolInput.Request = fixture.NormalizedEvent.RequestSummary
+	if toolInput.Command == "" {
+		switch {
+		case toolInput.Path != "":
+			toolInput.Request = sanitizedPathRequest(fixture.HookEvent.ToolName, toolInput.Path)
+		case strings.EqualFold(fixture.HookEvent.ToolName, "Skill"):
+			toolInput.Request = skillRequest(fixture.HookEvent.ToolInput)
+		default:
+			toolInput.Request = fixture.NormalizedEvent.RequestSummary
+		}
 	}
 	return Input{
 		ToolName:           fixture.HookEvent.ToolName,
 		ExplicitUserIntent: fixture.NormalizedEvent.ExplicitUserIntent,
 		ToolInput:          toolInput,
+	}
+}
+
+func sanitizedPathRequest(toolName, pathClass string) string {
+	action := strings.TrimSpace(toolName)
+	if action == "" {
+		action = "Tool"
+	}
+	if isCredentialPathClass(pathClass) {
+		return action + " credential_path " + pathClass
+	}
+	return action + " " + pathClass
+}
+
+func skillRequest(input map[string]any) string {
+	name, _ := input["skill"].(string)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "Skill"
+	}
+	return "Skill " + name
+}
+
+func isCredentialPathClass(pathClass string) bool {
+	switch pathClass {
+	case "credential_file", "env_file", "cloud_credentials":
+		return true
+	default:
+		return false
 	}
 }
 
