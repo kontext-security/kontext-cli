@@ -199,27 +199,40 @@ func isReadTool(tool string) bool {
 }
 
 func isCredentialPath(path string) bool {
-	clean := strings.ToLower(filepath.ToSlash(path))
+	clean := normalizedPath(path)
 	base := filepath.Base(clean)
 	switch base {
 	case ".env", ".npmrc", ".pypirc", ".netrc":
 		return true
 	}
-	return strings.Contains(clean, "/.aws/") ||
-		strings.Contains(clean, "/.gcloud/") ||
-		strings.Contains(clean, "/.config/railway/")
+	return hasPathSegmentPrefix(clean, ".aws") ||
+		hasPathSegmentPrefix(clean, ".gcloud") ||
+		hasPathSegmentPrefix(clean, ".config/railway")
 }
 
 func pathClass(path string) string {
-	clean := strings.ToLower(filepath.ToSlash(path))
+	clean := normalizedPath(path)
 	base := filepath.Base(clean)
 	if base == ".env" || base == ".npmrc" || base == ".pypirc" || base == ".netrc" {
 		return "env_file"
 	}
-	if strings.Contains(clean, "/.aws/") || strings.Contains(clean, "/.gcloud/") || strings.Contains(clean, "/.config/railway/") {
+	if hasPathSegmentPrefix(clean, ".aws") ||
+		hasPathSegmentPrefix(clean, ".gcloud") ||
+		hasPathSegmentPrefix(clean, ".config/railway") {
 		return "cloud_credentials"
 	}
 	return "unknown"
+}
+
+func normalizedPath(path string) string {
+	return strings.ToLower(filepath.ToSlash(filepath.Clean(path)))
+}
+
+func hasPathSegmentPrefix(clean, prefix string) bool {
+	return clean == prefix ||
+		strings.HasPrefix(clean, prefix+"/") ||
+		strings.Contains(clean, "/"+prefix+"/") ||
+		strings.HasSuffix(clean, "/"+prefix)
 }
 
 func destructiveOperation(text string) string {
