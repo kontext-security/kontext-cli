@@ -22,14 +22,15 @@ const (
 type Event struct {
 	Name  hook.HookName
 	Alias string
+	Async bool
 }
 
 var SupportedEvents = []Event{
-	{Name: hook.HookSessionStart, Alias: "session-start"},
+	{Name: hook.HookSessionStart, Alias: "session-start", Async: true},
 	{Name: hook.HookPreToolUse, Alias: "pre-tool-use"},
 	{Name: hook.HookPostToolUse, Alias: "post-tool-use"},
 	{Name: hook.HookPostToolUseFailed, Alias: "post-tool-use-failure"},
-	{Name: hook.HookSessionEnd, Alias: "session-end"},
+	{Name: hook.HookSessionEnd, Alias: "session-end", Async: true},
 }
 
 func DefaultManagedSettingsPath() string {
@@ -63,6 +64,7 @@ type Handler struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args,omitempty"`
 	Timeout int      `json:"timeout,omitempty"`
+	Async   *bool    `json:"async,omitempty"`
 }
 
 func Template(kontextBinary string) Settings {
@@ -72,14 +74,19 @@ func Template(kontextBinary string) Settings {
 	}
 	settings := Settings{Hooks: make(map[string][]MatcherGroup, len(SupportedEvents))}
 	for _, event := range SupportedEvents {
+		handler := Handler{
+			Type:    "command",
+			Command: kontextBinary,
+			Args:    []string{"hook", event.Alias},
+			Timeout: DefaultHookTimeout,
+		}
+		if event.Async {
+			value := true
+			handler.Async = &value
+		}
 		settings.Hooks[event.Name.String()] = []MatcherGroup{{
 			Matcher: "",
-			Hooks: []Handler{{
-				Type:    "command",
-				Command: kontextBinary,
-				Args:    []string{"hook", event.Alias},
-				Timeout: DefaultHookTimeout,
-			}},
+			Hooks:   []Handler{handler},
 		}}
 	}
 	return settings
@@ -168,6 +175,9 @@ func validateEvent(groups []MatcherGroup, event Event, kontextBinary string) err
 			if !sameStrings(handler.Args, wantArgs) {
 				return fmt.Errorf("%s Kontext handler args = %q, want %q", event.Name, handler.Args, wantArgs)
 			}
+			if err := validateAsync(event, handler.Async); err != nil {
+				return err
+			}
 			if !isAllMatcher(group.Matcher) {
 				foundRestrictiveMatcher = true
 				continue
@@ -183,6 +193,19 @@ func validateEvent(groups []MatcherGroup, event Event, kontextBinary string) err
 		return fmt.Errorf("%s Kontext command hook uses matcher %q; use an empty matcher for full event coverage", event.Name, firstRestrictiveMatcher(groups, kontextBinary, wantArgs))
 	}
 	return fmt.Errorf("%s Kontext command hook missing for %s", event.Name, kontextBinary)
+}
+
+func validateAsync(event Event, async *bool) error {
+	if event.Async {
+		if async == nil || !*async {
+			return fmt.Errorf("%s Kontext handler async must be true", event.Name)
+		}
+		return nil
+	}
+	if async != nil {
+		return fmt.Errorf("%s Kontext handler async must be omitted", event.Name)
+	}
+	return nil
 }
 
 func isShellFormKontextHandler(handler Handler, kontextBinary string) bool {
