@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
@@ -11,24 +12,30 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 	"github.com/kontext-security/kontext-cli/internal/installation"
 	"github.com/kontext-security/kontext-cli/internal/managedconfig"
+	"github.com/kontext-security/kontext-cli/internal/managedstream"
 	"github.com/kontext-security/kontext-cli/internal/runtimehost"
 )
 
 type DaemonOptions struct {
-	SocketPath  string
-	DBPath      string
-	IdleTimeout time.Duration
-	Diagnostic  diagnostic.Logger
+	SocketPath       string
+	DBPath           string
+	IdleTimeout      time.Duration
+	StreamStatePath  string
+	StreamInterval   time.Duration
+	StreamHTTPClient *http.Client
+	Diagnostic       diagnostic.Logger
 }
 
 func RunDaemon(ctx context.Context, opts DaemonOptions) error {
-	if _, err := managedconfig.Load(); err != nil {
+	loadedConfig, err := managedconfig.Load()
+	if err != nil {
 		if errors.Is(err, managedconfig.ErrNotManaged) {
 			return err
 		}
 		return fmt.Errorf("load managed config: %w", err)
 	}
-	if _, err := installation.Ensure(); err != nil {
+	installationState, err := installation.Ensure()
+	if err != nil {
 		return fmt.Errorf("ensure installation identity: %w", err)
 	}
 
@@ -61,6 +68,23 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	}
 	defer host.Close(context.Background())
 
+	streamCtx, stopStream := context.WithCancel(ctx)
+	defer stopStream()
+	streamErr := make(chan error, 1)
+	go func() {
+		streamErr <- managedstream.Run(streamCtx, managedstream.Options{
+			DBPath:         dbPath,
+			StatePath:      opts.StreamStatePath,
+			CloudURL:       loadedConfig.Config.CloudURL,
+			OrganizationID: loadedConfig.Config.OrganizationID,
+			InstallationID: installationState.InstallationID,
+			DeviceLabel:    loadedConfig.Config.Device.Label,
+			Interval:       opts.StreamInterval,
+			HTTPClient:     opts.StreamHTTPClient,
+			Diagnostic:     opts.Diagnostic,
+		})
+	}()
+
 	idleTimeout := opts.IdleTimeout
 	if idleTimeout == 0 {
 		idleTimeout = DefaultIdleTimeout()
@@ -71,6 +95,12 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	for {
 		select {
 		case <-ctx.Done():
+			return nil
+		case err := <-streamErr:
+			if err != nil {
+				opts.Diagnostic.Printf("managed stream exited: %v\n", err)
+				return fmt.Errorf("managed stream failed: %w", err)
+			}
 			return nil
 		case <-cleanup.C:
 			if err := cleanupStaleSessions(ctx, dbPath, idleTimeout); err != nil {

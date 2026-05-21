@@ -639,6 +639,72 @@ func TestLedgerBatchLimitReturnsReceiptsForSelectedActions(t *testing.T) {
 	}
 }
 
+func TestLedgerBatchCursorUsesUpdatedAtAndActionID(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	first, err := store.SaveDecision(context.Background(), risk.HookEvent{
+		SessionID:     "s1",
+		HookEventName: "PreToolUse",
+		ToolName:      "Read",
+		ToolUseID:     "tool-1",
+	}, risk.RiskDecision{
+		Decision:   risk.DecisionAllow,
+		Reason:     "normal",
+		ReasonCode: "normal_tool_call",
+		RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.SaveDecision(context.Background(), risk.HookEvent{
+		SessionID:     "s1",
+		HookEventName: "PreToolUse",
+		ToolName:      "Read",
+		ToolUseID:     "tool-2",
+	}, risk.RiskDecision{
+		Decision:   risk.DecisionAllow,
+		Reason:     "normal",
+		ReasonCode: "normal_tool_call",
+		RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sharedUpdated := "2026-05-19T10:00:00Z"
+	if _, err := store.db.ExecContext(context.Background(), `
+update authorization_actions
+set updated_at = ?
+where id in (?, ?)
+	`, sharedUpdated, first.ID, second.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	firstBatch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstBatch.Cursor == nil {
+		t.Fatal("first batch cursor = nil")
+	}
+
+	secondBatch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{
+		UpdatedAfter:   &firstBatch.Cursor.UpdatedAt,
+		UpdatedAfterID: firstBatch.Cursor.ActionID,
+		Limit:          1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondBatch.Actions) != 1 || secondBatch.Actions[0]["id"] == firstBatch.Cursor.ActionID {
+		t.Fatalf("second batch actions = %+v, cursor = %+v", secondBatch.Actions, firstBatch.Cursor)
+	}
+}
+
 func TestLedgerBatchIncludesReceiptChainAnchorForIncrementalExports(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {
