@@ -36,6 +36,7 @@ type Options struct {
 	CloudURL       string
 	OrganizationID string
 	InstallationID string
+	InstallToken   string
 	DeviceLabel    string
 	Interval       time.Duration
 	BatchLimit     int
@@ -177,6 +178,9 @@ func post(ctx context.Context, opts Options, payload Payload) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if token := strings.TrimSpace(opts.InstallToken); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	client := opts.HTTPClient
 	if client == nil {

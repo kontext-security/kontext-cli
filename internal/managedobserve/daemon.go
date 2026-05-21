@@ -78,6 +78,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			CloudURL:       loadedConfig.Config.CloudURL,
 			OrganizationID: loadedConfig.Config.OrganizationID,
 			InstallationID: installationState.InstallationID,
+			InstallToken:   loadedConfig.Config.Credentials.InstallToken,
 			DeviceLabel:    loadedConfig.Config.Device.Label,
 			Interval:       opts.StreamInterval,
 			HTTPClient:     opts.StreamHTTPClient,

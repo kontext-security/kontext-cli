@@ -43,6 +43,28 @@ func TestParseValidConfigNormalizesStrings(t *testing.T) {
 	}
 }
 
+func TestParseAcceptsInlineInstallToken(t *testing.T) {
+	cfg, err := Parse([]byte(`{
+  "version": "managed-install-v1",
+  "organization_id": "katana",
+  "cloud_url": "https://api.kontext.dev",
+  "mode": "observe",
+  "agent": "claude",
+  "credentials": {
+    "install_token": "abcdefghijklmnopqrstuvwxyz1234567890"
+  }
+}`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if cfg.Credentials.InstallToken != "abcdefghijklmnopqrstuvwxyz1234567890" {
+		t.Fatalf("install token was not parsed")
+	}
+	if cfg.Credentials.InstallTokenRef.String() != "" {
+		t.Fatalf("install token ref = %q, want empty", cfg.Credentials.InstallTokenRef.String())
+	}
+}
+
 func TestParseRejectsUnknownFields(t *testing.T) {
 	_, err := Parse([]byte(`{
   "version": "managed-install-v1",
@@ -77,6 +99,36 @@ func TestParseRequiresFields(t *testing.T) {
 	for name, replacement := range tests {
 		t.Run(name, func(t *testing.T) {
 			input := strings.Replace(validConfigJSON(), replacementFor(name), replacement, 1)
+			if _, err := Parse([]byte(input)); err == nil {
+				t.Fatalf("Parse() error = nil, want failure")
+			}
+		})
+	}
+}
+
+func TestParseRequiresInstallTokenOrRef(t *testing.T) {
+	_, err := Parse([]byte(`{
+  "version": "managed-install-v1",
+  "organization_id": "org_123",
+  "cloud_url": "https://api.kontext.dev",
+  "mode": "observe",
+  "agent": "claude",
+  "credentials": {}
+}`))
+	if err == nil || !strings.Contains(err.Error(), "install_token") {
+		t.Fatalf("Parse() error = %v, want install token requirement", err)
+	}
+}
+
+func TestParseRejectsWeakInlineInstallToken(t *testing.T) {
+	tests := []string{
+		"short",
+		"abcdefghijklmnopqrstuvwxyz123456 7890",
+		"abcdefghijklmnopqrstuvwxyz123456\n7890",
+	}
+	for _, token := range tests {
+		t.Run(token, func(t *testing.T) {
+			input := strings.Replace(validConfigJSON(), `"install_token_ref": "env:KONTEXT_INSTALL_TOKEN"`, `"install_token": "`+strings.ReplaceAll(token, "\n", `\n`)+`"`, 1)
 			if _, err := Parse([]byte(input)); err == nil {
 				t.Fatalf("Parse() error = nil, want failure")
 			}

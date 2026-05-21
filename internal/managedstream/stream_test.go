@@ -23,6 +23,9 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 		if r.URL.Path != DefaultEndpoint {
 			t.Fatalf("path = %q, want %q", r.URL.Path, DefaultEndpoint)
 		}
+		if got := r.Header.Get("Authorization"); got != "Bearer pilot-token" {
+			t.Fatalf("authorization = %q, want bearer token", got)
+		}
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("Decode() error = %v", err)
 		}
@@ -37,6 +40,7 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "pilot-token",
 		DeviceLabel:    "michel-macbook",
 		HTTPClient:     server.Client(),
 	}); err != nil {

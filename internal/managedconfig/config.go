@@ -39,7 +39,8 @@ type Config struct {
 }
 
 type Credentials struct {
-	InstallTokenRef TokenRef `json:"install_token_ref"`
+	InstallTokenRef TokenRef `json:"install_token_ref,omitempty"`
+	InstallToken    string   `json:"install_token,omitempty"`
 }
 
 type TokenRef struct {
@@ -150,6 +151,7 @@ func normalizeAndValidate(cfg Config) (Config, error) {
 	cfg.Agent = strings.TrimSpace(cfg.Agent)
 	cfg.Credentials.InstallTokenRef.Source = strings.TrimSpace(cfg.Credentials.InstallTokenRef.Source)
 	cfg.Credentials.InstallTokenRef.Name = strings.TrimSpace(cfg.Credentials.InstallTokenRef.Name)
+	cfg.Credentials.InstallToken = strings.TrimSpace(cfg.Credentials.InstallToken)
 	cfg.Device.Label = strings.TrimSpace(cfg.Device.Label)
 
 	if cfg.Version != Version {
@@ -167,10 +169,30 @@ func normalizeAndValidate(cfg Config) (Config, error) {
 	if cfg.Agent != Agent {
 		return Config{}, fmt.Errorf("agent must be %q", Agent)
 	}
-	if err := validateTokenRef(cfg.Credentials.InstallTokenRef); err != nil {
-		return Config{}, err
+	if cfg.Credentials.InstallToken == "" && cfg.Credentials.InstallTokenRef.String() == "" {
+		return Config{}, errors.New("credentials.install_token or credentials.install_token_ref is required")
+	}
+	if cfg.Credentials.InstallToken != "" {
+		if err := validateInstallToken(cfg.Credentials.InstallToken); err != nil {
+			return Config{}, err
+		}
+	}
+	if cfg.Credentials.InstallTokenRef.String() != "" {
+		if err := validateTokenRef(cfg.Credentials.InstallTokenRef); err != nil {
+			return Config{}, err
+		}
 	}
 	return cfg, nil
+}
+
+func validateInstallToken(value string) error {
+	if strings.ContainsAny(value, " \t\r\n") {
+		return errors.New("credentials.install_token must not contain whitespace")
+	}
+	if len(value) < 32 {
+		return errors.New("credentials.install_token must be at least 32 characters")
+	}
+	return nil
 }
 
 func validateCloudURL(value string) error {
@@ -212,6 +234,9 @@ func validateCloudURL(value string) error {
 }
 
 func validateTokenRef(ref TokenRef) error {
+	if ref.Source == "" && ref.Name == "" {
+		return nil
+	}
 	switch ref.Source {
 	case "keychain", "env":
 	default:
