@@ -2,6 +2,9 @@ package managedobserve
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -82,6 +85,96 @@ func TestDaemonSessionEndClosesHookSessionID(t *testing.T) {
 	session = waitForSession(t, store, "claude-session-end")
 	if session.Status != "closed" || session.ClosedAt == nil {
 		t.Fatalf("session = %+v, want actual hook session closed", session)
+	}
+}
+
+func TestDaemonStreamsLedgerBatches(t *testing.T) {
+	requests := make(chan map[string]any, 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/authorization-ledger/batches" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	dir := t.TempDir()
+	socketDir, err := os.MkdirTemp("/tmp", "kontext-managedobserve-stream-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "kontext.sock")
+	dbPath := filepath.Join(dir, "guard.db")
+	writeTestManagedConfigWithCloudURL(t, filepath.Join(dir, "managed.json"), server.URL)
+	writeTestInstallation(t, filepath.Join(dir, "installation.json"))
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunDaemon(ctx, DaemonOptions{
+			SocketPath:       socketPath,
+			DBPath:           dbPath,
+			IdleTimeout:      time.Hour,
+			StreamStatePath:  filepath.Join(dir, "stream-state.json"),
+			StreamInterval:   20 * time.Millisecond,
+			StreamHTTPClient: server.Client(),
+		})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("RunDaemon() error = %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("RunDaemon did not stop")
+		}
+	})
+	waitForSocket(t, socketPath, errCh)
+
+	client := localruntime.NewClient(socketPath)
+	client.Timeout = time.Second
+	if _, err := client.Process(context.Background(), hook.Event{
+		SessionID: "claude-stream-session",
+		Agent:     "claude",
+		HookName:  hook.HookPreToolUse,
+		ToolName:  "Read",
+		CWD:       "/tmp/project",
+	}); err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	select {
+	case body := <-requests:
+		if body["organization_id"] != "org_123" {
+			t.Fatalf("organization_id = %v", body["organization_id"])
+		}
+		if body["installation_id"] != "ins_0123456789abcdefghijklmnopqrstuv" {
+			t.Fatalf("installation_id = %v", body["installation_id"])
+		}
+		actions, ok := body["authorization_actions"].([]any)
+		if !ok {
+			t.Fatalf("authorization_actions = %#v", body["authorization_actions"])
+		}
+		found := false
+		for _, raw := range actions {
+			action, ok := raw.(map[string]any)
+			if ok && action["session_id"] == "claude-stream-session" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("authorization_actions = %#v, want claude stream session action", body["authorization_actions"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for hosted ledger batch")
 	}
 }
 
@@ -234,12 +327,18 @@ func waitForSocket(t *testing.T, socketPath string, errCh <-chan error) {
 
 func writeTestManagedConfig(t *testing.T, path string) {
 	t.Helper()
+	writeTestManagedConfigWithCloudURL(t, path, "https://app.kontext.dev")
+}
+
+func writeTestManagedConfigWithCloudURL(t *testing.T, path, cloudURL string) {
+	t.Helper()
 	if err := os.WriteFile(path, []byte(`{
   "version": "managed-install-v1",
   "organization_id": "org_123",
-  "cloud_url": "https://app.kontext.dev",
+  "cloud_url": "`+cloudURL+`",
   "mode": "observe",
   "agent": "claude",
+  "device": {"label": "test-mac"},
   "credentials": {"install_token_ref": "env:KONTEXT_INSTALL_TOKEN"}
 }`), 0o600); err != nil {
 		t.Fatalf("WriteFile(managed config) error = %v", err)

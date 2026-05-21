@@ -12,8 +12,9 @@ import (
 type LedgerRecord map[string]any
 
 type LedgerExportOptions struct {
-	UpdatedAfter *time.Time
-	Limit        int
+	UpdatedAfter   *time.Time
+	UpdatedAfterID string
+	Limit          int
 }
 
 type LedgerBatch struct {
@@ -21,10 +22,16 @@ type LedgerBatch struct {
 	Actions            []LedgerRecord            `json:"authorization_actions"`
 	Receipts           []LedgerRecord            `json:"authorization_receipts"`
 	ReceiptChainAnchor *LedgerReceiptChainAnchor `json:"receipt_chain_anchor,omitempty"`
+	Cursor             *LedgerCursor             `json:"-"`
 }
 
 type LedgerReceiptChainAnchor struct {
 	PreviousReceiptHash string `json:"previous_receipt_hash"`
+}
+
+type LedgerCursor struct {
+	UpdatedAt time.Time
+	ActionID  string
 }
 
 const authorizationActionsSelect = `
@@ -56,6 +63,10 @@ func (s *Store) LedgerBatch(ctx context.Context, opts LedgerExportOptions) (Ledg
 	if err != nil {
 		return LedgerBatch{}, err
 	}
+	cursor, err := ledgerCursor(actions)
+	if err != nil {
+		return LedgerBatch{}, err
+	}
 	receipts, err := s.authorizationReceiptRangeForActions(ctx, recordIDs(actions))
 	if err != nil {
 		return LedgerBatch{}, err
@@ -73,6 +84,7 @@ func (s *Store) LedgerBatch(ctx context.Context, opts LedgerExportOptions) (Ledg
 		Actions:            actions,
 		Receipts:           receipts,
 		ReceiptChainAnchor: receiptChainAnchor(receipts),
+		Cursor:             cursor,
 	}, nil
 }
 
@@ -108,8 +120,14 @@ func (s *Store) AuthorizationActions(ctx context.Context, opts LedgerExportOptio
 	query := authorizationActionsSelect
 	args := []any{}
 	if opts.UpdatedAfter != nil {
-		query += "\nwhere updated_at > ?"
-		args = append(args, opts.UpdatedAfter.Format(time.RFC3339Nano))
+		if opts.UpdatedAfterID != "" {
+			query += "\nwhere updated_at > ? or (updated_at = ? and id > ?)"
+			updatedAfter := opts.UpdatedAfter.Format(time.RFC3339Nano)
+			args = append(args, updatedAfter, updatedAfter, opts.UpdatedAfterID)
+		} else {
+			query += "\nwhere updated_at > ?"
+			args = append(args, opts.UpdatedAfter.Format(time.RFC3339Nano))
+		}
 	}
 	query += "\norder by updated_at, id"
 	if opts.Limit > 0 {
@@ -117,6 +135,23 @@ func (s *Store) AuthorizationActions(ctx context.Context, opts LedgerExportOptio
 		args = append(args, opts.Limit)
 	}
 	return queryLedgerRecords(ctx, s.db, query, args...)
+}
+
+func ledgerCursor(actions []LedgerRecord) (*LedgerCursor, error) {
+	if len(actions) == 0 {
+		return nil, nil
+	}
+	last := actions[len(actions)-1]
+	rawUpdatedAt, _ := last["updated_at"].(string)
+	actionID, _ := last["id"].(string)
+	if rawUpdatedAt == "" || actionID == "" {
+		return nil, nil
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, rawUpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &LedgerCursor{UpdatedAt: updatedAt, ActionID: actionID}, nil
 }
 
 func (s *Store) authorizationActionsByIDs(ctx context.Context, ids []string) ([]LedgerRecord, error) {
