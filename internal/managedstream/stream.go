@@ -104,7 +104,7 @@ func Flush(ctx context.Context, opts Options) error {
 
 	statePath := opts.StatePath
 	if statePath == "" {
-		statePath = DefaultStatePath()
+		statePath = DefaultStatePathForDB(opts.DBPath)
 	}
 	state, err := LoadState(statePath)
 	if err != nil {
@@ -212,6 +212,16 @@ func DefaultStatePath() string {
 		return filepath.Join(dir, "Kontext", "managed-observe", "stream-state.json")
 	}
 	return filepath.Join("managed-observe", "stream-state.json")
+}
+
+func DefaultStatePathForDB(dbPath string) string {
+	if path := strings.TrimSpace(os.Getenv(envStatePath)); path != "" {
+		return path
+	}
+	if dbPath = strings.TrimSpace(dbPath); dbPath != "" {
+		return filepath.Join(filepath.Dir(dbPath), "stream-state.json")
+	}
+	return DefaultStatePath()
 }
 
 func DefaultIntervalFromEnv() time.Duration {

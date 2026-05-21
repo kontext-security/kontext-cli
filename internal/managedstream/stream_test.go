@@ -94,6 +94,36 @@ func TestFlushDoesNotAdvanceCursorWhenHostedBackendFails(t *testing.T) {
 	}
 }
 
+func TestFlushDefaultsStatePathBesideLedgerDB(t *testing.T) {
+	t.Setenv(envStatePath, "")
+	store, dbPath := testStore(t)
+	saveTestDecision(t, store, "session-1", "toolu_1")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+
+	if err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		CloudURL:       server.URL,
+		OrganizationID: "org_123",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		HTTPClient:     server.Client(),
+	}); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	statePath := filepath.Join(filepath.Dir(dbPath), "stream-state.json")
+	state, err := LoadState(statePath)
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if state.UpdatedAfter == "" {
+		t.Fatal("updated_after was not persisted")
+	}
+}
+
 func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 	store, dbPath := testStore(t)
 	saveTestDecision(t, store, "session-1", "toolu_1")
