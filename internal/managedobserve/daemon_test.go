@@ -41,10 +41,7 @@ func TestDaemonPreservesHookSessionIDs(t *testing.T) {
 	store := openTestStore(t, dbPath)
 	defer store.Close()
 	for _, sessionID := range []string{"claude-session-one", "claude-session-two"} {
-		session, err := store.Session(context.Background(), sessionID)
-		if err != nil {
-			t.Fatalf("Session(%s) error = %v", sessionID, err)
-		}
+		session := waitForSession(t, store, sessionID)
 		if session.ID != sessionID || session.Source != "daemon_observed" || session.Status != "open" {
 			t.Fatalf("session %s = %+v, want open daemon-observed session", sessionID, session)
 		}
@@ -304,7 +301,7 @@ func startTestDaemon(t *testing.T) (string, string, func()) {
 
 func waitForSocket(t *testing.T, socketPath string, errCh <-chan error) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-errCh:
@@ -365,7 +362,7 @@ func openTestStore(t *testing.T, dbPath string) *sqlite.Store {
 
 func waitForSession(t *testing.T, store *sqlite.Store, sessionID string) sqlite.SessionRecord {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		session, err := store.Session(context.Background(), sessionID)

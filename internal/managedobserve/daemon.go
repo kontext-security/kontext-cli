@@ -99,8 +99,9 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		case err := <-streamErr:
 			if err != nil {
 				opts.Diagnostic.Printf("managed stream exited: %v\n", err)
+				return fmt.Errorf("managed stream failed: %w", err)
 			}
-			streamErr = nil
+			return nil
 		case <-cleanup.C:
 			if err := cleanupStaleSessions(ctx, dbPath, idleTimeout); err != nil {
 				opts.Diagnostic.Printf("managed observe cleanup: %v\n", err)
