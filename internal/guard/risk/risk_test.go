@@ -1,6 +1,7 @@
 package risk
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -182,5 +183,23 @@ func TestAsyncTelemetryAllowsWithoutRiskModel(t *testing.T) {
 	}
 	if decision.Decision != DecisionAllow {
 		t.Fatalf("decision = %s", decision.Decision)
+	}
+}
+
+func TestAddSignalPreservesFirstSeenOrderAndSkipsDuplicates(t *testing.T) {
+	t.Parallel()
+
+	event := RiskEvent{}
+	signalSet := make(map[string]struct{}, 3)
+
+	addSignal(&event, signalSet, "source_control")
+	addSignal(&event, signalSet, "direct_provider_api")
+	addSignal(&event, signalSet, "source_control")
+	addSignal(&event, signalSet, "credential_observed")
+	addSignal(&event, signalSet, "direct_provider_api")
+
+	want := []string{"source_control", "direct_provider_api", "credential_observed"}
+	if !reflect.DeepEqual(event.Signals, want) {
+		t.Fatalf("signals = %#v, want %#v", event.Signals, want)
 	}
 }
