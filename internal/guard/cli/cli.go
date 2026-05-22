@@ -406,8 +406,8 @@ func uninstallClaudeHooks(out io.Writer) error {
 		}
 		filtered := make([]any, 0, len(list))
 		for _, entry := range list {
-			if !isGuardHookEntry(entry) {
-				filtered = append(filtered, entry)
+			if updated, keep := removeGuardHookCommands(entry); keep {
+				filtered = append(filtered, updated)
 			}
 		}
 		hooks[hookName] = filtered
@@ -473,8 +473,8 @@ func mergeHooks(raw any, hookCommand string) map[string]any {
 		var list []any
 		if existing, ok := hooks[hookName].([]any); ok {
 			for _, entry := range existing {
-				if !isGuardHookEntry(entry) {
-					list = append(list, entry)
+				if updated, keep := removeGuardHookCommands(entry); keep {
+					list = append(list, updated)
 				}
 			}
 		}
@@ -501,6 +501,38 @@ func mergeHooks(raw any, hookCommand string) map[string]any {
 		hooks[hookName] = list
 	}
 	return hooks
+}
+
+func removeGuardHookCommands(entry any) (any, bool) {
+	group, ok := entry.(map[string]any)
+	if !ok {
+		return entry, !isGuardHookEntry(entry)
+	}
+	rawHooks, ok := group["hooks"].([]any)
+	if !ok {
+		return entry, !isGuardHookEntry(entry)
+	}
+	filtered := make([]any, 0, len(rawHooks))
+	for _, rawHook := range rawHooks {
+		if isGuardHookObject(rawHook) {
+			continue
+		}
+		filtered = append(filtered, rawHook)
+	}
+	if len(filtered) == 0 {
+		return nil, false
+	}
+	group["hooks"] = filtered
+	return group, true
+}
+
+func isGuardHookObject(raw any) bool {
+	hookMap, ok := raw.(map[string]any)
+	if !ok {
+		return false
+	}
+	command, ok := hookMap["command"].(string)
+	return ok && isGuardHookCommand(command)
 }
 
 func isGuardHookEntry(entry any) bool {

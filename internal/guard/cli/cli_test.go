@@ -107,6 +107,95 @@ func TestMergeHooksInstallsOnlyToolHooks(t *testing.T) {
 	}
 }
 
+func TestMergeHooksPreservesNonGuardHookInMixedGroup(t *testing.T) {
+	t.Parallel()
+
+	hooks := mergeHooks(map[string]any{
+		"PreToolUse": []any{
+			map[string]any{
+				"matcher": "Bash",
+				"hooks": []any{
+					map[string]any{
+						"type":    "command",
+						"command": "/usr/local/bin/custom-hook",
+					},
+					map[string]any{
+						"type":    "command",
+						"command": "/usr/local/bin/kontext hook --agent claude --mode observe",
+					},
+				},
+			},
+		},
+	}, `/usr/local/bin/kontext hook --agent claude --mode "${KONTEXT_MODE:-observe}" --socket /tmp/kontext.sock`)
+
+	list := hooks["PreToolUse"].([]any)
+	group := list[0].(map[string]any)
+	if group["matcher"] != "Bash" {
+		t.Fatalf("matcher = %v, want Bash", group["matcher"])
+	}
+	groupHooks := group["hooks"].([]any)
+	if len(groupHooks) != 1 {
+		t.Fatalf("mixed group hook count = %d, want 1", len(groupHooks))
+	}
+	command := groupHooks[0].(map[string]any)["command"]
+	if command != "/usr/local/bin/custom-hook" {
+		t.Fatalf("preserved command = %v, want custom hook", command)
+	}
+}
+
+func TestUninstallClaudeHooksPreservesNonGuardHookInMixedGroup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {"type": "command", "command": "/usr/local/bin/custom-hook"},
+          {"type": "command", "command": "/usr/local/bin/kontext hook --agent claude --mode observe"}
+        ]
+      }
+    ]
+  }
+}`
+	if err := os.WriteFile(settingsPath, []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	if err := uninstallClaudeHooks(&stdout); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	hooks := got["hooks"].(map[string]any)
+	list := hooks["PreToolUse"].([]any)
+	group := list[0].(map[string]any)
+	if group["matcher"] != "Bash" {
+		t.Fatalf("matcher = %v, want Bash", group["matcher"])
+	}
+	groupHooks := group["hooks"].([]any)
+	if len(groupHooks) != 1 {
+		t.Fatalf("mixed group hook count = %d, want 1", len(groupHooks))
+	}
+	command := groupHooks[0].(map[string]any)["command"]
+	if command != "/usr/local/bin/custom-hook" {
+		t.Fatalf("preserved command = %v, want custom hook", command)
+	}
+}
+
 func TestValidateLocalJudgeURLRejectsHostedURL(t *testing.T) {
 	if err := validateLocalJudgeURL("https://api.example.com/v1"); err == nil {
 		t.Fatal("validateLocalJudgeURL() error = nil, want hosted URL rejection")
