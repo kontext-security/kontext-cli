@@ -44,52 +44,53 @@ func NormalizeHookEvent(event HookEvent) RiskEvent {
 	}
 	combined := strings.ToLower(fmt.Sprintf("%s %s %s", toolName, commandSignalText, combinedInput))
 
+	signalSet := make(map[string]struct{}, 8)
 	if strings.HasPrefix(lowerTool, "mcp__") {
 		riskEvent.Type = EventManagedToolCall
-		addSignal(&riskEvent, "managed_tool")
+		addSignal(&riskEvent, signalSet, "managed_tool")
 	}
 	if lowerTool == "bash" || strings.Contains(lowerTool, "bash") || strings.Contains(lowerTool, "shell") {
-		classifySourceControl(&riskEvent, lowerCommand)
+		classifySourceControl(&riskEvent, signalSet, lowerCommand)
 	}
 	if isReadTool(lowerTool) && isCredentialPath(path) {
 		riskEvent.Type = EventCredentialAccess
 		riskEvent.CredentialObserved = true
 		riskEvent.CredentialSource = "tool_input"
 		riskEvent.PathClass = pathClass(path)
-		addSignal(&riskEvent, "credential_path")
+		addSignal(&riskEvent, signalSet, "credential_path")
 	}
 	if lowerTool == "bash" || strings.Contains(lowerTool, "bash") || strings.Contains(lowerTool, "shell") {
-		classifyBash(&riskEvent, lowerCommand, commandSignalText)
+		classifyBash(&riskEvent, signalSet, lowerCommand, commandSignalText)
 	}
 	if strings.Contains(lowerCommand, "curl") {
-		classifyProvider(&riskEvent, lowerCommand)
+		classifyProvider(&riskEvent, signalSet, lowerCommand)
 	}
 	if observesCredential(lowerCommand, riskEvent.Type) {
 		riskEvent.CredentialObserved = true
 		if riskEvent.CredentialSource == "" {
 			riskEvent.CredentialSource = "tool_input"
 		}
-		addSignal(&riskEvent, "credential_observed")
+		addSignal(&riskEvent, signalSet, "credential_observed")
 	}
 	if op := destructiveOperation(combined); op != "" {
 		riskEvent.Operation = op
 		riskEvent.OperationClass = "delete"
-		addSignal(&riskEvent, "destructive_verb")
+		addSignal(&riskEvent, signalSet, "destructive_verb")
 	}
 	if resource := resourceClass(combined); resource != "" {
 		riskEvent.ResourceClass = resource
-		addSignal(&riskEvent, "persistent_resource")
+		addSignal(&riskEvent, signalSet, "persistent_resource")
 	}
 	if riskEvent.OperationClass == "delete" && isPersistentResource(riskEvent.ResourceClass) {
 		riskEvent.Type = EventDestructiveProviderOperation
 	}
 	if riskEvent.Type == EventNormalToolCall && looksUnknownHighRisk(combined) {
 		riskEvent.Type = EventUnknown
-		addSignal(&riskEvent, "unknown_high_risk")
+		addSignal(&riskEvent, signalSet, "unknown_high_risk")
 	}
 	if explicitIntent(combined) {
 		riskEvent.ExplicitUserIntent = true
-		addSignal(&riskEvent, "explicit_user_intent")
+		addSignal(&riskEvent, signalSet, "explicit_user_intent")
 	}
 	if riskEvent.Provider == "" && riskEvent.Type == EventDirectProviderAPICall {
 		riskEvent.Provider = "unknown"
@@ -98,7 +99,7 @@ func NormalizeHookEvent(event HookEvent) RiskEvent {
 	return riskEvent
 }
 
-func classifyBash(event *RiskEvent, command, combined string) {
+func classifyBash(event *RiskEvent, signalSet map[string]struct{}, command, combined string) {
 	if strings.Contains(command, "cat .env") || strings.Contains(command, "printenv") {
 		event.Type = EventCredentialAccess
 		event.CredentialObserved = true
@@ -106,14 +107,14 @@ func classifyBash(event *RiskEvent, command, combined string) {
 		if strings.Contains(command, ".env") {
 			event.PathClass = "env_file"
 		}
-		addSignal(event, "shell_credential_access")
+		addSignal(event, signalSet, "shell_credential_access")
 	}
 	if strings.Contains(command, "curl") {
-		classifyProvider(event, command)
+		classifyProvider(event, signalSet, command)
 	}
 }
 
-func classifySourceControl(event *RiskEvent, command string) {
+func classifySourceControl(event *RiskEvent, signalSet map[string]struct{}, command string) {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
 		return
@@ -122,7 +123,7 @@ func classifySourceControl(event *RiskEvent, command string) {
 	case "git":
 		event.Provider = "git"
 		event.ProviderCategory = "source_control"
-		addSignal(event, "source_control")
+		addSignal(event, signalSet, "source_control")
 		if len(fields) > 1 {
 			event.Operation = fields[1]
 			switch fields[1] {
@@ -135,7 +136,7 @@ func classifySourceControl(event *RiskEvent, command string) {
 	case "gh":
 		event.Provider = "github"
 		event.ProviderCategory = "source_control"
-		addSignal(event, "source_control")
+		addSignal(event, signalSet, "source_control")
 		if len(fields) > 1 {
 			event.Operation = strings.Join(fields[:min(len(fields), 3)], " ")
 			event.OperationClass = "write"
@@ -149,7 +150,7 @@ func classifySourceControl(event *RiskEvent, command string) {
 	}
 }
 
-func classifyProvider(event *RiskEvent, text string) {
+func classifyProvider(event *RiskEvent, signalSet map[string]struct{}, text string) {
 	providers := map[string]string{
 		"api.railway.app":      "railway",
 		"railway.app":          "railway",
@@ -170,7 +171,7 @@ func classifyProvider(event *RiskEvent, text string) {
 			} else {
 				event.ProviderCategory = "infrastructure"
 			}
-			addSignal(event, "direct_provider_api")
+			addSignal(event, signalSet, "direct_provider_api")
 			return
 		}
 	}
@@ -387,11 +388,10 @@ func stripQuotedText(value string) string {
 	return b.String()
 }
 
-func addSignal(event *RiskEvent, signal string) {
-	for _, existing := range event.Signals {
-		if existing == signal {
-			return
-		}
+func addSignal(event *RiskEvent, signalSet map[string]struct{}, signal string) {
+	if _, exists := signalSet[signal]; exists {
+		return
 	}
+	signalSet[signal] = struct{}{}
 	event.Signals = append(event.Signals, signal)
 }
