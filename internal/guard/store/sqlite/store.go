@@ -77,6 +77,10 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(context.Background(), "pragma busy_timeout = 5000"); err != nil {
+		db.Close()
+		return nil, err
+	}
 	signer, err := newReceiptSigner(path)
 	if err != nil {
 		db.Close()

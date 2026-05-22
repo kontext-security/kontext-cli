@@ -3,6 +3,7 @@ package managedobserve
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -53,14 +54,18 @@ func TestDaemonSessionEndClosesHookSessionID(t *testing.T) {
 
 	client := localruntime.NewClient(socketPath)
 	client.Timeout = time.Second
-	if _, err := client.Process(context.Background(), hook.Event{
+	result, err := client.Process(context.Background(), hook.Event{
 		SessionID: "claude-session-end",
 		Agent:     "claude",
 		HookName:  hook.HookPreToolUse,
 		ToolName:  "Read",
 		CWD:       "/tmp/project",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("PreToolUse error = %v", err)
+	}
+	if result.ReasonCode == "" {
+		t.Fatalf("PreToolUse result = %+v, want recorded decision", result)
 	}
 	store := openTestStore(t, dbPath)
 	defer store.Close()
@@ -260,6 +265,10 @@ func startTestDaemon(t *testing.T) (string, string, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	dir := t.TempDir()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
 	socketDir, err := os.MkdirTemp("/tmp", "kontext-managedobserve-daemon-test-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp() error = %v", err)
@@ -267,15 +276,16 @@ func startTestDaemon(t *testing.T) (string, string, func()) {
 	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 	socketPath := filepath.Join(socketDir, "kontext.sock")
 	dbPath := filepath.Join(dir, "guard.db")
-	writeTestManagedConfig(t, filepath.Join(dir, "managed.json"))
+	writeTestManagedConfigWithCloudURL(t, filepath.Join(dir, "managed.json"), server.URL)
 	writeTestInstallation(t, filepath.Join(dir, "installation.json"))
 
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- RunDaemon(ctx, DaemonOptions{
-			SocketPath:  socketPath,
-			DBPath:      dbPath,
-			IdleTimeout: time.Hour,
+			SocketPath:       socketPath,
+			DBPath:           dbPath,
+			IdleTimeout:      time.Hour,
+			StreamHTTPClient: server.Client(),
 		})
 	}()
 	waitForSocket(t, socketPath, errCh)
@@ -308,13 +318,9 @@ func waitForSocket(t *testing.T, socketPath string, errCh <-chan error) {
 			t.Fatalf("RunDaemon exited early: %v", err)
 		default:
 		}
-		client := localruntime.NewClient(socketPath)
-		client.Timeout = 20 * time.Millisecond
-		if _, err := client.Process(context.Background(), hook.Event{
-			SessionID: "probe-session",
-			Agent:     "claude",
-			HookName:  hook.HookSessionStart,
-		}); err == nil {
+		conn, err := net.DialTimeout("unix", socketPath, 20*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
