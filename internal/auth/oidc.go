@@ -204,21 +204,18 @@ func resolveLoginScopes(scopes []string) []string {
 	}
 
 	resolved := append([]string(nil), baseScopes...)
+	seen := make(map[string]struct{}, len(baseScopes)+len(scopes))
+	for _, scope := range resolved {
+		seen[scope] = struct{}{}
+	}
 	for _, scope := range scopes {
-		if !hasScope(resolved, scope) {
-			resolved = append(resolved, scope)
+		if _, ok := seen[scope]; ok {
+			continue
 		}
+		seen[scope] = struct{}{}
+		resolved = append(resolved, scope)
 	}
 	return resolved
-}
-
-func hasScope(scopes []string, scope string) bool {
-	for _, existing := range scopes {
-		if existing == scope {
-			return true
-		}
-	}
-	return false
 }
 
 func applyTokenExtraEmailFallback(session *Session, token *oauth2.Token) {
