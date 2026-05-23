@@ -33,6 +33,7 @@ export default function App() {
   const [policyPending, setPolicyPending] = useState<PolicyProfileID | null>(null);
   const [policyError, setPolicyError] = useState("");
   const selectedRef = useRef("");
+  const eventsRequestRef = useRef(0);
   const useSampleDashboard = USE_SAMPLE_DATA && API === "";
 
   useEffect(() => {
@@ -114,8 +115,10 @@ export default function App() {
       applyEvents(SAMPLE_EVENTS);
       return;
     }
+    const requestID = ++eventsRequestRef.current;
     fetchEvents(id)
       .then((next) => {
+        if (eventsRequestRef.current !== requestID) return;
         if (selectedRef.current !== id) return;
         applyEvents(next);
       })
