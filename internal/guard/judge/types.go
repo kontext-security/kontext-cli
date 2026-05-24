@@ -4,14 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 	"strings"
 )
 
-type Decision string
+type Decision = risk.Decision
 
 const (
-	DecisionAllow Decision = "allow"
-	DecisionDeny  Decision = "deny"
+	DecisionAllow = risk.DecisionAllow
+	DecisionDeny  = risk.DecisionDeny
 )
 
 type RiskLevel string

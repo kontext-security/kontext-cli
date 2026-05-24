@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -66,7 +67,11 @@ func (p RiskPolicyProvider) DecideHook(ctx context.Context, event risk.HookEvent
 		return p.asyncTelemetryDecision(event), nil
 	}
 	riskEvent := risk.NormalizeHookEvent(event)
-	policyResult := p.policyEngine.Evaluate(riskEvent, p.activePolicyConfig(ctx))
+	policyConfig, err := p.activePolicyConfig(ctx)
+	if err != nil {
+		return risk.RiskDecision{}, err
+	}
+	policyResult := p.policyEngine.Evaluate(riskEvent, policyConfig)
 	applyPolicyMetadata(&riskEvent, policyResult)
 	if policyResult.Decision == guardpolicy.DecisionDeny {
 		return deterministicDenyDecision(riskEvent, policyResult), nil
@@ -165,18 +170,18 @@ func judgeDecision(riskEvent risk.RiskEvent, result judge.Result) risk.RiskDecis
 	}
 }
 
-func (p RiskPolicyProvider) activePolicyConfig(ctx context.Context) guardpolicy.Config {
+func (p RiskPolicyProvider) activePolicyConfig(ctx context.Context) (guardpolicy.Config, error) {
 	if p.policyConfig == nil {
-		return guardpolicy.DefaultConfig()
+		return guardpolicy.DefaultConfig(), nil
 	}
 	config, err := p.policyConfig.ActivePolicyConfig(ctx)
 	if err != nil {
-		return guardpolicy.DefaultConfig()
+		return guardpolicy.Config{}, fmt.Errorf("load policy config: %w", err)
 	}
 	if err := config.Validate(); err != nil {
-		return guardpolicy.DefaultConfig()
+		return guardpolicy.Config{}, fmt.Errorf("validate policy config: %w", err)
 	}
-	return config
+	return config, nil
 }
 
 func applyPolicyMetadata(event *risk.RiskEvent, result guardpolicy.Result) {

@@ -2,9 +2,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { decisionLabel, decisionTone } from "./helpers";
-import type { Counts, Decision, GuardMode, Tab } from "./types";
+import { DECISIONS, type Counts, type Decision, type GuardMode, type Tab } from "./types";
 
-const DECISION_KINDS: Decision[] = ["deny", "allow"];
+const DECISION_KINDS: readonly Decision[] = DECISIONS;
 
 export function StatRow({
   counts,

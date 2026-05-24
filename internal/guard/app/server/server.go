@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -82,6 +84,9 @@ func NewServerWithOptions(store *sqlite.Store, opts Options) (*Server, error) {
 	configProvider := opts.PolicyConfigProvider
 	if configProvider == nil {
 		if explicitPolicyConfig(opts.PolicyConfig) {
+			if err := opts.PolicyConfig.Validate(); err != nil {
+				return nil, fmt.Errorf("invalid policy config: %w", err)
+			}
 			configProvider = staticPolicyConfigProvider{config: opts.PolicyConfig}
 		} else {
 			configProvider = policyStoreConfigProvider{store: policyStore}
@@ -386,9 +391,17 @@ func policyProfileResponse(snapshot policyconfig.Snapshot) PolicyProfileResponse
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("marshal json response: %v", err), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	payload = append(payload, '\n')
+	if _, err := w.Write(payload); err != nil {
+		fmt.Fprintf(os.Stderr, "guard server: write response failed: %v\n", err)
+	}
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
@@ -428,7 +441,7 @@ type policyStoreConfigProvider struct {
 
 func (p policyStoreConfigProvider) ActivePolicyConfig(context.Context) (policy.Config, error) {
 	if p.store == nil {
-		return policy.DefaultConfig(), nil
+		return policy.Config{}, fmt.Errorf("policy config store is nil")
 	}
 	return p.store.Current().ToPolicyConfig(), nil
 }
@@ -468,8 +481,11 @@ func OpenDefaultServerWithOptions(dbPath string, opts Options) (*Server, func() 
 	}
 	server, err := NewServerWithOptions(store, opts)
 	if err != nil {
-		_ = store.Close()
-		return nil, nil, err
+		closeErr := store.Close()
+		if closeErr == nil {
+			return nil, nil, err
+		}
+		return nil, nil, errors.Join(err, fmt.Errorf("close store: %w", closeErr))
 	}
 	return server, store.Close, nil
 }

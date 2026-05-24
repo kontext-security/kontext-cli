@@ -9,10 +9,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 import { decisionLabel, decisionSource, decisionTone, prettyTool, summaryOf } from "./helpers";
 import { DecisionDot } from "./shared";
-import type { Decision, Event, EventGroups, GuardMode, LogView, ObservedActivityEvent, Tab } from "./types";
+import { DECISIONS, type Decision, type Event, type EventGroups, type GuardMode, type LogView, type ObservedActivityEvent, type Tab } from "./types";
 
 const VISIBLE_KINDS = {
-  all: ["deny", "allow"],
+  all: DECISIONS,
   deny: ["deny"],
   allow: ["allow"],
 } satisfies Record<Tab, readonly Decision[]>;

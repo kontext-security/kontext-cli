@@ -1,12 +1,43 @@
-export type Decision = "allow" | "deny";
+export const DECISIONS = ["deny", "allow"] as const;
+export type Decision = (typeof DECISIONS)[number];
 
-export type GuardMode = "observe" | "enforce";
+export const GUARD_MODES = ["observe", "enforce"] as const;
+export type GuardMode = (typeof GUARD_MODES)[number];
 
-export type Tab = "all" | "deny" | "allow";
+export const TABS = ["all", "deny", "allow"] as const;
+export type Tab = (typeof TABS)[number];
 
-export type LogView = "decisions" | "observed";
+export const LOG_VIEWS = ["decisions", "observed"] as const;
+export type LogView = (typeof LOG_VIEWS)[number];
 
-export type PolicyProfileID = "relaxed" | "balanced" | "strict";
+export const POLICY_PROFILE_IDS = ["relaxed", "balanced", "strict"] as const;
+export type PolicyProfileID = (typeof POLICY_PROFILE_IDS)[number];
+
+const DECISION_SET: ReadonlySet<string> = new Set(DECISIONS);
+const GUARD_MODE_SET: ReadonlySet<string> = new Set(GUARD_MODES);
+const TAB_SET: ReadonlySet<string> = new Set(TABS);
+const LOG_VIEW_SET: ReadonlySet<string> = new Set(LOG_VIEWS);
+const POLICY_PROFILE_ID_SET: ReadonlySet<string> = new Set(POLICY_PROFILE_IDS);
+
+export function isDecision(value: unknown): value is Decision {
+  return typeof value === "string" && DECISION_SET.has(value);
+}
+
+export function isGuardMode(value: unknown): value is GuardMode {
+  return typeof value === "string" && GUARD_MODE_SET.has(value);
+}
+
+export function isTab(value: unknown): value is Tab {
+  return typeof value === "string" && TAB_SET.has(value);
+}
+
+export function isLogView(value: unknown): value is LogView {
+  return typeof value === "string" && LOG_VIEW_SET.has(value);
+}
+
+export function isPolicyProfileID(value: unknown): value is PolicyProfileID {
+  return typeof value === "string" && POLICY_PROFILE_ID_SET.has(value);
+}
 
 export type RiskEvent = {
   type?: string;
