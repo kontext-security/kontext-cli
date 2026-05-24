@@ -20,6 +20,15 @@ func (h HookName) String() string {
 	return string(h)
 }
 
+func (h HookName) IsKnown() bool {
+	switch h {
+	case HookSessionStart, HookPreToolUse, HookPostToolUse, HookPostToolUseFailed, HookSessionEnd, HookUserPromptSubmit:
+		return true
+	default:
+		return false
+	}
+}
+
 func (h HookName) CanBlock() bool {
 	return h == HookPreToolUse
 }
