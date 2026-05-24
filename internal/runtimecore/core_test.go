@@ -54,6 +54,22 @@ func TestProcessHookRoutesByBlockingCapability(t *testing.T) {
 	}
 }
 
+func TestProcessHookRejectsUnknownHookNames(t *testing.T) {
+	runtime := &recordingRuntime{}
+	core, err := New(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = core.ProcessHook(context.Background(), hook.Event{HookName: hook.HookName("pretooluse")})
+	if err == nil {
+		t.Fatal("ProcessHook() error = nil, want unknown hook rejection")
+	}
+	if runtime.evaluateCalls != 0 || runtime.ingestCalls != 0 {
+		t.Fatalf("calls evaluate=%d ingest=%d, want no runtime calls", runtime.evaluateCalls, runtime.ingestCalls)
+	}
+}
+
 func TestProcessHookEnsuresSessionBeforeEvaluation(t *testing.T) {
 	runtime := &recordingSessionRuntime{
 		recordingRuntime: recordingRuntime{
