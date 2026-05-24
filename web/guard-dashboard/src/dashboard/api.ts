@@ -1,4 +1,5 @@
 import { API } from "./config";
+import { isDecision, isGuardMode, isPolicyProfileID } from "./types";
 import type { Decision, Event, GuardMode, PolicyProfile, PolicyProfileID, RiskEvent, Session } from "./types";
 
 export function errorMessage(error: unknown): string {
@@ -6,7 +7,7 @@ export function errorMessage(error: unknown): string {
 }
 
 async function responseJSON(r: Response): Promise<unknown> {
-  return r.json();
+  return r.json() as Promise<unknown>;
 }
 
 async function ok(r: Response): Promise<unknown> {
@@ -51,36 +52,17 @@ function stringList(value: unknown): string[] | undefined {
 }
 
 function decision(value: unknown): Decision | undefined {
-  switch (value) {
-    case "allow":
-    case "deny":
-      return value;
-    case "ask":
-      return "deny";
-    default:
-      return undefined;
-  }
+  if (isDecision(value)) return value;
+  if (value === "ask") return "deny";
+  return undefined;
 }
 
 function policyProfileID(value: unknown): PolicyProfileID | undefined {
-  switch (value) {
-    case "relaxed":
-    case "balanced":
-    case "strict":
-      return value;
-    default:
-      return undefined;
-  }
+  return isPolicyProfileID(value) ? value : undefined;
 }
 
 function guardMode(value: unknown): GuardMode | undefined {
-  switch (value) {
-    case "observe":
-    case "enforce":
-      return value;
-    default:
-      return undefined;
-  }
+  return isGuardMode(value) ? value : undefined;
 }
 
 function parseRiskEvent(value: unknown): RiskEvent | undefined {

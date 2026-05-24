@@ -2,9 +2,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { decisionLabel, decisionTone } from "./helpers";
+import { DECISIONS } from "./types";
 import type { Counts, Decision, GuardMode, Tab } from "./types";
-
-const DECISION_KINDS: Decision[] = ["deny", "allow"];
 
 export function StatRow({
   counts,
@@ -28,7 +27,7 @@ export function StatRow({
         onClick={() => onSelect("all")}
       />
       <div className="grid divide-y md:grid-cols-2 md:divide-x md:divide-y-0">
-        {DECISION_KINDS.map((id) => (
+        {DECISIONS.map((id) => (
           <StatTile
             key={id}
             id={id}
@@ -151,7 +150,7 @@ function StatTile({
 }
 
 function RatioStrip({ counts, mode }: { counts: Counts; mode: GuardMode }) {
-  const segments = DECISION_KINDS.map((kind) => ({
+  const segments = DECISIONS.map((kind) => ({
     count: counts[kind],
     color: decisionTone[kind].bg,
     label: decisionLabel(kind, mode),
