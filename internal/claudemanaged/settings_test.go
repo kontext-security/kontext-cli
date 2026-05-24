@@ -246,6 +246,31 @@ func TestValidateRejectsInvalidManagedSettings(t *testing.T) {
 			wantErr: "PreToolUse Kontext command hook uses matcher \"Bash\"",
 		},
 		{
+			name: "first restrictive matcher wins",
+			mutate: func(settings Settings) Settings {
+				settings.Hooks["PreToolUse"] = []MatcherGroup{
+					{
+						Matcher: "Bash",
+						Hooks: []Handler{{
+							Type:    "command",
+							Command: "/usr/local/bin/kontext",
+							Args:    []string{"hook", "pre-tool-use"},
+						}},
+					},
+					{
+						Matcher: "Git",
+						Hooks: []Handler{{
+							Type:    "command",
+							Command: "/usr/local/bin/kontext",
+							Args:    []string{"hook", "pre-tool-use"},
+						}},
+					},
+				}
+				return settings
+			},
+			wantErr: "PreToolUse Kontext command hook uses matcher \"Bash\"",
+		},
+		{
 			name: "wrong handler type",
 			mutate: func(settings Settings) Settings {
 				settings.Hooks["PreToolUse"][0].Hooks[0].Type = "prompt"

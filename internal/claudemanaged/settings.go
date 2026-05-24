@@ -157,7 +157,7 @@ func validateEvent(groups []MatcherGroup, event Event, kontextBinary string) err
 
 	wantArgs := []string{"hook", event.Alias}
 	foundValid := false
-	foundRestrictiveMatcher := false
+	firstRestrictiveMatcher := ""
 	for _, group := range groups {
 		for _, handler := range group.Hooks {
 			if isShellFormKontextHandler(handler, kontextBinary) {
@@ -179,7 +179,9 @@ func validateEvent(groups []MatcherGroup, event Event, kontextBinary string) err
 				return err
 			}
 			if !isAllMatcher(group.Matcher) {
-				foundRestrictiveMatcher = true
+				if firstRestrictiveMatcher == "" {
+					firstRestrictiveMatcher = group.Matcher
+				}
 				continue
 			}
 			foundValid = true
@@ -189,8 +191,8 @@ func validateEvent(groups []MatcherGroup, event Event, kontextBinary string) err
 	if foundValid {
 		return nil
 	}
-	if foundRestrictiveMatcher {
-		return fmt.Errorf("%s Kontext command hook uses matcher %q; use an empty matcher for full event coverage", event.Name, firstRestrictiveMatcher(groups, kontextBinary, wantArgs))
+	if firstRestrictiveMatcher != "" {
+		return fmt.Errorf("%s Kontext command hook uses matcher %q; use an empty matcher for full event coverage", event.Name, firstRestrictiveMatcher)
 	}
 	return fmt.Errorf("%s Kontext command hook missing for %s", event.Name, kontextBinary)
 }
@@ -231,17 +233,6 @@ func isShellFormKontextHandler(handler Handler, kontextBinary string) bool {
 func isAllMatcher(value string) bool {
 	matcher := strings.TrimSpace(value)
 	return matcher == "" || matcher == "*"
-}
-
-func firstRestrictiveMatcher(groups []MatcherGroup, kontextBinary string, wantArgs []string) string {
-	for _, group := range groups {
-		for _, handler := range group.Hooks {
-			if handler.Command == kontextBinary && handler.Type == "command" && sameStrings(handler.Args, wantArgs) && !isAllMatcher(group.Matcher) {
-				return group.Matcher
-			}
-		}
-	}
-	return ""
 }
 
 func sameStrings(a, b []string) bool {
