@@ -87,6 +87,9 @@ func ValidateEvaluateHook(event hook.Event) error {
 	if event.HookName == "" {
 		return errors.New("hook event name is required")
 	}
+	if !event.HookName.IsKnown() {
+		return fmt.Errorf("hook event %q is not recognized", event.HookName)
+	}
 	if !event.HookName.CanBlock() {
 		return fmt.Errorf("hook event %q cannot be evaluated for enforcement", event.HookName)
 	}
@@ -111,6 +114,9 @@ func (c *Core) IngestEvent(ctx context.Context, event hook.Event) (hook.Result, 
 func ValidateIngestEvent(event hook.Event) error {
 	if event.HookName == "" {
 		return errors.New("hook event name is required")
+	}
+	if !event.HookName.IsKnown() {
+		return fmt.Errorf("hook event %q is not recognized", event.HookName)
 	}
 	if event.HookName.CanBlock() {
 		return fmt.Errorf("hook event %q must be evaluated for enforcement", event.HookName)
