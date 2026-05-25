@@ -119,7 +119,10 @@ export default function App() {
         if (selectedRef.current !== id) return;
         applyEvents(next);
       })
-      .catch((e: unknown) => setError(errorMessage(e)));
+      .catch((e: unknown) => {
+        if (selectedRef.current !== id) return;
+        setError(errorMessage(e));
+      });
   }
 
   function loadPolicy() {
