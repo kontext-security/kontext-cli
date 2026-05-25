@@ -67,11 +67,13 @@ func (s *Store) LedgerBatch(ctx context.Context, opts LedgerExportOptions) (Ledg
 	if err != nil {
 		return LedgerBatch{}, err
 	}
-	receipts, err := s.authorizationReceiptRangeForActions(ctx, recordIDs(actions))
+	actionIDs := recordIDs(actions)
+	receipts, err := s.authorizationReceiptRangeForActions(ctx, actionIDs)
 	if err != nil {
 		return LedgerBatch{}, err
 	}
-	actions, err = s.authorizationActionsByIDs(ctx, appendMissingIDs(recordIDs(actions), recordStrings(receipts, "action_id")))
+	actionIDs = appendMissingIDs(actionIDs, recordStrings(receipts, "action_id"))
+	actions, err = s.authorizationActionsByIDs(ctx, actionIDs)
 	if err != nil {
 		return LedgerBatch{}, err
 	}
