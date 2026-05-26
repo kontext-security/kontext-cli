@@ -36,6 +36,7 @@ type Options struct {
 	CloudURL       string
 	OrganizationID string
 	InstallationID string
+	InstallToken   string
 	DeviceLabel    string
 	Interval       time.Duration
 	BatchLimit     int
@@ -177,6 +178,7 @@ func post(ctx context.Context, opts Options, payload Payload) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(opts.InstallToken))
 
 	client := opts.HTTPClient
 	if client == nil {
@@ -300,6 +302,9 @@ func validateOptions(opts Options) error {
 	}
 	if strings.TrimSpace(opts.InstallationID) == "" {
 		return errors.New("managed stream requires installation id")
+	}
+	if strings.TrimSpace(opts.InstallToken) == "" {
+		return errors.New("managed stream requires install token")
 	}
 	return nil
 }

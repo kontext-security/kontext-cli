@@ -96,6 +96,9 @@ func TestDaemonStreamsLedgerBatches(t *testing.T) {
 		if r.URL.Path != "/api/v1/authorization-ledger/batches" {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-install-token" {
+			t.Fatalf("Authorization = %q, want bearer install token", got)
+		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("Decode() error = %v", err)
@@ -335,6 +338,7 @@ func writeTestManagedConfig(t *testing.T, path string) {
 
 func writeTestManagedConfigWithCloudURL(t *testing.T, path, cloudURL string) {
 	t.Helper()
+	t.Setenv("KONTEXT_INSTALL_TOKEN", "test-install-token")
 	if err := os.WriteFile(path, []byte(`{
   "version": "managed-install-v1",
   "organization_id": "org_123",

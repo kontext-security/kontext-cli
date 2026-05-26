@@ -23,6 +23,9 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 		if r.URL.Path != DefaultEndpoint {
 			t.Fatalf("path = %q, want %q", r.URL.Path, DefaultEndpoint)
 		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-install-token" {
+			t.Fatalf("Authorization = %q, want bearer install token", got)
+		}
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("Decode() error = %v", err)
 		}
@@ -37,6 +40,7 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
 		DeviceLabel:    "michel-macbook",
 		HTTPClient:     server.Client(),
 	}); err != nil {
@@ -89,6 +93,7 @@ func TestFlushDoesNotAdvanceCursorWhenHostedBackendFails(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
 		HTTPClient:     server.Client(),
 	}); err == nil {
 		t.Fatal("Flush() error = nil, want hosted failure")
@@ -114,6 +119,7 @@ func TestFlushDefaultsStatePathBesideLedgerDB(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
 		HTTPClient:     server.Client(),
 	}); err != nil {
 		t.Fatalf("Flush() error = %v", err)
@@ -151,6 +157,7 @@ func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
 		HTTPClient:     server.Client(),
 	}); err != nil {
 		t.Fatalf("Flush() error = %v", err)
