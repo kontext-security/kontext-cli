@@ -35,12 +35,12 @@ func TestTemplateIncludesManagedKontextHooks(t *testing.T) {
 		if handler.Type != "command" {
 			t.Fatalf("%s handler type = %q, want command", event.Name, handler.Type)
 		}
-		if handler.Command != "/opt/kontext/bin/kontext" {
-			t.Fatalf("%s command = %q, want binary path", event.Name, handler.Command)
+		wantCommand := "'/opt/kontext/bin/kontext' hook '" + event.Alias + "'"
+		if handler.Command != wantCommand {
+			t.Fatalf("%s command = %q, want %q", event.Name, handler.Command, wantCommand)
 		}
-		wantArgs := []string{"hook", event.Alias}
-		if !sameStrings(handler.Args, wantArgs) {
-			t.Fatalf("%s args = %q, want %q", event.Name, handler.Args, wantArgs)
+		if len(handler.Args) != 0 {
+			t.Fatalf("%s args = %q, want omitted", event.Name, handler.Args)
 		}
 		if handler.Timeout != DefaultHookTimeout {
 			t.Fatalf("%s timeout = %d, want %d", event.Name, handler.Timeout, DefaultHookTimeout)
@@ -55,15 +55,15 @@ func TestTemplateIncludesManagedKontextHooks(t *testing.T) {
 	}
 }
 
-func TestTemplateJSONUsesExecForm(t *testing.T) {
+func TestTemplateJSONUsesClaudeCommandForm(t *testing.T) {
 	t.Parallel()
 
 	data, err := TemplateJSON("/usr/local/bin/kontext")
 	if err != nil {
 		t.Fatalf("TemplateJSON() error = %v", err)
 	}
-	if strings.Contains(string(data), "/usr/local/bin/kontext hook") {
-		t.Fatalf("template contains shell-form command: %s", data)
+	if !strings.Contains(string(data), "'/usr/local/bin/kontext' hook 'pre-tool-use'") {
+		t.Fatalf("template does not include Claude command-form hook: %s", data)
 	}
 
 	var decoded Settings
@@ -121,8 +121,8 @@ func TestTemplateTrimsKontextBinary(t *testing.T) {
 
 	settings := Template(" /usr/local/bin/kontext ")
 	handler := settings.Hooks["PreToolUse"][0].Hooks[0]
-	if handler.Command != "/usr/local/bin/kontext" {
-		t.Fatalf("command = %q, want trimmed binary path", handler.Command)
+	if handler.Command != "'/usr/local/bin/kontext' hook 'pre-tool-use'" {
+		t.Fatalf("command = %q, want trimmed command form", handler.Command)
 	}
 }
 
@@ -163,37 +163,6 @@ func TestValidateRejectsInvalidManagedSettings(t *testing.T) {
 			wantErr: "SessionEnd hook missing",
 		},
 		{
-			name: "shell form",
-			mutate: func(settings Settings) Settings {
-				settings.Hooks["PreToolUse"][0].Hooks[0].Command = "/usr/local/bin/kontext hook pre-tool-use"
-				settings.Hooks["PreToolUse"][0].Hooks[0].Args = nil
-				return settings
-			},
-			wantErr: "PreToolUse uses shell-form Kontext command",
-		},
-		{
-			name: "shell form after valid handler",
-			mutate: func(settings Settings) Settings {
-				settings.Hooks["PreToolUse"][0].Hooks = append(settings.Hooks["PreToolUse"][0].Hooks, Handler{
-					Type:    "command",
-					Command: "/usr/local/bin/kontext hook pre-tool-use",
-				})
-				return settings
-			},
-			wantErr: "PreToolUse uses shell-form Kontext command",
-		},
-		{
-			name: "quoted shell form after valid handler",
-			mutate: func(settings Settings) Settings {
-				settings.Hooks["PreToolUse"][0].Hooks = append(settings.Hooks["PreToolUse"][0].Hooks, Handler{
-					Type:    "command",
-					Command: "'/usr/local/bin/kontext' hook pre-tool-use",
-				})
-				return settings
-			},
-			wantErr: "PreToolUse uses shell-form Kontext command",
-		},
-		{
 			name: "unrelated command mentions kontext hook",
 			mutate: func(settings Settings) Settings {
 				settings.Hooks["PreToolUse"][0].Hooks = append(settings.Hooks["PreToolUse"][0].Hooks, Handler{
@@ -204,12 +173,12 @@ func TestValidateRejectsInvalidManagedSettings(t *testing.T) {
 			},
 		},
 		{
-			name: "missing args",
+			name: "legacy exec args",
 			mutate: func(settings Settings) Settings {
-				settings.Hooks["PreToolUse"][0].Hooks[0].Args = nil
+				settings.Hooks["PreToolUse"][0].Hooks[0].Args = []string{"hook", "pre-tool-use"}
 				return settings
 			},
-			wantErr: "PreToolUse Kontext handler args missing",
+			wantErr: "PreToolUse Kontext handler args must be omitted",
 		},
 		{
 			name: "missing lifecycle async",
@@ -253,16 +222,14 @@ func TestValidateRejectsInvalidManagedSettings(t *testing.T) {
 						Matcher: "Bash",
 						Hooks: []Handler{{
 							Type:    "command",
-							Command: "/usr/local/bin/kontext",
-							Args:    []string{"hook", "pre-tool-use"},
+							Command: "'/usr/local/bin/kontext' hook 'pre-tool-use'",
 						}},
 					},
 					{
 						Matcher: "Git",
 						Hooks: []Handler{{
 							Type:    "command",
-							Command: "/usr/local/bin/kontext",
-							Args:    []string{"hook", "pre-tool-use"},
+							Command: "'/usr/local/bin/kontext' hook 'pre-tool-use'",
 						}},
 					},
 				}
@@ -303,7 +270,6 @@ func TestValidateRejectsInvalidManagedSettings(t *testing.T) {
 					Hooks: []Handler{{
 						Type:    "command",
 						Command: "/bin/echo",
-						Args:    []string{"ok"},
 					}},
 				}}
 				return settings

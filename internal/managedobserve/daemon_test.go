@@ -43,8 +43,8 @@ func TestDaemonPreservesHookSessionIDs(t *testing.T) {
 	defer store.Close()
 	for _, sessionID := range []string{"claude-session-one", "claude-session-two"} {
 		session := waitForSession(t, store, sessionID)
-		if session.ID != sessionID || session.Source != "daemon_observed" || session.Status != "open" {
-			t.Fatalf("session %s = %+v, want open daemon-observed session", sessionID, session)
+		if session.ID != sessionID || session.Source != "daemon_observed" || session.Status != "open" || session.Mode != "observe" {
+			t.Fatalf("session %s = %+v, want open observe daemon-observed session", sessionID, session)
 		}
 	}
 }

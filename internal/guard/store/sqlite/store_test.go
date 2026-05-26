@@ -281,6 +281,72 @@ select reason_code, receipt_payload_json
 	}
 }
 
+func TestSessionLifecycleHooksUseCanonicalSessionEvents(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	for _, hookEvent := range []string{"SessionStart", "SessionEnd"} {
+		if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
+			SessionID:     "s1",
+			Agent:         "claude-code",
+			HookEventName: hookEvent,
+			CWD:           "/tmp/project",
+		}, risk.RiskDecision{
+			Decision:   risk.DecisionAllow,
+			Reason:     "async telemetry event recorded",
+			ReasonCode: "async_telemetry",
+			RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
+		}); err != nil {
+			t.Fatalf("SaveDecision(%s) error = %v", hookEvent, err)
+		}
+	}
+
+	rows, err := store.db.QueryContext(context.Background(), `
+select canonical_event_type, status, outcome, proposed_at is not null, completed_at is not null
+from authorization_actions
+where adapter_event_name in ('SessionStart', 'SessionEnd')
+order by created_at
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	type lifecycleRow struct {
+		eventType    string
+		status       string
+		outcome      string
+		hasProposed  bool
+		hasCompleted bool
+	}
+	var got []lifecycleRow
+	for rows.Next() {
+		var row lifecycleRow
+		if err := rows.Scan(&row.eventType, &row.status, &row.outcome, &row.hasProposed, &row.hasCompleted); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, row)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := []lifecycleRow{
+		{eventType: "session.start", status: "started", outcome: "not_executed", hasProposed: true},
+		{eventType: "session.end", status: "completed", outcome: "not_executed", hasCompleted: true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("lifecycle rows = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("lifecycle row %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
 func TestPostToolUseDoesNotCompleteBlockedAuthorizationAction(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {
@@ -577,6 +643,9 @@ func TestLedgerBatchExportsSessionsActionsAndReceipts(t *testing.T) {
 	}
 	defer store.Close()
 
+	if _, err := store.EnsureObservedSessionWithMode(context.Background(), "s1", "claude-code", "/tmp/project", "observe"); err != nil {
+		t.Fatal(err)
+	}
 	record, err := store.SaveDecision(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
 		Agent:         "claude-code",
@@ -602,6 +671,9 @@ func TestLedgerBatchExportsSessionsActionsAndReceipts(t *testing.T) {
 	}
 	if len(batch.Sessions) != 1 || len(batch.Actions) != 2 || len(batch.Receipts) != 2 {
 		t.Fatalf("batch sizes = sessions %d actions %d receipts %d", len(batch.Sessions), len(batch.Actions), len(batch.Receipts))
+	}
+	if batch.Sessions[0]["mode"] != "observe" {
+		t.Fatalf("session export mode = %q, want observe", batch.Sessions[0]["mode"])
 	}
 	decided := ledgerRecordByID(batch.Actions, record.ID)
 	if decided == nil ||

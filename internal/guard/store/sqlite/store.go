@@ -718,8 +718,10 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		if decisionAt == "" {
 			decisionAt = now.Format(time.RFC3339Nano)
 		}
-	case canonicalEventRequestObserved, canonicalEventRequestFailed:
+	case canonicalEventRequestObserved, canonicalEventRequestFailed, canonicalEventSessionEnd:
 		completedAt = now.Format(time.RFC3339Nano)
+	case canonicalEventSessionStart:
+		proposedAt = now.Format(time.RFC3339Nano)
 	}
 	policyID, policyVersion, actionPolicyHash, decisionCategoryValue, adapterDecisionValue, reasonCode, reasonText := "", "", "", "", "", "", ""
 	if isDecisionEvent {
@@ -1002,10 +1004,16 @@ const (
 	canonicalEventRequestDecided  = "request.decided"
 	canonicalEventRequestObserved = "request.observed"
 	canonicalEventRequestFailed   = "request.failed"
+	canonicalEventSessionStart    = "session.start"
+	canonicalEventSessionEnd      = "session.end"
 )
 
 func canonicalEventType(hookEventName string) string {
 	switch hookEventName {
+	case "SessionStart":
+		return canonicalEventSessionStart
+	case "SessionEnd":
+		return canonicalEventSessionEnd
 	case "PostToolUse":
 		return canonicalEventRequestObserved
 	case "PostToolUseFailure":
@@ -1036,6 +1044,10 @@ func actionStatus(canonicalEvent, decisionResult string) string {
 		return "completed"
 	case canonicalEventRequestFailed:
 		return "failed"
+	case canonicalEventSessionStart:
+		return "started"
+	case canonicalEventSessionEnd:
+		return "completed"
 	}
 	switch decisionResult {
 	case "allow":
