@@ -160,6 +160,51 @@ where a.id = ?
 	}
 }
 
+func TestSaveDecisionEnrichesGitHubRepoResource(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	event := risk.HookEvent{
+		SessionID:     "s1",
+		Agent:         "claude-code",
+		HookEventName: "PreToolUse",
+		ToolName:      "Bash",
+		ToolUseID:     "tool-1",
+		ToolInput:     map[string]any{"command": "gh repo view kontext-security/kontext-cli"},
+	}
+	decision, err := risk.DecideRisk(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.SaveDecision(context.Background(), event, decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var provider, operation, operationClass, resourceClass, resourceID, riskJSON string
+	err = store.db.QueryRowContext(context.Background(), `
+select provider, operation, operation_class, resource_class, resource_id, risk_event_json
+from authorization_actions
+where id = ?
+	`, record.ID).Scan(&provider, &operation, &operationClass, &resourceClass, &resourceID, &riskJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider != "github" || operation != "gh repo view" || operationClass != "read" || resourceClass != "repo" || resourceID != "kontext-security/kontext-cli" {
+		t.Fatalf("github action = provider %q operation %q/%q resource %q/%q", provider, operation, operationClass, resourceClass, resourceID)
+	}
+	var riskEvent risk.RiskEvent
+	if err := json.Unmarshal([]byte(riskJSON), &riskEvent); err != nil {
+		t.Fatal(err)
+	}
+	if riskEvent.Provider != "github" || riskEvent.ResourceClass != "repo" || riskEvent.Environment != "local" {
+		t.Fatalf("risk event = %+v, want github repo local", riskEvent)
+	}
+}
+
 func TestPostToolUseWritesObservationAction(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {

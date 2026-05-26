@@ -48,13 +48,17 @@ type Summary struct {
 }
 
 type SessionSummary struct {
-	SessionID string    `json:"session_id"`
-	Critical  int       `json:"critical"`
-	Warnings  int       `json:"warnings"`
-	Actions   int       `json:"actions"`
-	LatestAt  time.Time `json:"latest_at"`
-	Current   bool      `json:"current,omitempty"`
-	Mode      string    `json:"mode,omitempty"`
+	SessionID string     `json:"session_id"`
+	Critical  int        `json:"critical"`
+	Warnings  int        `json:"warnings"`
+	Actions   int        `json:"actions"`
+	LatestAt  time.Time  `json:"latest_at"`
+	Status    string     `json:"status,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	ClosedAt  *time.Time `json:"closed_at,omitempty"`
+	Current   bool       `json:"current,omitempty"`
+	Mode      string     `json:"mode,omitempty"`
 }
 
 type SessionRecord struct {
@@ -655,6 +659,14 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		riskEvent.ReasonCode = ""
 		riskEvent.DecisionStage = ""
 	}
+	resourceID, branch := githubResourceScope(event, riskEvent)
+	if resourceID != "" {
+		riskEvent.Provider = "github"
+		riskEvent.ProviderCategory = "source_control"
+		if riskEvent.ResourceClass == "" || riskEvent.ResourceClass == "unknown" {
+			riskEvent.ResourceClass = "repo"
+		}
+	}
 	riskEventJSON, err := json.Marshal(riskEvent)
 	if err != nil {
 		return nil, err
@@ -671,7 +683,6 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		"cwd":             event.CWD,
 		"hook_event_name": event.HookEventName,
 	}
-	resourceID, branch := githubResourceScope(event, riskEvent)
 	if branch != "" {
 		contextPayload["github"] = map[string]any{"branch_or_ref": branch}
 	}
@@ -1254,14 +1265,18 @@ select actions.session_id,
 	  0 as warnings,
 	  count(*) as actions,
 	  max(latest_at) as latest_at,
-	  coalesce(agent_sessions.mode, '') as mode
+	  coalesce(agent_sessions.mode, '') as mode,
+	  coalesce(agent_sessions.status, '') as status,
+	  coalesce(agent_sessions.created_at, max(latest_at)) as created_at,
+	  coalesce(agent_sessions.updated_at, max(latest_at)) as updated_at,
+	  agent_sessions.closed_at
 	from (
 	  select session_id, case when decision_result = 'deny' then 1 else 0 end as critical, updated_at as latest_at
 	  from authorization_actions
 	  where canonical_event_type <> 'request.proposed'
 		) actions
 left join agent_sessions on agent_sessions.id = actions.session_id
-group by actions.session_id, agent_sessions.mode
+group by actions.session_id, agent_sessions.mode, agent_sessions.status, agent_sessions.created_at, agent_sessions.updated_at, agent_sessions.closed_at
 order by latest_at desc
 	`)
 	if err != nil {
@@ -1271,15 +1286,14 @@ order by latest_at desc
 	sessions := []SessionSummary{}
 	for rows.Next() {
 		var item SessionSummary
-		var latest string
-		if err := rows.Scan(&item.SessionID, &item.Critical, &item.Warnings, &item.Actions, &latest, &item.Mode); err != nil {
+		var latest, created, updated string
+		var closed sql.NullString
+		if err := rows.Scan(&item.SessionID, &item.Critical, &item.Warnings, &item.Actions, &latest, &item.Mode, &item.Status, &created, &updated, &closed); err != nil {
 			return nil, err
 		}
-		latestAt, err := parseStoredTime("session latest_at", latest)
-		if err != nil {
+		if err := parseSessionSummaryTimes(&item, latest, created, updated, closed); err != nil {
 			return nil, err
 		}
-		item.LatestAt = latestAt
 		sessions = append(sessions, item)
 	}
 	return sessions, rows.Err()
@@ -1287,30 +1301,33 @@ order by latest_at desc
 
 func (s *Store) SessionSummary(ctx context.Context, sessionID string) (SessionSummary, error) {
 	var item SessionSummary
-	var latest string
+	var latest, created, updated string
+	var closed sql.NullString
 	row := s.db.QueryRowContext(ctx, `
 select actions.session_id,
 	  sum(critical),
 	  0,
 	  count(*),
 	  max(latest_at),
-	  coalesce(agent_sessions.mode, '')
+	  coalesce(agent_sessions.mode, ''),
+	  coalesce(agent_sessions.status, ''),
+	  coalesce(agent_sessions.created_at, max(latest_at)),
+	  coalesce(agent_sessions.updated_at, max(latest_at)),
+	  agent_sessions.closed_at
 	from (
 	  select session_id, case when decision_result = 'deny' then 1 else 0 end as critical, updated_at as latest_at
 	  from authorization_actions
 	  where session_id = ? and canonical_event_type <> 'request.proposed'
 		) actions
 left join agent_sessions on agent_sessions.id = actions.session_id
-group by actions.session_id, agent_sessions.mode
+group by actions.session_id, agent_sessions.mode, agent_sessions.status, agent_sessions.created_at, agent_sessions.updated_at, agent_sessions.closed_at
 	`, sessionID)
-	if err := row.Scan(&item.SessionID, &item.Critical, &item.Warnings, &item.Actions, &latest, &item.Mode); err != nil {
+	if err := row.Scan(&item.SessionID, &item.Critical, &item.Warnings, &item.Actions, &latest, &item.Mode, &item.Status, &created, &updated, &closed); err != nil {
 		return SessionSummary{}, err
 	}
-	latestAt, err := parseStoredTime("session latest_at", latest)
-	if err != nil {
+	if err := parseSessionSummaryTimes(&item, latest, created, updated, closed); err != nil {
 		return SessionSummary{}, err
 	}
-	item.LatestAt = latestAt
 	return item, nil
 }
 
@@ -1408,6 +1425,32 @@ func scanSession(scanner interface{ Scan(...any) error }) (SessionRecord, error)
 		record.ClosedAt = &closedAt
 	}
 	return record, nil
+}
+
+func parseSessionSummaryTimes(item *SessionSummary, latest, created, updated string, closed sql.NullString) error {
+	latestAt, err := parseStoredTime("session latest_at", latest)
+	if err != nil {
+		return err
+	}
+	createdAt, err := parseStoredTime("session created_at", created)
+	if err != nil {
+		return err
+	}
+	updatedAt, err := parseStoredTime("session updated_at", updated)
+	if err != nil {
+		return err
+	}
+	item.LatestAt = latestAt
+	item.CreatedAt = createdAt
+	item.UpdatedAt = updatedAt
+	if closed.Valid && closed.String != "" {
+		closedAt, err := parseStoredTime("session closed_at", closed.String)
+		if err != nil {
+			return err
+		}
+		item.ClosedAt = &closedAt
+	}
+	return nil
 }
 
 func parseStoredTime(label, value string) (time.Time, error) {

@@ -118,6 +118,11 @@ function parseSession(value: unknown): Session | undefined {
   return {
     session_id: value.session_id,
     actions: value.actions,
+    latest_at: optionalString(value.latest_at),
+    status: optionalString(value.status),
+    created_at: optionalString(value.created_at),
+    updated_at: optionalString(value.updated_at),
+    closed_at: optionalString(value.closed_at),
     current,
     mode,
   };

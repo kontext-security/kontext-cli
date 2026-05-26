@@ -6,8 +6,6 @@ export type GuardMode = (typeof GUARD_MODES)[number];
 
 export type Tab = "all" | "deny" | "allow";
 
-export type LogView = "decisions" | "observed";
-
 export const POLICY_PROFILE_IDS = ["relaxed", "balanced", "strict"] as const;
 export type PolicyProfileID = (typeof POLICY_PROFILE_IDS)[number];
 
@@ -69,15 +67,14 @@ export type Event = {
   risk_event?: RiskEvent;
 };
 
-export type ObservedActivityEvent = Event &
-  (
-    | { reason_code: "async_telemetry" }
-    | { risk_event: RiskEvent & { decision_stage: "async_telemetry" } }
-  );
-
 export type Session = {
   session_id: string;
   actions: number;
+  latest_at?: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  closed_at?: string;
   current?: boolean;
   mode?: GuardMode;
 };
@@ -110,11 +107,6 @@ export type Counts = {
 };
 
 export type EventGroups = Record<Decision, Event[]>;
-
-export type EventPartitions = {
-  decisionEvents: Event[];
-  observedActivityEvents: ObservedActivityEvent[];
-};
 
 export type EventBuckets = {
   counts: Counts;
