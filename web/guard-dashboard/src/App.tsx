@@ -33,6 +33,8 @@ export default function App() {
   const [policyPending, setPolicyPending] = useState<PolicyProfileID | null>(null);
   const [policyError, setPolicyError] = useState("");
   const selectedRef = useRef("");
+  const policyLoadRequestRef = useRef(0);
+  const policyMutationVersionRef = useRef(0);
   const useSampleDashboard = USE_SAMPLE_DATA && API === "";
 
   useEffect(() => {
@@ -128,12 +130,26 @@ export default function App() {
       return;
     }
 
+    const requestID = ++policyLoadRequestRef.current;
+    const mutationVersion = policyMutationVersionRef.current;
     fetchPolicy()
       .then((p) => {
+        if (
+          requestID !== policyLoadRequestRef.current ||
+          mutationVersion !== policyMutationVersionRef.current
+        ) {
+          return;
+        }
         setPolicy(p);
         setPolicyError("");
       })
       .catch((e: unknown) => {
+        if (
+          requestID !== policyLoadRequestRef.current ||
+          mutationVersion !== policyMutationVersionRef.current
+        ) {
+          return;
+        }
         setPolicyError(`Couldn't load policy profile. ${errorMessage(e)}`);
       });
   }
@@ -144,10 +160,14 @@ export default function App() {
       applySamplePolicy(id);
       return;
     }
+    policyMutationVersionRef.current += 1;
     setPolicyPending(id);
     setPolicyError("");
     activatePolicy(id)
-      .then(setPolicy)
+      .then((next) => {
+        setPolicy(next);
+        setPolicyError("");
+      })
       .catch((e: unknown) => setPolicyError(`Couldn't update policy profile. ${errorMessage(e)}`))
       .finally(() => setPolicyPending(null));
   }
