@@ -46,16 +46,20 @@ export function SessionHeader({
         )}
       </div>
 
-      <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-1 text-[11.5px] text-muted-foreground">
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 text-[11.5px] text-muted-foreground">
         {startedAt && (
-          <span className="whitespace-nowrap">
-            Started <span className="text-foreground/80">{startedAt}</span>
-          </span>
+          <LifecycleBadge
+            label="Started"
+            value={startedAt}
+            tone="active"
+          />
         )}
         {endedAt && (
-          <span className="whitespace-nowrap">
-            Ended <span className="text-foreground/80">{endedAt}</span>
-          </span>
+          <LifecycleBadge
+            label="Ended"
+            value={endedAt}
+            tone="closed"
+          />
         )}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -65,5 +69,29 @@ export function SessionHeader({
         </Tooltip>
       </div>
     </header>
+  );
+}
+
+function LifecycleBadge({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "active" | "closed";
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border px-2.5 shadow-sm",
+        tone === "active"
+          ? "border-brand/30 bg-brand/5 text-brand"
+          : "border-muted-foreground/25 bg-muted/60 text-muted-foreground",
+      )}
+    >
+      <span className="text-[10px] font-semibold uppercase tracking-wide">{label}</span>
+      <span className="font-mono text-[11px] text-foreground">{value}</span>
+    </span>
   );
 }
