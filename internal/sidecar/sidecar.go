@@ -2,7 +2,7 @@ package sidecar
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
@@ -248,33 +248,35 @@ func buildHookEventRequestFromEvent(event hook.Event) *agentv1.ProcessHookEventR
 	}
 
 	if event.ToolInput != nil {
-		hookEvent.ToolInput = enrichToolInput(event)
+		input, err := enrichToolInput(event)
+		hookEvent.ToolInput = input
+		hookEvent.Error = appendHookEventError(hookEvent.Error, err, "tool_input marshal")
 	}
 	if event.ToolResponse != nil {
-		hookEvent.ToolResponse, _ = marshalMap(event.ToolResponse)
+		resp, err := marshalMap(event.ToolResponse)
+		hookEvent.ToolResponse = resp
+		hookEvent.Error = appendHookEventError(hookEvent.Error, err, "tool_response marshal")
 	}
 
 	return hookEvent
 }
 
-func enrichToolInput(event hook.Event) []byte {
+func enrichToolInput(event hook.Event) ([]byte, error) {
 	input := cloneMap(event.ToolInput)
 	data, err := marshalMap(input)
-	if err != nil {
-		return nil
-	}
+	// Return best-effort JSON plus the marshal error for upstream reporting.
 	if event.HookName != hook.HookPreToolUse || event.ToolName != "Bash" || event.CWD == "" || len(input) == 0 {
-		return data
+		return data, err
 	}
 	if _, ok := input["command"].(string); !ok {
 		if _, ok := input["cmd"].(string); !ok {
-			return data
+			return data, err
 		}
 	}
 
 	gitContext, ok := collectGitContext(event.CWD)
 	if !ok {
-		return data
+		return data, err
 	}
 
 	kontext, _ := input["kontext"].(map[string]any)
@@ -284,11 +286,13 @@ func enrichToolInput(event hook.Event) []byte {
 	kontext["git"] = gitContext
 	input["kontext"] = kontext
 
-	data, err = json.Marshal(input)
-	if err != nil {
-		return nil
+	enriched, enrichedErr := marshalMap(input)
+	if err == nil {
+		err = enrichedErr
+	} else if enrichedErr != nil {
+		err = joinErrors(err, enrichedErr)
 	}
-	return data
+	return enriched, err
 }
 
 func cloneMap(input map[string]any) map[string]any {
@@ -300,6 +304,28 @@ func cloneMap(input map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+func appendHookEventError(existing *string, err error, context string) *string {
+	if err == nil {
+		return existing
+	}
+	msg := "sidecar: " + context + " failed: " + err.Error()
+	if existing == nil || *existing == "" {
+		return &msg
+	}
+	combined := *existing + "\n" + msg
+	return &combined
+}
+
+func joinErrors(a, b error) error {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	return fmt.Errorf("%v; %v", a, b)
 }
 
 func collectGitContext(cwd string) (map[string]any, bool) {

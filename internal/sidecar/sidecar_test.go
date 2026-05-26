@@ -607,6 +607,65 @@ func TestBuildHookEventRequestPreservesTelemetryPayload(t *testing.T) {
 	assertJSONEqual(t, got.ToolResponse, toolResponse)
 }
 
+func TestBuildHookEventRequestSurfacesToolMarshalFailures(t *testing.T) {
+	t.Parallel()
+
+	got := buildHookEventRequestFromEvent(hook.Event{
+		SessionID:    "session-123",
+		Agent:        "claude",
+		HookName:     hook.HookPostToolUse,
+		ToolName:     "Bash",
+		ToolInput:    map[string]any{"command": func() {}},
+		ToolResponse: map[string]any{"stdout": func() {}},
+	})
+
+	if got.Error == nil {
+		t.Fatal("Error = nil, want marshal failure surfaced")
+	}
+	if !strings.Contains(got.GetError(), "tool_input marshal failed") {
+		t.Fatalf("Error = %q, want tool_input marshal failure context", got.GetError())
+	}
+	if !strings.Contains(got.GetError(), "tool_response marshal failed") {
+		t.Fatalf("Error = %q, want tool_response marshal failure context", got.GetError())
+	}
+
+	var input map[string]any
+	if err := json.Unmarshal(got.ToolInput, &input); err != nil {
+		t.Fatalf("ToolInput JSON = %s: %v", got.ToolInput, err)
+	}
+	if input["command"] != "<unsupported:func()>" {
+		t.Fatalf("ToolInput.command = %v, want unsupported placeholder", input["command"])
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(got.ToolResponse, &resp); err != nil {
+		t.Fatalf("ToolResponse JSON = %s: %v", got.ToolResponse, err)
+	}
+	if resp["stdout"] != "<unsupported:func()>" {
+		t.Fatalf("ToolResponse.stdout = %v, want unsupported placeholder", resp["stdout"])
+	}
+}
+
+func TestBuildHookEventRequestAppendsMarshalFailuresToExistingError(t *testing.T) {
+	t.Parallel()
+
+	got := buildHookEventRequestFromEvent(hook.Event{
+		SessionID: "session-123",
+		Agent:     "claude",
+		HookName:  hook.HookPostToolUse,
+		ToolName:  "Bash",
+		Error:     "tool failed",
+		ToolInput: map[string]any{"command": func() {}},
+	})
+
+	if !strings.Contains(got.GetError(), "tool failed") {
+		t.Fatalf("Error = %q, want original error preserved", got.GetError())
+	}
+	if !strings.Contains(got.GetError(), "tool_input marshal failed") {
+		t.Fatalf("Error = %q, want marshal failure appended", got.GetError())
+	}
+}
+
 func TestBuildHookEventRequestEnrichesBashPreToolUseWithGitContext(t *testing.T) {
 	t.Parallel()
 
