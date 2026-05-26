@@ -5,14 +5,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-)
 
-type Decision string
+	"github.com/kontext-security/kontext-cli/internal/guard/decision"
+)
 
 const (
-	DecisionAllow Decision = "allow"
-	DecisionDeny  Decision = "deny"
+	DecisionAllow = decision.Allow
+	DecisionDeny  = decision.Deny
 )
+
+type Decision = decision.Decision
 
 type Stage string
 
