@@ -55,8 +55,13 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	if got.Device == nil || got.Device.Label != "michel-macbook" {
 		t.Fatalf("device = %+v", got.Device)
 	}
-	if len(got.Sessions) != 1 || len(got.Actions) != 1 || len(got.Receipts) != 1 {
+	if len(got.Sessions) != 1 || len(got.Actions) != 2 || len(got.Receipts) != 2 {
 		t.Fatalf("batch counts = sessions %d actions %d receipts %d", len(got.Sessions), len(got.Actions), len(got.Receipts))
+	}
+	if got.Actions[0]["canonical_event_type"] != "request.proposed" ||
+		got.Actions[1]["canonical_event_type"] != "request.decided" ||
+		got.Actions[1]["decision_result"] != "allow" {
+		t.Fatalf("actions = %+v, want proposed and decided ledger events", got.Actions)
 	}
 
 	state, err := LoadState(statePath)
