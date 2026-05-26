@@ -14,6 +14,16 @@ var credentialShape = regexp.MustCompile(`(?i)(authorization\s*:|api[_-]?key\s*[
 var credentialReference = regexp.MustCompile(`(?i)(authorization\s*:|bearer\s+[a-z0-9._~+/=-]+|api[_-]?key\s*[=:]|secret\s*[=:]|token\s*[=:]|\$[A-Z0-9_]*(TOKEN|SECRET|API_KEY|ACCESS_KEY)[A-Z0-9_]*)`)
 var destructiveWord = regexp.MustCompile(`(?i)\b(delete|destroy|drop|truncate|wipe)\b`)
 var resourceWord = regexp.MustCompile(`(?i)\b(database|volume|backup|bucket|project|repo|repository|branch|deployment|namespace|secret)\b`)
+var directProviderHosts = map[string]string{
+	"api.railway.app":      "railway",
+	"railway.app":          "railway",
+	"api.vercel.com":       "vercel",
+	"api.digitalocean.com": "digitalocean",
+	"api.cloudflare.com":   "cloudflare",
+	"googleapis.com":       "google_cloud",
+	"amazonaws.com":        "aws",
+	"api.github.com":       "github",
+}
 
 func NormalizeHookEvent(event HookEvent) RiskEvent {
 	toolName := strings.TrimSpace(event.ToolName)
@@ -151,17 +161,7 @@ func classifySourceControl(event *RiskEvent, signalSet map[string]struct{}, comm
 }
 
 func classifyProvider(event *RiskEvent, signalSet map[string]struct{}, text string) {
-	providers := map[string]string{
-		"api.railway.app":      "railway",
-		"railway.app":          "railway",
-		"api.vercel.com":       "vercel",
-		"api.digitalocean.com": "digitalocean",
-		"api.cloudflare.com":   "cloudflare",
-		"googleapis.com":       "google_cloud",
-		"amazonaws.com":        "aws",
-		"api.github.com":       "github",
-	}
-	for host, provider := range providers {
+	for host, provider := range directProviderHosts {
 		if strings.Contains(text, host) {
 			event.Type = EventDirectProviderAPICall
 			event.Provider = provider
