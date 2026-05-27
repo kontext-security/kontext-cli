@@ -65,6 +65,9 @@ insert into authorization_actions (
 ) values (
   'act_legacy', 's1', 'request.decided', 'allow', 'authorized',
   '2026-05-26T10:00:00Z', '2026-05-26T10:00:00Z'
+), (
+  'act_legacy_deny', 's1', 'action.proposed', 'DENY', 'blocked',
+  '2026-05-26T10:01:00Z', '2026-05-26T10:01:00Z'
 );
 `)
 	if err != nil {
@@ -94,17 +97,48 @@ where name = 'decision_result'
 		t.Fatalf("decision_result notnull = %d, want nullable", notNull)
 	}
 
-	var decisionResult, resourceID, parametersJSON string
+	var canonicalEventType, decisionResult, resourceID, parametersJSON string
 	err = store.db.QueryRowContext(context.Background(), `
-select decision_result, coalesce(resource_id, ''), parameters_redacted_json
+select canonical_event_type, decision_result, coalesce(resource_id, ''), parameters_redacted_json
 from authorization_actions
 where id = 'act_legacy'
-	`).Scan(&decisionResult, &resourceID, &parametersJSON)
+	`).Scan(&canonicalEventType, &decisionResult, &resourceID, &parametersJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decisionResult != "allow" || resourceID != "" || parametersJSON != "{}" {
-		t.Fatalf("migrated row decision=%q resource=%q parameters=%q", decisionResult, resourceID, parametersJSON)
+	if canonicalEventType != "request.decided" || decisionResult != "allow" || resourceID != "" || parametersJSON != "{}" {
+		t.Fatalf("migrated row canonical=%q decision=%q resource=%q parameters=%q", canonicalEventType, decisionResult, resourceID, parametersJSON)
+	}
+
+	err = store.db.QueryRowContext(context.Background(), `
+select canonical_event_type, decision_result
+from authorization_actions
+where id = 'act_legacy_deny'
+	`).Scan(&canonicalEventType, &decisionResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonicalEventType != "request.decided" || decisionResult != "deny" {
+		t.Fatalf("legacy deny normalized to canonical=%q decision=%q", canonicalEventType, decisionResult)
+	}
+
+	summary, err := store.Summary(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Actions != 2 || summary.Critical != 1 {
+		t.Fatalf("summary actions=%d critical=%d, want actions=2 critical=1", summary.Actions, summary.Critical)
+	}
+
+	events, err := store.Events(context.Background(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events length = %d, want 2", len(events))
+	}
+	if events[0].ID != "act_legacy_deny" || events[0].Decision != "deny" {
+		t.Fatalf("latest event id=%q decision=%q, want act_legacy_deny deny", events[0].ID, events[0].Decision)
 	}
 }
 

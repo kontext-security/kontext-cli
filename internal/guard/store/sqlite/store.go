@@ -454,6 +454,11 @@ type authorizationActionColumn struct {
 	defaultExpr string
 }
 
+const (
+	migrateCanonicalEventTypeExpr = "case coalesce(canonical_event_type, '') when 'action.proposed' then 'request.decided' when 'action.completed' then 'request.observed' when 'action.failed' then 'request.failed' else coalesce(canonical_event_type, 'request.decided') end"
+	migrateDecisionResultExpr     = "case lower(coalesce(decision_result, '')) when 'allow' then 'allow' when 'deny' then 'deny' when 'ask' then 'deny' else null end"
+)
+
 var authorizationActionColumns = []authorizationActionColumn{
 	{name: "id", copyExpr: "coalesce(id, lower(hex(randomblob(16))))", defaultExpr: "lower(hex(randomblob(16)))"},
 	{name: "session_id", copyExpr: "coalesce(session_id, '')", defaultExpr: "''"},
@@ -466,7 +471,7 @@ var authorizationActionColumns = []authorizationActionColumn{
 	{name: "runtime_instance_id", defaultExpr: "null"},
 	{name: "adapter_kind", defaultExpr: "null"},
 	{name: "adapter_version", defaultExpr: "null"},
-	{name: "canonical_event_type", copyExpr: "coalesce(canonical_event_type, 'request.decided')", defaultExpr: "'request.decided'"},
+	{name: "canonical_event_type", copyExpr: migrateCanonicalEventTypeExpr, defaultExpr: "'request.decided'"},
 	{name: "adapter_event_name", defaultExpr: "null"},
 	{name: "correlation_key", defaultExpr: "null"},
 	{name: "correlation_confidence", defaultExpr: "null"},
@@ -486,7 +491,7 @@ var authorizationActionColumns = []authorizationActionColumn{
 	{name: "policy_version", defaultExpr: "null"},
 	{name: "policy_hash", defaultExpr: "null"},
 	{name: "default_posture", defaultExpr: "null"},
-	{name: "decision_result", defaultExpr: "null"},
+	{name: "decision_result", copyExpr: migrateDecisionResultExpr, defaultExpr: "null"},
 	{name: "decision_category", defaultExpr: "null"},
 	{name: "adapter_decision", defaultExpr: "null"},
 	{name: "reason_code", defaultExpr: "null"},
@@ -1441,8 +1446,8 @@ select id, session_id, coalesce(tool_use_id, ''), hook_event_name, coalesce(tool
 	  risk_event_json, created_at
 	from (
 	  select id, session_id, tool_use_id, coalesce(adapter_event_name, '') as hook_event_name, tool_name,
-	    decision_result as decision,
-	    reason_code, reason, risk_score, risk_threshold as threshold, model_version, risk_event_json, updated_at as created_at
+	    coalesce(decision_result, '') as decision,
+	    coalesce(reason_code, '') as reason_code, coalesce(reason, '') as reason, risk_score, risk_threshold as threshold, model_version, risk_event_json, updated_at as created_at
 	  from authorization_actions
 	  where canonical_event_type = 'request.decided'
 	)
