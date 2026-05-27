@@ -2,7 +2,7 @@ import { AlertCircle, Info, Loader2 } from "lucide-react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { POLICY_PROFILES, profileLabel } from "./policy";
+import { POLICY_PROFILES, profileLabel } from "./policy-profiles";
 import { Kv } from "./shared";
 import type { PolicyProfile, PolicyProfileDef, PolicyProfileID } from "./types";
 

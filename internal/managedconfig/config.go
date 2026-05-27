@@ -46,8 +46,15 @@ type Credentials struct {
 	InstallTokenRef TokenRef `json:"install_token_ref"`
 }
 
+type TokenSource string
+
+const (
+	TokenSourceEnv      TokenSource = "env"
+	TokenSourceKeychain TokenSource = "keychain"
+)
+
 type TokenRef struct {
-	Source string
+	Source TokenSource
 	Name   string
 }
 
@@ -113,7 +120,7 @@ func ParseTokenRef(value string) (TokenRef, error) {
 		return TokenRef{}, errors.New("install token ref must use source:name")
 	}
 	ref := TokenRef{
-		Source: strings.TrimSpace(source),
+		Source: TokenSource(strings.TrimSpace(source)),
 		Name:   strings.TrimSpace(name),
 	}
 	if err := validateTokenRef(ref); err != nil {
@@ -126,7 +133,7 @@ func (r TokenRef) String() string {
 	if r.Source == "" && r.Name == "" {
 		return ""
 	}
-	return r.Source + ":" + r.Name
+	return string(r.Source) + ":" + r.Name
 }
 
 func (r *TokenRef) UnmarshalJSON(data []byte) error {
@@ -151,13 +158,13 @@ func ResolveInstallToken(ctx context.Context, ref TokenRef) (string, error) {
 		return "", err
 	}
 	switch ref.Source {
-	case "env":
+	case TokenSourceEnv:
 		token := strings.TrimSpace(os.Getenv(ref.Name))
 		if token == "" {
 			return "", fmt.Errorf("install token env %s is empty", ref.Name)
 		}
 		return token, nil
-	case "keychain":
+	case TokenSourceKeychain:
 		return resolveKeychainInstallToken(ctx, ref.Name)
 	default:
 		return "", errors.New("install token ref source must be keychain or env")
@@ -170,7 +177,7 @@ func normalizeAndValidate(cfg Config) (Config, error) {
 	cfg.CloudURL = strings.TrimSpace(cfg.CloudURL)
 	cfg.Mode = strings.TrimSpace(cfg.Mode)
 	cfg.Agent = strings.TrimSpace(cfg.Agent)
-	cfg.Credentials.InstallTokenRef.Source = strings.TrimSpace(cfg.Credentials.InstallTokenRef.Source)
+	cfg.Credentials.InstallTokenRef.Source = TokenSource(strings.TrimSpace(string(cfg.Credentials.InstallTokenRef.Source)))
 	cfg.Credentials.InstallTokenRef.Name = strings.TrimSpace(cfg.Credentials.InstallTokenRef.Name)
 	cfg.Device.Label = strings.TrimSpace(cfg.Device.Label)
 
@@ -245,7 +252,7 @@ func isLoopbackHost(host string) bool {
 
 func validateTokenRef(ref TokenRef) error {
 	switch ref.Source {
-	case "keychain", "env":
+	case TokenSourceKeychain, TokenSourceEnv:
 	default:
 		return errors.New("install token ref source must be keychain or env")
 	}
@@ -255,7 +262,7 @@ func validateTokenRef(ref TokenRef) error {
 	if strings.ContainsAny(ref.Name, " \t\r\n:") {
 		return errors.New("install token ref name must not contain whitespace or colon")
 	}
-	if ref.Source == "env" && !envNamePattern.MatchString(ref.Name) {
+	if ref.Source == TokenSourceEnv && !envNamePattern.MatchString(ref.Name) {
 		return errors.New("env install token ref name must be a valid environment variable name")
 	}
 	return nil

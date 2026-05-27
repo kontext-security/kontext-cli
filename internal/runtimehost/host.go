@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -75,7 +74,10 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 	}
 	sessionID := strings.TrimSpace(opts.SessionID)
 	if sessionID == "" {
-		sessionID = NewSessionID()
+		sessionID, err = NewSessionID()
+		if err != nil {
+			return nil, fmt.Errorf("new session ID: %w", err)
+		}
 	}
 	if err := validateSessionID(sessionID); err != nil {
 		return nil, err
@@ -174,7 +176,11 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 
 	cwd := opts.CWD
 	if cwd == "" {
-		cwd, _ = os.Getwd()
+		cwd, err = os.Getwd()
+		if err != nil {
+			_ = host.Close(context.Background())
+			return nil, fmt.Errorf("get working directory: %w", err)
+		}
 	}
 	if !opts.SkipInitialSession {
 		if _, err := localServer.RuntimeCore().OpenSession(ctx, runtimecore.Session{
@@ -281,12 +287,12 @@ func ResolveMode(value string) (guardhookruntime.Mode, error) {
 	return guardhookruntime.ParseMode(value)
 }
 
-func NewSessionID() string {
+func NewSessionID() (string, error) {
 	var bytes [16]byte
-	if _, err := rand.Read(bytes[:]); err == nil {
-		return hex.EncodeToString(bytes[:])
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return "", fmt.Errorf("read random bytes: %w", err)
 	}
-	return strconv.FormatInt(time.Now().UnixNano(), 16)
+	return hex.EncodeToString(bytes[:]), nil
 }
 
 func DefaultDBPath() string {

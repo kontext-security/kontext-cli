@@ -1,3 +1,8 @@
+import type { PolicyProfileID } from "./policy-profiles";
+
+export type { PolicyProfileDef, PolicyProfileID } from "./policy-profiles";
+export { isPolicyProfileID } from "./policy-profiles";
+
 export const DECISIONS = ["deny", "allow"] as const;
 export type Decision = (typeof DECISIONS)[number];
 
@@ -6,19 +11,12 @@ export type GuardMode = (typeof GUARD_MODES)[number];
 
 export type Tab = "all" | Decision;
 
-export const POLICY_PROFILE_IDS = ["relaxed", "balanced", "strict"] as const;
-export type PolicyProfileID = (typeof POLICY_PROFILE_IDS)[number];
-
 export function isDecision(value: unknown): value is Decision {
   return typeof value === "string" && (DECISIONS as readonly string[]).includes(value);
 }
 
 export function isGuardMode(value: unknown): value is GuardMode {
   return typeof value === "string" && (GUARD_MODES as readonly string[]).includes(value);
-}
-
-export function isPolicyProfileID(value: unknown): value is PolicyProfileID {
-  return typeof value === "string" && (POLICY_PROFILE_IDS as readonly string[]).includes(value);
 }
 
 export type RiskEvent = {
@@ -90,14 +88,6 @@ export type PolicyProfile = {
   source?: string;
   status?: string;
   loaded_at?: string;
-};
-
-export type PolicyProfileDef = {
-  id: PolicyProfileID;
-  label: string;
-  lede: string;
-  hint: string;
-  recommended?: boolean;
 };
 
 export type Counts = {

@@ -32,7 +32,7 @@ func TestTemplateIncludesManagedKontextHooks(t *testing.T) {
 			t.Fatalf("%s handlers = %d, want 1", event.Name, len(groups[0].Hooks))
 		}
 		handler := groups[0].Hooks[0]
-		if handler.Type != "command" {
+		if handler.Type != HandlerTypeCommand {
 			t.Fatalf("%s handler type = %q, want command", event.Name, handler.Type)
 		}
 		wantCommand := "'/opt/kontext/bin/kontext' hook '" + event.Alias + "'"
@@ -85,7 +85,9 @@ func TestTemplateJSONOnlyMarksLifecycleHooksAsync(t *testing.T) {
 
 	var raw struct {
 		Hooks map[string][]struct {
-			Hooks []map[string]any `json:"hooks"`
+			Hooks []struct {
+				Async *bool `json:"async,omitempty"`
+			} `json:"hooks"`
 		} `json:"hooks"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -104,13 +106,11 @@ func TestTemplateJSONOnlyMarksLifecycleHooksAsync(t *testing.T) {
 		if len(handlers) != 1 {
 			t.Fatalf("%s handlers = %d, want 1", event.Name, len(handlers))
 		}
-		async, hasAsync := handlers[0]["async"]
 		if event.Async {
-			asyncBool, ok := async.(bool)
-			if !hasAsync || !ok || !asyncBool {
-				t.Fatalf("%s async = %v, want boolean true", event.Name, async)
+			if handlers[0].Async == nil || !*handlers[0].Async {
+				t.Fatalf("%s async = %v, want boolean true", event.Name, handlers[0].Async)
 			}
-		} else if hasAsync {
+		} else if handlers[0].Async != nil {
 			t.Fatalf("%s async emitted, want omitted", event.Name)
 		}
 	}
@@ -166,7 +166,7 @@ func TestValidateRejectsInvalidManagedSettings(t *testing.T) {
 			name: "unrelated command mentions kontext hook",
 			mutate: func(settings Settings) Settings {
 				settings.Hooks["PreToolUse"][0].Hooks = append(settings.Hooks["PreToolUse"][0].Hooks, Handler{
-					Type:    "command",
+					Type:    HandlerTypeCommand,
 					Command: `/bin/echo "kontext hook pre-tool-use"`,
 				})
 				return settings
@@ -221,14 +221,14 @@ func TestValidateRejectsInvalidManagedSettings(t *testing.T) {
 					{
 						Matcher: "Bash",
 						Hooks: []Handler{{
-							Type:    "command",
+							Type:    HandlerTypeCommand,
 							Command: "'/usr/local/bin/kontext' hook 'pre-tool-use'",
 						}},
 					},
 					{
 						Matcher: "Git",
 						Hooks: []Handler{{
-							Type:    "command",
+							Type:    HandlerTypeCommand,
 							Command: "'/usr/local/bin/kontext' hook 'pre-tool-use'",
 						}},
 					},
@@ -240,7 +240,7 @@ func TestValidateRejectsInvalidManagedSettings(t *testing.T) {
 		{
 			name: "wrong handler type",
 			mutate: func(settings Settings) Settings {
-				settings.Hooks["PreToolUse"][0].Hooks[0].Type = "prompt"
+				settings.Hooks["PreToolUse"][0].Hooks[0].Type = HandlerType("prompt")
 				return settings
 			},
 			wantErr: "PreToolUse Kontext handler type = \"prompt\", want command",
@@ -268,7 +268,7 @@ func TestValidateRejectsInvalidManagedSettings(t *testing.T) {
 				settings.Hooks["PreCompact"] = []MatcherGroup{{
 					Matcher: "",
 					Hooks: []Handler{{
-						Type:    "command",
+						Type:    HandlerTypeCommand,
 						Command: "/bin/echo",
 					}},
 				}}

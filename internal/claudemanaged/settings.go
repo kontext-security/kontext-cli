@@ -16,6 +16,8 @@ const (
 	WindowsManagedSettingsPath = `C:\Program Files\ClaudeCode\managed-settings.json`
 	DefaultKontextBinary       = "/usr/local/bin/kontext"
 	DefaultHookTimeout         = 20
+
+	HandlerTypeCommand HandlerType = "command"
 )
 
 type Event struct {
@@ -58,12 +60,14 @@ type MatcherGroup struct {
 	Hooks   []Handler `json:"hooks"`
 }
 
+type HandlerType string
+
 type Handler struct {
-	Type    string   `json:"type"`
-	Command string   `json:"command"`
-	Args    []string `json:"args,omitempty"`
-	Timeout int      `json:"timeout,omitempty"`
-	Async   *bool    `json:"async,omitempty"`
+	Type    HandlerType `json:"type"`
+	Command string      `json:"command"`
+	Args    []string    `json:"args,omitempty"`
+	Timeout int         `json:"timeout,omitempty"`
+	Async   *bool       `json:"async,omitempty"`
 }
 
 func Template(kontextBinary string) Settings {
@@ -74,7 +78,7 @@ func Template(kontextBinary string) Settings {
 	settings := Settings{Hooks: make(map[string][]MatcherGroup, len(SupportedEvents))}
 	for _, event := range SupportedEvents {
 		handler := Handler{
-			Type:    "command",
+			Type:    HandlerTypeCommand,
 			Command: hookCommand(kontextBinary, event.Alias),
 			Timeout: DefaultHookTimeout,
 		}
@@ -160,7 +164,7 @@ func validateEvent(groups []MatcherGroup, event Event, kontextBinary string) err
 			if handler.Command != hookCommand(kontextBinary, event.Alias) {
 				continue
 			}
-			if handler.Type != "command" {
+			if handler.Type != HandlerTypeCommand {
 				return fmt.Errorf("%s Kontext handler type = %q, want command", event.Name, handler.Type)
 			}
 			if len(handler.Args) > 0 {

@@ -36,7 +36,7 @@ func TestParseValidConfigNormalizesStrings(t *testing.T) {
 	if cfg.Version != Version || cfg.OrganizationID != "org_123" || cfg.CloudURL != "https://api.kontext.dev" {
 		t.Fatalf("config not normalized: %+v", cfg)
 	}
-	if got := cfg.Credentials.InstallTokenRef; got.Source != "keychain" || got.Name != "kontext-managed-install-token" {
+	if got := cfg.Credentials.InstallTokenRef; got.Source != TokenSourceKeychain || got.Name != "kontext-managed-install-token" {
 		t.Fatalf("token ref = %+v", got)
 	}
 	if cfg.Device.Label != "Engineering Mac" {
@@ -123,8 +123,8 @@ func TestParseAcceptsLoopbackHTTPCloudURLForLocalE2E(t *testing.T) {
 
 func TestParseTokenRefAcceptsValidRefs(t *testing.T) {
 	tests := map[string]TokenRef{
-		"keychain:kontext-managed-install-token": {Source: "keychain", Name: "kontext-managed-install-token"},
-		"env:KONTEXT_INSTALL_TOKEN":              {Source: "env", Name: "KONTEXT_INSTALL_TOKEN"},
+		"keychain:kontext-managed-install-token": {Source: TokenSourceKeychain, Name: "kontext-managed-install-token"},
+		"env:KONTEXT_INSTALL_TOKEN":              {Source: TokenSourceEnv, Name: "KONTEXT_INSTALL_TOKEN"},
 	}
 	for input, want := range tests {
 		t.Run(input, func(t *testing.T) {
@@ -164,7 +164,7 @@ func TestParseTokenRefRejectsInvalidRefs(t *testing.T) {
 func TestResolveInstallTokenFromEnv(t *testing.T) {
 	t.Setenv("KONTEXT_INSTALL_TOKEN", " test-install-token ")
 	token, err := ResolveInstallToken(context.Background(), TokenRef{
-		Source: "env",
+		Source: TokenSourceEnv,
 		Name:   "KONTEXT_INSTALL_TOKEN",
 	})
 	if err != nil {
@@ -178,7 +178,7 @@ func TestResolveInstallTokenFromEnv(t *testing.T) {
 func TestResolveInstallTokenRejectsEmptyEnv(t *testing.T) {
 	t.Setenv("KONTEXT_INSTALL_TOKEN", " ")
 	_, err := ResolveInstallToken(context.Background(), TokenRef{
-		Source: "env",
+		Source: TokenSourceEnv,
 		Name:   "KONTEXT_INSTALL_TOKEN",
 	})
 	if err == nil || !strings.Contains(err.Error(), "empty") {

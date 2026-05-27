@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/guard/app/server"
+	"github.com/kontext-security/kontext-cli/internal/guard/envutil"
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
 	"github.com/kontext-security/kontext-cli/internal/guard/judgeruntime"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
@@ -81,39 +81,39 @@ func usage(out io.Writer) {
 }
 
 func runDaemon(ctx context.Context, args []string, out io.Writer) error {
-	defaultJudgeTimeout, err := envDuration("KONTEXT_JUDGE_TIMEOUT", judge.DefaultTimeout)
+	defaultJudgeTimeout, err := envutil.Duration("KONTEXT_JUDGE_TIMEOUT", judge.DefaultTimeout)
 	if err != nil {
 		return err
 	}
-	defaultJudgeManaged, err := envBool("KONTEXT_JUDGE_MANAGED", false)
+	defaultJudgeManaged, err := envutil.Bool("KONTEXT_JUDGE_MANAGED", false)
 	if err != nil {
 		return err
 	}
-	defaultJudgePort, err := envInt("KONTEXT_JUDGE_PORT", judge.DefaultLlamaServerPort)
+	defaultJudgePort, err := envutil.Int("KONTEXT_JUDGE_PORT", judge.DefaultLlamaServerPort)
 	if err != nil {
 		return err
 	}
-	defaultJudgeStartupTimeout, err := envDuration("KONTEXT_JUDGE_STARTUP_TIMEOUT", judge.DefaultLlamaServerStartupTimeout)
+	defaultJudgeStartupTimeout, err := envutil.Duration("KONTEXT_JUDGE_STARTUP_TIMEOUT", judge.DefaultLlamaServerStartupTimeout)
 	if err != nil {
 		return err
 	}
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	addr := fs.String("addr", envString("KONTEXT_ADDR", server.DefaultAddr), "listen address")
-	dbPath := fs.String("db", envString("KONTEXT_DB", defaultDBPath()), "SQLite database path")
+	addr := fs.String("addr", envutil.String("KONTEXT_ADDR", server.DefaultAddr), "listen address")
+	dbPath := fs.String("db", envutil.String("KONTEXT_DB", defaultDBPath()), "SQLite database path")
 	skipHookInstall := fs.Bool("skip-hook-install", false, "skip Claude Code hook install")
 	noOpen := fs.Bool("no-open", false, "do not open the local dashboard")
 	socketPath := fs.String("socket", defaultGuardSocketPath(), "Unix socket path for local hook runtime")
-	judgeURL := fs.String("judge-url", envString("KONTEXT_JUDGE_URL", ""), "OpenAI-compatible local judge base URL, for example http://127.0.0.1:8080")
-	judgeModel := fs.String("judge-model", envString("KONTEXT_JUDGE_MODEL", ""), "local judge model name; with --judge-managed this may be a local GGUF path")
+	judgeURL := fs.String("judge-url", envutil.String("KONTEXT_JUDGE_URL", ""), "OpenAI-compatible local judge base URL, for example http://127.0.0.1:8080")
+	judgeModel := fs.String("judge-model", envutil.String("KONTEXT_JUDGE_MODEL", ""), "local judge model name; with --judge-managed this may be a local GGUF path")
 	judgeTimeout := fs.Duration("judge-timeout", defaultJudgeTimeout, "local judge timeout")
 	judgeManaged := fs.Bool("judge-managed", defaultJudgeManaged, "start and health-check a managed llama-server child process")
-	judgeServerBin := fs.String("judge-server-bin", envString("KONTEXT_JUDGE_SERVER_BIN", judge.DefaultLlamaServerBinary), "llama-server binary path")
-	judgeModelPath := fs.String("judge-model-path", envString("KONTEXT_JUDGE_MODEL_PATH", ""), "local GGUF model path for managed llama-server")
-	judgeHFRepo := fs.String("judge-hf-repo", envString("KONTEXT_JUDGE_HF_REPO", ""), "Hugging Face GGUF repo to cache for managed llama-server")
-	judgeHFFile := fs.String("judge-hf-file", envString("KONTEXT_JUDGE_HF_FILE", ""), "Hugging Face GGUF filename to cache for managed llama-server")
-	judgeHFRevision := fs.String("judge-hf-revision", envString("KONTEXT_JUDGE_HF_REVISION", ""), "Hugging Face revision, branch, or tag to cache for managed llama-server")
-	judgeCacheDir := fs.String("judge-cache-dir", envString("KONTEXT_JUDGE_CACHE_DIR", ""), "directory for cached GGUF judge models")
+	judgeServerBin := fs.String("judge-server-bin", envutil.String("KONTEXT_JUDGE_SERVER_BIN", judge.DefaultLlamaServerBinary), "llama-server binary path")
+	judgeModelPath := fs.String("judge-model-path", envutil.String("KONTEXT_JUDGE_MODEL_PATH", ""), "local GGUF model path for managed llama-server")
+	judgeHFRepo := fs.String("judge-hf-repo", envutil.String("KONTEXT_JUDGE_HF_REPO", ""), "Hugging Face GGUF repo to cache for managed llama-server")
+	judgeHFFile := fs.String("judge-hf-file", envutil.String("KONTEXT_JUDGE_HF_FILE", ""), "Hugging Face GGUF filename to cache for managed llama-server")
+	judgeHFRevision := fs.String("judge-hf-revision", envutil.String("KONTEXT_JUDGE_HF_REVISION", ""), "Hugging Face revision, branch, or tag to cache for managed llama-server")
+	judgeCacheDir := fs.String("judge-cache-dir", envutil.String("KONTEXT_JUDGE_CACHE_DIR", ""), "directory for cached GGUF judge models")
 	judgePort := fs.Int("judge-port", defaultJudgePort, "managed llama-server port")
 	judgeStartupTimeout := fs.Duration("judge-startup-timeout", defaultJudgeStartupTimeout, "managed llama-server startup timeout")
 	if err := fs.Parse(args); err != nil {
@@ -201,7 +201,7 @@ func verifyClaudeCode() error {
 func runStatus(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	baseURL := fs.String("daemon-url", envString("KONTEXT_DAEMON_URL", defaultBaseURL), "local daemon URL")
+	baseURL := fs.String("daemon-url", envutil.String("KONTEXT_DAEMON_URL", defaultBaseURL), "local daemon URL")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -219,7 +219,7 @@ func runStatus(ctx context.Context, args []string, out io.Writer) error {
 func runDashboard(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("dashboard", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	baseURL := fs.String("daemon-url", envString("KONTEXT_DAEMON_URL", defaultBaseURL), "local daemon URL")
+	baseURL := fs.String("daemon-url", envutil.String("KONTEXT_DAEMON_URL", defaultBaseURL), "local daemon URL")
 	noOpen := fs.Bool("no-open", false, "print URL without opening a browser")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -254,7 +254,7 @@ func fetchSummary(ctx context.Context, baseURL string) (sqlite.Summary, error) {
 func runDoctor(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	baseURL := fs.String("daemon-url", envString("KONTEXT_DAEMON_URL", defaultBaseURL), "local daemon URL")
+	baseURL := fs.String("daemon-url", envutil.String("KONTEXT_DAEMON_URL", defaultBaseURL), "local daemon URL")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -636,14 +636,14 @@ func runJudge(ctx context.Context, args []string, out io.Writer) error {
 }
 
 func runJudgeEval(ctx context.Context, args []string, out io.Writer) error {
-	defaultJudgeTimeout, err := envDuration("KONTEXT_JUDGE_TIMEOUT", 10*time.Second)
+	defaultJudgeTimeout, err := envutil.Duration("KONTEXT_JUDGE_TIMEOUT", 10*time.Second)
 	if err != nil {
 		return err
 	}
 	fs := flag.NewFlagSet("judge eval", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	judgeURL := fs.String("judge-url", envString("KONTEXT_JUDGE_URL", ""), "OpenAI-compatible local judge base URL")
-	judgeModel := fs.String("judge-model", envString("KONTEXT_JUDGE_MODEL", ""), "local judge model name")
+	judgeURL := fs.String("judge-url", envutil.String("KONTEXT_JUDGE_URL", ""), "OpenAI-compatible local judge base URL")
+	judgeModel := fs.String("judge-model", envutil.String("KONTEXT_JUDGE_MODEL", ""), "local judge model name")
 	judgeTimeout := fs.Duration("judge-timeout", defaultJudgeTimeout, "local judge timeout")
 	fixturesPath := fs.String("fixtures", "internal/guard/judge/testdata/launch-v0.jsonl", "judge evaluation JSONL fixtures")
 	if err := fs.Parse(args); err != nil {
@@ -706,46 +706,6 @@ func readJudgeEvalFixtures(path string) ([]judge.Fixture, error) {
 	return fixtures, nil
 }
 
-func envString(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func envInt(key string, fallback int) (int, error) {
-	if value := os.Getenv(key); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			return 0, fmt.Errorf("%s must be an integer: %w", key, err)
-		}
-		return parsed, nil
-	}
-	return fallback, nil
-}
-
-func envBool(key string, fallback bool) (bool, error) {
-	if value := os.Getenv(key); value != "" {
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return false, fmt.Errorf("%s must be a boolean: %w", key, err)
-		}
-		return parsed, nil
-	}
-	return fallback, nil
-}
-
-func envDuration(key string, fallback time.Duration) (time.Duration, error) {
-	if value := os.Getenv(key); value != "" {
-		parsed, err := time.ParseDuration(value)
-		if err != nil {
-			return 0, fmt.Errorf("%s must be a duration: %w", key, err)
-		}
-		return parsed, nil
-	}
-	return fallback, nil
-}
-
 func validateLocalJudgeURL(value string) error {
 	parsed, err := url.Parse(value)
 	if err != nil {
@@ -770,16 +730,6 @@ func defaultDBPath() string {
 		return filepath.Join(home, ".kontext", "guard.db")
 	}
 	return "kontext-guard.db"
-}
-
-func defaultJudgeCacheDir(dbPath string) string {
-	if dbPath != "" {
-		return filepath.Join(filepath.Dir(dbPath), "judge-models")
-	}
-	if dir, err := os.UserCacheDir(); err == nil && dir != "" {
-		return filepath.Join(dir, "kontext", "judge")
-	}
-	return filepath.Join(".", "judge-models")
 }
 
 func selfPath() string {

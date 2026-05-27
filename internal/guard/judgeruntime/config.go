@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/guard/envutil"
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
 )
 
@@ -31,22 +32,22 @@ type Config struct {
 }
 
 func ConfigFromEnv(dbPath string, managedDefault bool) (Config, error) {
-	timeout, err := envDuration("KONTEXT_JUDGE_TIMEOUT", judge.DefaultTimeout)
+	timeout, err := envutil.Duration("KONTEXT_JUDGE_TIMEOUT", judge.DefaultTimeout)
 	if err != nil {
 		return Config{}, err
 	}
-	managed, err := envBoolDefault("KONTEXT_JUDGE_MANAGED", managedDefault)
+	managed, err := envutil.Bool("KONTEXT_JUDGE_MANAGED", managedDefault)
 	if err != nil {
 		return Config{}, err
 	}
 	if os.Getenv("KONTEXT_JUDGE_MANAGED") == "" && strings.TrimSpace(os.Getenv("KONTEXT_JUDGE_URL")) != "" {
 		managed = false
 	}
-	port, err := envInt("KONTEXT_JUDGE_PORT", judge.DefaultLlamaServerPort)
+	port, err := envutil.Int("KONTEXT_JUDGE_PORT", judge.DefaultLlamaServerPort)
 	if err != nil {
 		return Config{}, err
 	}
-	startupTimeout, err := envDuration("KONTEXT_JUDGE_STARTUP_TIMEOUT", judge.DefaultLlamaServerStartupTimeout)
+	startupTimeout, err := envutil.Duration("KONTEXT_JUDGE_STARTUP_TIMEOUT", judge.DefaultLlamaServerStartupTimeout)
 	if err != nil {
 		return Config{}, err
 	}
@@ -55,7 +56,7 @@ func ConfigFromEnv(dbPath string, managedDefault bool) (Config, error) {
 		Model:          os.Getenv("KONTEXT_JUDGE_MODEL"),
 		Timeout:        timeout,
 		Managed:        managed,
-		ServerBin:      envString("KONTEXT_JUDGE_SERVER_BIN", judge.DefaultLlamaServerBinary),
+		ServerBin:      envutil.String("KONTEXT_JUDGE_SERVER_BIN", judge.DefaultLlamaServerBinary),
 		ModelPath:      os.Getenv("KONTEXT_JUDGE_MODEL_PATH"),
 		HFRepo:         os.Getenv("KONTEXT_JUDGE_HF_REPO"),
 		HFFile:         os.Getenv("KONTEXT_JUDGE_HF_FILE"),
@@ -239,44 +240,4 @@ func defaultCacheDir(dbPath string) string {
 		return filepath.Join(dir, "kontext", "judge")
 	}
 	return filepath.Join(".", "judge-models")
-}
-
-func envString(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func envBoolDefault(key string, fallback bool) (bool, error) {
-	if value := os.Getenv(key); value != "" {
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return false, fmt.Errorf("%s must be a boolean: %w", key, err)
-		}
-		return parsed, nil
-	}
-	return fallback, nil
-}
-
-func envInt(key string, fallback int) (int, error) {
-	if value := os.Getenv(key); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			return 0, fmt.Errorf("%s must be an integer: %w", key, err)
-		}
-		return parsed, nil
-	}
-	return fallback, nil
-}
-
-func envDuration(key string, fallback time.Duration) (time.Duration, error) {
-	if value := os.Getenv(key); value != "" {
-		parsed, err := time.ParseDuration(value)
-		if err != nil {
-			return 0, fmt.Errorf("%s must be a duration: %w", key, err)
-		}
-		return parsed, nil
-	}
-	return fallback, nil
 }
