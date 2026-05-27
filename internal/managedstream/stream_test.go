@@ -19,18 +19,7 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	saveTestDecision(t, store, "session-1", "toolu_1")
 
 	var got Payload
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != DefaultEndpoint {
-			t.Fatalf("path = %q, want %q", r.URL.Path, DefaultEndpoint)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer test-install-token" {
-			t.Fatalf("Authorization = %q, want bearer install token", got)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("Decode() error = %v", err)
-		}
-		w.WriteHeader(http.StatusAccepted)
-	}))
+	server := capturePayloadServer(t, &got)
 	t.Cleanup(server.Close)
 
 	statePath := filepath.Join(t.TempDir(), "stream-state.json")
@@ -74,6 +63,32 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	}
 	if state.UpdatedAfter == "" {
 		t.Fatal("updated_after was not persisted")
+	}
+}
+
+func TestFlushOmitsBlankDeviceLabel(t *testing.T) {
+	store, dbPath := testStore(t)
+	saveTestDecision(t, store, "session-1", "toolu_1")
+
+	var got Payload
+	server := capturePayloadServer(t, &got)
+	t.Cleanup(server.Close)
+
+	if err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      filepath.Join(t.TempDir(), "stream-state.json"),
+		CloudURL:       server.URL,
+		OrganizationID: "org_123",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		DeviceLabel:    " \t\n ",
+		HTTPClient:     server.Client(),
+	}); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	if got.Device != nil {
+		t.Fatalf("device = %+v, want omitted", got.Device)
 	}
 }
 
@@ -176,6 +191,22 @@ func testStore(t *testing.T) (*sqlite.Store, string) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store, dbPath
+}
+
+func capturePayloadServer(t *testing.T, got *Payload) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != DefaultEndpoint {
+			t.Fatalf("path = %q, want %q", r.URL.Path, DefaultEndpoint)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-install-token" {
+			t.Fatalf("Authorization = %q, want bearer install token", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(got); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
 }
 
 func saveTestDecision(t *testing.T, store *sqlite.Store, sessionID, toolUseID string) {

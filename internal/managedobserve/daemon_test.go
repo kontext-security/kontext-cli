@@ -91,7 +91,18 @@ func TestDaemonSessionEndClosesHookSessionID(t *testing.T) {
 }
 
 func TestDaemonStreamsLedgerBatches(t *testing.T) {
-	requests := make(chan map[string]any, 1)
+	type ledgerBatchRequest struct {
+		OrganizationID string `json:"organization_id"`
+		InstallationID string `json:"installation_id"`
+		Device         *struct {
+			Label string `json:"label"`
+		} `json:"device,omitempty"`
+		Actions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"authorization_actions"`
+	}
+
+	requests := make(chan ledgerBatchRequest, 1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/authorization-ledger/batches" {
 			t.Fatalf("path = %q", r.URL.Path)
@@ -99,7 +110,7 @@ func TestDaemonStreamsLedgerBatches(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-install-token" {
 			t.Fatalf("Authorization = %q, want bearer install token", got)
 		}
-		var body map[string]any
+		var body ledgerBatchRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("Decode() error = %v", err)
 		}
@@ -158,25 +169,23 @@ func TestDaemonStreamsLedgerBatches(t *testing.T) {
 
 	select {
 	case body := <-requests:
-		if body["organization_id"] != "org_123" {
-			t.Fatalf("organization_id = %v", body["organization_id"])
+		if body.OrganizationID != "org_123" {
+			t.Fatalf("organization_id = %q", body.OrganizationID)
 		}
-		if body["installation_id"] != "ins_0123456789abcdefghijklmnopqrstuv" {
-			t.Fatalf("installation_id = %v", body["installation_id"])
+		if body.InstallationID != "ins_0123456789abcdefghijklmnopqrstuv" {
+			t.Fatalf("installation_id = %q", body.InstallationID)
 		}
-		actions, ok := body["authorization_actions"].([]any)
-		if !ok {
-			t.Fatalf("authorization_actions = %#v", body["authorization_actions"])
+		if body.Device == nil || body.Device.Label != "test-mac" {
+			t.Fatalf("device = %+v, want label from managed config", body.Device)
 		}
 		found := false
-		for _, raw := range actions {
-			action, ok := raw.(map[string]any)
-			if ok && action["session_id"] == "claude-stream-session" {
+		for _, action := range body.Actions {
+			if action.SessionID == "claude-stream-session" {
 				found = true
 			}
 		}
 		if !found {
-			t.Fatalf("authorization_actions = %#v, want claude stream session action", body["authorization_actions"])
+			t.Fatalf("authorization_actions = %+v, want claude stream session action", body.Actions)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for hosted ledger batch")
