@@ -53,7 +53,6 @@ function stringList(value: unknown): string[] | undefined {
 
 function decision(value: unknown): Decision | undefined {
   if (isDecision(value)) return value;
-  if (value === "ask") return "deny";
   return undefined;
 }
 

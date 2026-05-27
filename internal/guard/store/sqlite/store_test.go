@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -40,6 +41,70 @@ func TestEmptyCollectionsEncodeAsJSONArray(t *testing.T) {
 	}
 	if string(encodedEvents) != "[]" {
 		t.Fatalf("empty events encoded as %s, want []", encodedEvents)
+	}
+}
+
+func TestMigrationCopiesDecisionNullableFromPartialLegacySchema(t *testing.T) {
+	path := t.TempDir() + "/guard.db"
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(context.Background(), `
+create table authorization_actions (
+  id text primary key,
+  session_id text not null,
+  canonical_event_type text not null,
+  decision_result text not null,
+  status text not null,
+  created_at text not null,
+  updated_at text not null
+);
+insert into authorization_actions (
+  id, session_id, canonical_event_type, decision_result, status, created_at, updated_at
+) values (
+  'act_legacy', 's1', 'request.decided', 'allow', 'authorized',
+  '2026-05-26T10:00:00Z', '2026-05-26T10:00:00Z'
+);
+`)
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	var notNull int
+	err = store.db.QueryRowContext(context.Background(), `
+select "notnull"
+from pragma_table_info('authorization_actions')
+where name = 'decision_result'
+	`).Scan(&notNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notNull != 0 {
+		t.Fatalf("decision_result notnull = %d, want nullable", notNull)
+	}
+
+	var decisionResult, resourceID, parametersJSON string
+	err = store.db.QueryRowContext(context.Background(), `
+select decision_result, coalesce(resource_id, ''), parameters_redacted_json
+from authorization_actions
+where id = 'act_legacy'
+	`).Scan(&decisionResult, &resourceID, &parametersJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decisionResult != "allow" || resourceID != "" || parametersJSON != "{}" {
+		t.Fatalf("migrated row decision=%q resource=%q parameters=%q", decisionResult, resourceID, parametersJSON)
 	}
 }
 
@@ -202,6 +267,18 @@ where id = ?
 	}
 	if riskEvent.Provider != "github" || riskEvent.ResourceClass != "repo" || riskEvent.Environment != "local" {
 		t.Fatalf("risk event = %+v, want github repo local", riskEvent)
+	}
+}
+
+func TestGitHubRepoFromCommandPrefersGitHubURLRepository(t *testing.T) {
+	got := githubRepoFromCommand("git clone https://github.com/kontext-security/kontext-cli.git")
+	if got != "kontext-security/kontext-cli" {
+		t.Fatalf("repo = %q, want kontext-security/kontext-cli", got)
+	}
+
+	got = githubRepoFromCommand("gh pr view https://github.com/kontext-security/kontext-cli/pull/223")
+	if got != "kontext-security/kontext-cli" {
+		t.Fatalf("pull URL repo = %q, want kontext-security/kontext-cli", got)
 	}
 }
 
@@ -633,6 +710,28 @@ where id = ?
 	}
 	if len(events) != 1 || events[0].Decision != risk.Decision("ask") {
 		t.Fatalf("events = %+v, want step-up projected as ask", events)
+	}
+
+	summary, err := store.Summary(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Critical != 1 || summary.Actions != 1 {
+		t.Fatalf("summary = %+v, want ask counted as one critical action", summary)
+	}
+	sessions, err := store.Sessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].Critical != 1 || sessions[0].Actions != 1 {
+		t.Fatalf("sessions = %+v, want ask counted as one critical action", sessions)
+	}
+	sessionSummary, err := store.SessionSummary(context.Background(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionSummary.Critical != 1 || sessionSummary.Actions != 1 {
+		t.Fatalf("session summary = %+v, want ask counted as one critical action", sessionSummary)
 	}
 }
 

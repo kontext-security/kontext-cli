@@ -15,6 +15,7 @@ import type { Decision, Event, EventGroups, GuardMode, Tab } from "./types";
 const VISIBLE_KINDS = {
   all: DECISIONS,
   deny: ["deny"],
+  ask: ["ask"],
   allow: ["allow"],
 } satisfies Record<Tab, readonly Decision[]>;
 
@@ -36,7 +37,7 @@ export function ActionList({
   const visibleDecisionGroups = VISIBLE_KINDS[tab]
     .map((kind) => ({ kind, items: decisionGroups[kind] }))
     .filter(({ items }) => items.length > 0);
-  const decisionCount = decisionGroups.allow.length + decisionGroups.deny.length;
+  const decisionCount = DECISIONS.reduce((sum, kind) => sum + decisionGroups[kind].length, 0);
   const filterLabel = tab !== "all" ? decisionLabel(tab, mode) : null;
 
   return (

@@ -210,12 +210,6 @@ func (s *Store) migrate(ctx context.Context) error {
 	  updated_at text not null
 	);
 
-	create index if not exists idx_authorization_actions_session_updated
-	on authorization_actions(session_id, updated_at);
-
-	create index if not exists idx_authorization_actions_session_tool_use
-	on authorization_actions(session_id, tool_use_id);
-
 	create table if not exists authorization_receipts (
 	  id text primary key,
 	  action_id text not null,
@@ -255,6 +249,15 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureAuthorizationActionsDecisionNullable(ctx); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+	create index if not exists idx_authorization_actions_session_updated
+	on authorization_actions(session_id, updated_at);
+
+	create index if not exists idx_authorization_actions_session_tool_use
+	on authorization_actions(session_id, tool_use_id);
+	`); err != nil {
 		return err
 	}
 	for _, column := range []struct {
@@ -318,6 +321,7 @@ func (s *Store) ensureAuthorizationActionsDecisionNullable(ctx context.Context) 
 	}
 	defer rows.Close()
 
+	existingColumns := map[string]bool{}
 	decisionResultNotNull := false
 	for rows.Next() {
 		var cid int
@@ -328,6 +332,7 @@ func (s *Store) ensureAuthorizationActionsDecisionNullable(ctx context.Context) 
 		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &pk); err != nil {
 			return err
 		}
+		existingColumns[columnName] = true
 		if columnName == "decision_result" {
 			decisionResultNotNull = notNull == 1
 		}
@@ -335,11 +340,18 @@ func (s *Store) ensureAuthorizationActionsDecisionNullable(ctx context.Context) 
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if !decisionResultNotNull {
+	needsRebuild := decisionResultNotNull
+	for _, column := range authorizationActionColumns {
+		if !existingColumns[column.name] {
+			needsRebuild = true
+			break
+		}
+	}
+	if !needsRebuild {
 		return nil
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, fmt.Sprintf(`
 	alter table authorization_actions rename to authorization_actions_legacy_not_null;
 
 	create table authorization_actions (
@@ -419,34 +431,10 @@ func (s *Store) ensureAuthorizationActionsDecisionNullable(ctx context.Context) 
 	);
 
 	insert into authorization_actions (
-	  id, session_id, turn_id, tool_use_id, trace_id, span_id, parent_span_id,
-	  runtime_kind, runtime_instance_id, adapter_kind, adapter_version,
-	  canonical_event_type, adapter_event_name, correlation_key, correlation_confidence,
-	  tool_name, provider, operation, operation_class, resource_class, resource_id,
-	  parameters_redacted_json, parameters_hash, identity_context_json, identity_hash,
-	  context_json, context_hash, policy_id, policy_version, policy_hash, default_posture,
-	  decision_result, decision_category, adapter_decision, reason_code, reason,
-	  risk_level, risk_score, risk_threshold, model_version, compositional_risk_score,
-	  confidence, alignment_score, alignment_threshold, uncertainty_score,
-	  matched_rules_json, risk_signals_json, risk_event_json, modifications_json,
-	  approval_context_json, approval_channel, approval_request_id, approval_expires_at,
-	  deferral_context_json, status, outcome, output_summary, output_hash, error_redacted,
-	  proposed_at, decision_at, completed_at, created_at, updated_at
+	  %s
 	)
 	select
-	  id, session_id, turn_id, tool_use_id, trace_id, span_id, parent_span_id,
-	  runtime_kind, runtime_instance_id, adapter_kind, adapter_version,
-	  canonical_event_type, adapter_event_name, correlation_key, correlation_confidence,
-	  tool_name, provider, operation, operation_class, resource_class, resource_id,
-	  parameters_redacted_json, parameters_hash, identity_context_json, identity_hash,
-	  context_json, context_hash, policy_id, policy_version, policy_hash, default_posture,
-	  decision_result, decision_category, adapter_decision, reason_code, reason,
-	  risk_level, risk_score, risk_threshold, model_version, compositional_risk_score,
-	  confidence, alignment_score, alignment_threshold, uncertainty_score,
-	  matched_rules_json, risk_signals_json, risk_event_json, modifications_json,
-	  approval_context_json, approval_channel, approval_request_id, approval_expires_at,
-	  deferral_context_json, status, outcome, output_summary, output_hash, error_redacted,
-	  proposed_at, decision_at, completed_at, created_at, updated_at
+	  %s
 	from authorization_actions_legacy_not_null;
 
 	drop table authorization_actions_legacy_not_null;
@@ -456,8 +444,104 @@ func (s *Store) ensureAuthorizationActionsDecisionNullable(ctx context.Context) 
 
 	create index if not exists idx_authorization_actions_session_tool_use
 	on authorization_actions(session_id, tool_use_id);
-	`)
+	`, authorizationActionInsertColumns(), authorizationActionSelectExpressions(existingColumns)))
 	return err
+}
+
+type authorizationActionColumn struct {
+	name        string
+	copyExpr    string
+	defaultExpr string
+}
+
+var authorizationActionColumns = []authorizationActionColumn{
+	{name: "id", copyExpr: "coalesce(id, lower(hex(randomblob(16))))", defaultExpr: "lower(hex(randomblob(16)))"},
+	{name: "session_id", copyExpr: "coalesce(session_id, '')", defaultExpr: "''"},
+	{name: "turn_id", defaultExpr: "null"},
+	{name: "tool_use_id", defaultExpr: "null"},
+	{name: "trace_id", defaultExpr: "null"},
+	{name: "span_id", defaultExpr: "null"},
+	{name: "parent_span_id", defaultExpr: "null"},
+	{name: "runtime_kind", defaultExpr: "null"},
+	{name: "runtime_instance_id", defaultExpr: "null"},
+	{name: "adapter_kind", defaultExpr: "null"},
+	{name: "adapter_version", defaultExpr: "null"},
+	{name: "canonical_event_type", copyExpr: "coalesce(canonical_event_type, 'request.decided')", defaultExpr: "'request.decided'"},
+	{name: "adapter_event_name", defaultExpr: "null"},
+	{name: "correlation_key", defaultExpr: "null"},
+	{name: "correlation_confidence", defaultExpr: "null"},
+	{name: "tool_name", defaultExpr: "null"},
+	{name: "provider", defaultExpr: "null"},
+	{name: "operation", defaultExpr: "null"},
+	{name: "operation_class", defaultExpr: "null"},
+	{name: "resource_class", defaultExpr: "null"},
+	{name: "resource_id", defaultExpr: "null"},
+	{name: "parameters_redacted_json", copyExpr: "coalesce(parameters_redacted_json, '{}')", defaultExpr: "'{}'"},
+	{name: "parameters_hash", defaultExpr: "null"},
+	{name: "identity_context_json", copyExpr: "coalesce(identity_context_json, '{}')", defaultExpr: "'{}'"},
+	{name: "identity_hash", defaultExpr: "null"},
+	{name: "context_json", copyExpr: "coalesce(context_json, '{}')", defaultExpr: "'{}'"},
+	{name: "context_hash", defaultExpr: "null"},
+	{name: "policy_id", defaultExpr: "null"},
+	{name: "policy_version", defaultExpr: "null"},
+	{name: "policy_hash", defaultExpr: "null"},
+	{name: "default_posture", defaultExpr: "null"},
+	{name: "decision_result", defaultExpr: "null"},
+	{name: "decision_category", defaultExpr: "null"},
+	{name: "adapter_decision", defaultExpr: "null"},
+	{name: "reason_code", defaultExpr: "null"},
+	{name: "reason", defaultExpr: "null"},
+	{name: "risk_level", defaultExpr: "null"},
+	{name: "risk_score", defaultExpr: "null"},
+	{name: "risk_threshold", defaultExpr: "null"},
+	{name: "model_version", defaultExpr: "null"},
+	{name: "compositional_risk_score", defaultExpr: "null"},
+	{name: "confidence", defaultExpr: "null"},
+	{name: "alignment_score", defaultExpr: "null"},
+	{name: "alignment_threshold", defaultExpr: "null"},
+	{name: "uncertainty_score", defaultExpr: "null"},
+	{name: "matched_rules_json", copyExpr: "coalesce(matched_rules_json, '[]')", defaultExpr: "'[]'"},
+	{name: "risk_signals_json", copyExpr: "coalesce(risk_signals_json, '[]')", defaultExpr: "'[]'"},
+	{name: "risk_event_json", copyExpr: "coalesce(risk_event_json, '{}')", defaultExpr: "'{}'"},
+	{name: "modifications_json", copyExpr: "coalesce(modifications_json, '{}')", defaultExpr: "'{}'"},
+	{name: "approval_context_json", copyExpr: "coalesce(approval_context_json, '{}')", defaultExpr: "'{}'"},
+	{name: "approval_channel", defaultExpr: "null"},
+	{name: "approval_request_id", defaultExpr: "null"},
+	{name: "approval_expires_at", defaultExpr: "null"},
+	{name: "deferral_context_json", copyExpr: "coalesce(deferral_context_json, '{}')", defaultExpr: "'{}'"},
+	{name: "status", copyExpr: "coalesce(status, 'authorized')", defaultExpr: "'authorized'"},
+	{name: "outcome", defaultExpr: "null"},
+	{name: "output_summary", defaultExpr: "null"},
+	{name: "output_hash", defaultExpr: "null"},
+	{name: "error_redacted", defaultExpr: "null"},
+	{name: "proposed_at", defaultExpr: "null"},
+	{name: "decision_at", defaultExpr: "null"},
+	{name: "completed_at", defaultExpr: "null"},
+	{name: "created_at", copyExpr: "coalesce(created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", defaultExpr: "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"},
+	{name: "updated_at", copyExpr: "coalesce(updated_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", defaultExpr: "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"},
+}
+
+func authorizationActionInsertColumns() string {
+	names := make([]string, 0, len(authorizationActionColumns))
+	for _, column := range authorizationActionColumns {
+		names = append(names, column.name)
+	}
+	return strings.Join(names, ",\n\t  ")
+}
+
+func authorizationActionSelectExpressions(existingColumns map[string]bool) string {
+	expressions := make([]string, 0, len(authorizationActionColumns))
+	for _, column := range authorizationActionColumns {
+		expr := column.defaultExpr
+		if existingColumns[column.name] {
+			expr = column.name
+			if column.copyExpr != "" {
+				expr = column.copyExpr
+			}
+		}
+		expressions = append(expressions, fmt.Sprintf("%s as %s", expr, column.name))
+	}
+	return strings.Join(expressions, ",\n\t  ")
 }
 
 func (s *Store) OpenSession(ctx context.Context, sessionID, agent, cwd, source, externalID string) (SessionRecord, error) {
@@ -1110,6 +1194,7 @@ func correlationKey(event risk.HookEvent) string {
 
 var (
 	githubRemoteRE = regexp.MustCompile(`(?i)(?:github\.com[:/])([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$`)
+	githubURLRE    = regexp.MustCompile(`(?i)github\.com[:/]([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?:\.git)?(?:[/\s'"<>]|$)`)
 	githubRepoRE   = regexp.MustCompile(`\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\b`)
 )
 
@@ -1131,6 +1216,12 @@ func githubRepoFromCommand(command string) string {
 	lowerCommand := strings.ToLower(command)
 	if !strings.Contains(lowerCommand, "gh ") && !strings.Contains(lowerCommand, "github.com") {
 		return ""
+	}
+	if strings.Contains(lowerCommand, "github.com") {
+		match := githubURLRE.FindStringSubmatch(command)
+		if len(match) >= 2 {
+			return strings.TrimSuffix(match[1], ".git")
+		}
 	}
 	match := githubRepoRE.FindStringSubmatch(command)
 	if len(match) < 2 {
@@ -1259,7 +1350,7 @@ select
 	  coalesce(sum(actions), 0),
 	  (select count(*) from agent_sessions)
 	from (
-	  select case when decision_result = 'deny' then 1 else 0 end as critical, 1 as actions
+	  select case when decision_result in ('deny', 'ask') then 1 else 0 end as critical, 1 as actions
 	  from authorization_actions
 	  where canonical_event_type <> 'request.proposed'
 	)
@@ -1283,7 +1374,7 @@ select actions.session_id,
 	  coalesce(agent_sessions.updated_at, max(latest_at)) as updated_at,
 	  agent_sessions.closed_at
 	from (
-	  select session_id, case when decision_result = 'deny' then 1 else 0 end as critical, updated_at as latest_at
+	  select session_id, case when decision_result in ('deny', 'ask') then 1 else 0 end as critical, updated_at as latest_at
 	  from authorization_actions
 	  where canonical_event_type <> 'request.proposed'
 		) actions
@@ -1327,7 +1418,7 @@ select actions.session_id,
 	  coalesce(agent_sessions.updated_at, max(latest_at)),
 	  agent_sessions.closed_at
 	from (
-	  select session_id, case when decision_result = 'deny' then 1 else 0 end as critical, updated_at as latest_at
+	  select session_id, case when decision_result in ('deny', 'ask') then 1 else 0 end as critical, updated_at as latest_at
 	  from authorization_actions
 	  where session_id = ? and canonical_event_type <> 'request.proposed'
 		) actions
