@@ -38,12 +38,12 @@ func TestRunWritesStructuredDenyResult(t *testing.T) {
 	}
 }
 
-func TestRunWritesStructuredAskResult(t *testing.T) {
+func TestRunWritesStructuredUnsupportedDecisionResult(t *testing.T) {
 	t.Parallel()
 
 	codec := stubCodec{
 		event: hook.Event{HookName: hook.HookPreToolUse},
-		out:   []byte(`{"hookSpecificOutput":{"permissionDecision":"ask"}}`),
+		out:   []byte(`{"hookSpecificOutput":{"permissionDecision":"deny"}}`),
 	}
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -54,7 +54,7 @@ func TestRunWritesStructuredAskResult(t *testing.T) {
 		stderr,
 		codec,
 		func(hook.Event) (hook.Result, error) {
-			return hook.Result{Decision: hook.DecisionAsk, Reason: "approval required"}, nil
+			return hook.Result{Decision: hook.Decision("ask"), Reason: "approval required"}, nil
 		},
 	)
 

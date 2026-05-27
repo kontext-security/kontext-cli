@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ActionList } from "@/dashboard/ActionList";
 import { activatePolicy, errorMessage, fetchEvents, fetchPolicy, fetchSessions } from "@/dashboard/api";
 import { API, USE_SAMPLE_DATA } from "@/dashboard/config";
-import { bucket, partitionEvents, sameSessions } from "@/dashboard/helpers";
+import { bucket, sameSessions } from "@/dashboard/helpers";
 import { Inspector } from "@/dashboard/Inspector";
 import { PolicyPanel } from "@/dashboard/PolicyPanel";
 import {
@@ -19,14 +19,13 @@ import { SessionHeader } from "@/dashboard/SessionHeader";
 import { Sidebar } from "@/dashboard/Sidebar";
 import { StatRow } from "@/dashboard/StatRow";
 import { Block } from "@/dashboard/shared";
-import type { Event, GuardMode, LogView, PolicyProfile, PolicyProfileID, Session, Tab } from "@/dashboard/types";
+import type { Event, GuardMode, PolicyProfile, PolicyProfileID, Session, Tab } from "@/dashboard/types";
 
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selectedSessionID, setSelectedSessionID] = useState("");
   const [events, setEvents] = useState<Event[]>([]);
   const [tab, setTab] = useState<Tab>("all");
-  const [logView, setLogView] = useState<LogView>("decisions");
   const [openId, setOpenId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [policy, setPolicy] = useState<PolicyProfile | null>(null);
@@ -152,8 +151,7 @@ export default function App() {
       .finally(() => setPolicyPending(null));
   }
 
-  const { decisionEvents, observedActivityEvents } = useMemo(() => partitionEvents(events), [events]);
-  const { counts, groups } = useMemo(() => bucket(decisionEvents), [decisionEvents]);
+  const { counts, groups } = useMemo(() => bucket(events), [events]);
   const opened = useMemo(
     () => (openId ? events.find((e) => e.id === openId) ?? null : null),
     [openId, events],
@@ -216,17 +214,14 @@ export default function App() {
               )}
 
               <Block
-                label="Session Log"
-                description="Pre-tool decisions and post-execution observations."
+                label="Decision Log"
+                description="Pre-tool Guard decisions for this session."
               >
                 <ActionList
                   tab={tab}
-                  view={logView}
                   decisionGroups={groups}
-                  observedEvents={observedActivityEvents}
                   openId={openId}
                   onOpen={setOpenId}
-                  onViewChange={setLogView}
                   onClearFilter={() => setTab("all")}
                   mode={sessionMode}
                 />

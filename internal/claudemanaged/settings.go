@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -76,8 +75,7 @@ func Template(kontextBinary string) Settings {
 	for _, event := range SupportedEvents {
 		handler := Handler{
 			Type:    "command",
-			Command: kontextBinary,
-			Args:    []string{"hook", event.Alias},
+			Command: hookCommand(kontextBinary, event.Alias),
 			Timeout: DefaultHookTimeout,
 		}
 		if event.Async {
@@ -155,25 +153,18 @@ func validateEvent(groups []MatcherGroup, event Event, kontextBinary string) err
 		return fmt.Errorf("%s hook missing", event.Name)
 	}
 
-	wantArgs := []string{"hook", event.Alias}
 	foundValid := false
 	firstRestrictiveMatcher := ""
 	for _, group := range groups {
 		for _, handler := range group.Hooks {
-			if isShellFormKontextHandler(handler, kontextBinary) {
-				return fmt.Errorf("%s uses shell-form Kontext command; use command plus args", event.Name)
-			}
-			if handler.Command != kontextBinary {
+			if handler.Command != hookCommand(kontextBinary, event.Alias) {
 				continue
 			}
 			if handler.Type != "command" {
 				return fmt.Errorf("%s Kontext handler type = %q, want command", event.Name, handler.Type)
 			}
-			if len(handler.Args) == 0 {
-				return fmt.Errorf("%s Kontext handler args missing", event.Name)
-			}
-			if !sameStrings(handler.Args, wantArgs) {
-				return fmt.Errorf("%s Kontext handler args = %q, want %q", event.Name, handler.Args, wantArgs)
+			if len(handler.Args) > 0 {
+				return fmt.Errorf("%s Kontext handler args must be omitted", event.Name)
 			}
 			if err := validateAsync(event, handler.Async); err != nil {
 				return err
@@ -210,39 +201,15 @@ func validateAsync(event Event, async *bool) error {
 	return nil
 }
 
-func isShellFormKontextHandler(handler Handler, kontextBinary string) bool {
-	if len(handler.Args) > 0 {
-		return false
-	}
-	command := strings.TrimSpace(handler.Command)
-	if command == "" {
-		return false
-	}
-	command = strings.NewReplacer("'", "", `"`, "").Replace(command)
-	fields := strings.Fields(command)
-	if len(fields) < 2 || fields[1] != "hook" {
-		return false
-	}
-	if fields[0] == kontextBinary {
-		return true
-	}
-	base := filepath.Base(kontextBinary)
-	return base == "kontext" && fields[0] == "kontext"
+func hookCommand(kontextBinary, alias string) string {
+	return shellQuote(kontextBinary) + " hook " + shellQuote(alias)
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func isAllMatcher(value string) bool {
 	matcher := strings.TrimSpace(value)
 	return matcher == "" || matcher == "*"
-}
-
-func sameStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

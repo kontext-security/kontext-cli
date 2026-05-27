@@ -43,8 +43,8 @@ func TestDaemonPreservesHookSessionIDs(t *testing.T) {
 	defer store.Close()
 	for _, sessionID := range []string{"claude-session-one", "claude-session-two"} {
 		session := waitForSession(t, store, sessionID)
-		if session.ID != sessionID || session.Source != "daemon_observed" || session.Status != "open" {
-			t.Fatalf("session %s = %+v, want open daemon-observed session", sessionID, session)
+		if session.ID != sessionID || session.Source != "daemon_observed" || session.Status != "open" || session.Mode != "observe" {
+			t.Fatalf("session %s = %+v, want open observe daemon-observed session", sessionID, session)
 		}
 	}
 }
@@ -95,6 +95,9 @@ func TestDaemonStreamsLedgerBatches(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/authorization-ledger/batches" {
 			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-install-token" {
+			t.Fatalf("Authorization = %q, want bearer install token", got)
 		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -335,6 +338,7 @@ func writeTestManagedConfig(t *testing.T, path string) {
 
 func writeTestManagedConfigWithCloudURL(t *testing.T, path, cloudURL string) {
 	t.Helper()
+	t.Setenv("KONTEXT_INSTALL_TOKEN", "test-install-token")
 	if err := os.WriteFile(path, []byte(`{
   "version": "managed-install-v1",
   "organization_id": "org_123",

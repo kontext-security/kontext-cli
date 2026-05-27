@@ -105,9 +105,13 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 			return nil, err
 		}
 	}
+	serverSessionID := sessionID
+	if opts.SkipInitialSession {
+		serverSessionID = ""
+	}
 	localServer, closeStore, err := server.OpenDefaultServerWithOptions(dbPath, server.Options{
 		Judge:            localJudge,
-		CurrentSessionID: sessionID,
+		CurrentSessionID: serverSessionID,
 		Mode:             string(mode),
 	})
 	if err != nil {

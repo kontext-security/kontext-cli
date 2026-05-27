@@ -74,7 +74,7 @@ func TestRunAllowsAndWritesOutput(t *testing.T) {
 	}
 }
 
-func TestRunPreservesAskDecisionWithRequestID(t *testing.T) {
+func TestRunPreservesDenyDecision(t *testing.T) {
 	t.Parallel()
 
 	stdout := &bytes.Buffer{}
@@ -83,23 +83,22 @@ func TestRunPreservesAskDecisionWithRequestID(t *testing.T) {
 
 	code := run(strings.NewReader(`{"hook_event_name":"PreToolUse"}`), stdout, stderr, stub, func(hook.Event) (hook.Result, error) {
 		return hook.Result{
-			Decision:  hook.DecisionAsk,
-			Reason:    "approval required",
-			RequestID: "req-123",
+			Decision: hook.DecisionDeny,
+			Reason:   "blocked",
 		}, nil
 	})
 
 	if code != 0 {
 		t.Fatalf("run() exit code = %d, want 0", code)
 	}
-	if stdout.String() != "ASK" {
-		t.Fatalf("stdout = %q, want agent ask output", stdout.String())
+	if stdout.String() != "DENY" {
+		t.Fatalf("stdout = %q, want agent deny output", stdout.String())
 	}
-	if stub.blockingDecision != hook.DecisionAsk {
-		t.Fatalf("blocking decision = %q, want ask", stub.blockingDecision)
+	if stub.blockingDecision != hook.DecisionDeny {
+		t.Fatalf("blocking decision = %q, want deny", stub.blockingDecision)
 	}
-	if !strings.Contains(stub.blockingReason, "Request ID: req-123") {
-		t.Fatalf("blocking reason = %q, want request id", stub.blockingReason)
+	if stub.blockingReason != "blocked" {
+		t.Fatalf("blocking reason = %q, want raw reason", stub.blockingReason)
 	}
 	if stderr.String() != "" {
 		t.Fatalf("stderr = %q, want empty", stderr.String())

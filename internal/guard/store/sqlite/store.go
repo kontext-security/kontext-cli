@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -46,13 +48,17 @@ type Summary struct {
 }
 
 type SessionSummary struct {
-	SessionID string    `json:"session_id"`
-	Critical  int       `json:"critical"`
-	Warnings  int       `json:"warnings"`
-	Actions   int       `json:"actions"`
-	LatestAt  time.Time `json:"latest_at"`
-	Current   bool      `json:"current,omitempty"`
-	Mode      string    `json:"mode,omitempty"`
+	SessionID string     `json:"session_id"`
+	Critical  int        `json:"critical"`
+	Warnings  int        `json:"warnings"`
+	Actions   int        `json:"actions"`
+	LatestAt  time.Time  `json:"latest_at"`
+	Status    string     `json:"status,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	ClosedAt  *time.Time `json:"closed_at,omitempty"`
+	Current   bool       `json:"current,omitempty"`
+	Mode      string     `json:"mode,omitempty"`
 }
 
 type SessionRecord struct {
@@ -165,7 +171,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	  policy_hash text,
 	  default_posture text,
 
-	  decision_result text not null,
+		  decision_result text,
 	  decision_category text,
 	  adapter_decision text,
 	  reason_code text,
@@ -204,12 +210,6 @@ func (s *Store) migrate(ctx context.Context) error {
 	  updated_at text not null
 	);
 
-	create index if not exists idx_authorization_actions_session_updated
-	on authorization_actions(session_id, updated_at);
-
-	create index if not exists idx_authorization_actions_session_tool_use
-	on authorization_actions(session_id, tool_use_id);
-
 	create table if not exists authorization_receipts (
 	  id text primary key,
 	  action_id text not null,
@@ -246,6 +246,18 @@ func (s *Store) migrate(ctx context.Context) error {
 	on authorization_receipts(action_id, created_at);
 		`)
 	if err != nil {
+		return err
+	}
+	if err := s.ensureAuthorizationActionsDecisionNullable(ctx); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+	create index if not exists idx_authorization_actions_session_updated
+	on authorization_actions(session_id, updated_at);
+
+	create index if not exists idx_authorization_actions_session_tool_use
+	on authorization_actions(session_id, tool_use_id);
+	`); err != nil {
 		return err
 	}
 	for _, column := range []struct {
@@ -300,6 +312,241 @@ func (s *Store) ensureColumn(ctx context.Context, table, name, def string) error
 	}
 	_, err = s.db.ExecContext(ctx, fmt.Sprintf("alter table %s add column %s %s", table, name, def))
 	return err
+}
+
+func (s *Store) ensureAuthorizationActionsDecisionNullable(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, "pragma table_info(authorization_actions)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existingColumns := map[string]bool{}
+	decisionResultNotNull := false
+	for rows.Next() {
+		var cid int
+		var columnName, columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		existingColumns[columnName] = true
+		if columnName == "decision_result" {
+			decisionResultNotNull = notNull == 1
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	needsRebuild := decisionResultNotNull
+	for _, column := range authorizationActionColumns {
+		if !existingColumns[column.name] {
+			needsRebuild = true
+			break
+		}
+	}
+	if !needsRebuild {
+		return nil
+	}
+
+	_, err = s.db.ExecContext(ctx, fmt.Sprintf(`
+	alter table authorization_actions rename to authorization_actions_legacy_not_null;
+
+	create table authorization_actions (
+	  id text primary key,
+	  session_id text not null,
+	  turn_id text,
+	  tool_use_id text,
+	  trace_id text,
+	  span_id text,
+	  parent_span_id text,
+
+	  runtime_kind text,
+	  runtime_instance_id text,
+	  adapter_kind text,
+	  adapter_version text,
+	  canonical_event_type text not null,
+	  adapter_event_name text,
+	  correlation_key text,
+	  correlation_confidence real,
+
+	  tool_name text,
+	  provider text,
+	  operation text,
+	  operation_class text,
+	  resource_class text,
+	  resource_id text,
+	  parameters_redacted_json text not null default '{}',
+	  parameters_hash text,
+
+	  identity_context_json text not null default '{}',
+	  identity_hash text,
+	  context_json text not null default '{}',
+	  context_hash text,
+
+	  policy_id text,
+	  policy_version text,
+	  policy_hash text,
+	  default_posture text,
+
+	  decision_result text,
+	  decision_category text,
+	  adapter_decision text,
+	  reason_code text,
+	  reason text,
+
+	  risk_level text,
+	  risk_score real,
+	  risk_threshold real,
+	  model_version text,
+	  compositional_risk_score real,
+	  confidence real,
+	  alignment_score real,
+	  alignment_threshold real,
+	  uncertainty_score real,
+	  matched_rules_json text not null default '[]',
+	  risk_signals_json text not null default '[]',
+	  risk_event_json text not null default '{}',
+
+	  modifications_json text not null default '{}',
+	  approval_context_json text not null default '{}',
+	  approval_channel text,
+	  approval_request_id text,
+	  approval_expires_at text,
+	  deferral_context_json text not null default '{}',
+
+	  status text not null,
+	  outcome text,
+	  output_summary text,
+	  output_hash text,
+	  error_redacted text,
+
+	  proposed_at text,
+	  decision_at text,
+	  completed_at text,
+	  created_at text not null,
+	  updated_at text not null
+	);
+
+	insert into authorization_actions (
+	  %s
+	)
+	select
+	  %s
+	from authorization_actions_legacy_not_null;
+
+	drop table authorization_actions_legacy_not_null;
+
+	create index if not exists idx_authorization_actions_session_updated
+	on authorization_actions(session_id, updated_at);
+
+	create index if not exists idx_authorization_actions_session_tool_use
+	on authorization_actions(session_id, tool_use_id);
+	`, authorizationActionInsertColumns(), authorizationActionSelectExpressions(existingColumns)))
+	return err
+}
+
+type authorizationActionColumn struct {
+	name        string
+	copyExpr    string
+	defaultExpr string
+}
+
+const (
+	migrateCanonicalEventTypeExpr = "case coalesce(canonical_event_type, '') when 'action.proposed' then 'request.decided' when 'action.completed' then 'request.observed' when 'action.failed' then 'request.failed' else coalesce(canonical_event_type, 'request.decided') end"
+	migrateDecisionResultExpr     = "case lower(coalesce(decision_result, '')) when 'allow' then 'allow' when 'deny' then 'deny' when 'ask' then 'deny' else null end"
+)
+
+var authorizationActionColumns = []authorizationActionColumn{
+	{name: "id", copyExpr: "coalesce(id, lower(hex(randomblob(16))))", defaultExpr: "lower(hex(randomblob(16)))"},
+	{name: "session_id", copyExpr: "coalesce(session_id, '')", defaultExpr: "''"},
+	{name: "turn_id", defaultExpr: "null"},
+	{name: "tool_use_id", defaultExpr: "null"},
+	{name: "trace_id", defaultExpr: "null"},
+	{name: "span_id", defaultExpr: "null"},
+	{name: "parent_span_id", defaultExpr: "null"},
+	{name: "runtime_kind", defaultExpr: "null"},
+	{name: "runtime_instance_id", defaultExpr: "null"},
+	{name: "adapter_kind", defaultExpr: "null"},
+	{name: "adapter_version", defaultExpr: "null"},
+	{name: "canonical_event_type", copyExpr: migrateCanonicalEventTypeExpr, defaultExpr: "'request.decided'"},
+	{name: "adapter_event_name", defaultExpr: "null"},
+	{name: "correlation_key", defaultExpr: "null"},
+	{name: "correlation_confidence", defaultExpr: "null"},
+	{name: "tool_name", defaultExpr: "null"},
+	{name: "provider", defaultExpr: "null"},
+	{name: "operation", defaultExpr: "null"},
+	{name: "operation_class", defaultExpr: "null"},
+	{name: "resource_class", defaultExpr: "null"},
+	{name: "resource_id", defaultExpr: "null"},
+	{name: "parameters_redacted_json", copyExpr: "coalesce(parameters_redacted_json, '{}')", defaultExpr: "'{}'"},
+	{name: "parameters_hash", defaultExpr: "null"},
+	{name: "identity_context_json", copyExpr: "coalesce(identity_context_json, '{}')", defaultExpr: "'{}'"},
+	{name: "identity_hash", defaultExpr: "null"},
+	{name: "context_json", copyExpr: "coalesce(context_json, '{}')", defaultExpr: "'{}'"},
+	{name: "context_hash", defaultExpr: "null"},
+	{name: "policy_id", defaultExpr: "null"},
+	{name: "policy_version", defaultExpr: "null"},
+	{name: "policy_hash", defaultExpr: "null"},
+	{name: "default_posture", defaultExpr: "null"},
+	{name: "decision_result", copyExpr: migrateDecisionResultExpr, defaultExpr: "null"},
+	{name: "decision_category", defaultExpr: "null"},
+	{name: "adapter_decision", defaultExpr: "null"},
+	{name: "reason_code", defaultExpr: "null"},
+	{name: "reason", defaultExpr: "null"},
+	{name: "risk_level", defaultExpr: "null"},
+	{name: "risk_score", defaultExpr: "null"},
+	{name: "risk_threshold", defaultExpr: "null"},
+	{name: "model_version", defaultExpr: "null"},
+	{name: "compositional_risk_score", defaultExpr: "null"},
+	{name: "confidence", defaultExpr: "null"},
+	{name: "alignment_score", defaultExpr: "null"},
+	{name: "alignment_threshold", defaultExpr: "null"},
+	{name: "uncertainty_score", defaultExpr: "null"},
+	{name: "matched_rules_json", copyExpr: "coalesce(matched_rules_json, '[]')", defaultExpr: "'[]'"},
+	{name: "risk_signals_json", copyExpr: "coalesce(risk_signals_json, '[]')", defaultExpr: "'[]'"},
+	{name: "risk_event_json", copyExpr: "coalesce(risk_event_json, '{}')", defaultExpr: "'{}'"},
+	{name: "modifications_json", copyExpr: "coalesce(modifications_json, '{}')", defaultExpr: "'{}'"},
+	{name: "approval_context_json", copyExpr: "coalesce(approval_context_json, '{}')", defaultExpr: "'{}'"},
+	{name: "approval_channel", defaultExpr: "null"},
+	{name: "approval_request_id", defaultExpr: "null"},
+	{name: "approval_expires_at", defaultExpr: "null"},
+	{name: "deferral_context_json", copyExpr: "coalesce(deferral_context_json, '{}')", defaultExpr: "'{}'"},
+	{name: "status", copyExpr: "coalesce(status, 'authorized')", defaultExpr: "'authorized'"},
+	{name: "outcome", defaultExpr: "null"},
+	{name: "output_summary", defaultExpr: "null"},
+	{name: "output_hash", defaultExpr: "null"},
+	{name: "error_redacted", defaultExpr: "null"},
+	{name: "proposed_at", defaultExpr: "null"},
+	{name: "decision_at", defaultExpr: "null"},
+	{name: "completed_at", defaultExpr: "null"},
+	{name: "created_at", copyExpr: "coalesce(created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", defaultExpr: "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"},
+	{name: "updated_at", copyExpr: "coalesce(updated_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", defaultExpr: "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"},
+}
+
+func authorizationActionInsertColumns() string {
+	names := make([]string, 0, len(authorizationActionColumns))
+	for _, column := range authorizationActionColumns {
+		names = append(names, column.name)
+	}
+	return strings.Join(names, ",\n\t  ")
+}
+
+func authorizationActionSelectExpressions(existingColumns map[string]bool) string {
+	expressions := make([]string, 0, len(authorizationActionColumns))
+	for _, column := range authorizationActionColumns {
+		expr := column.defaultExpr
+		if existingColumns[column.name] {
+			expr = column.name
+			if column.copyExpr != "" {
+				expr = column.copyExpr
+			}
+		}
+		expressions = append(expressions, fmt.Sprintf("%s as %s", expr, column.name))
+	}
+	return strings.Join(expressions, ",\n\t  ")
 }
 
 func (s *Store) OpenSession(ctx context.Context, sessionID, agent, cwd, source, externalID string) (SessionRecord, error) {
@@ -402,11 +649,6 @@ func (s *Store) SaveDecision(ctx context.Context, event risk.HookEvent, decision
 	now := time.Now().UTC()
 	sessionID := normalizeSessionID(event.SessionID)
 	event.SessionID = sessionID
-	riskEventJSON, err := json.Marshal(decision.RiskEvent)
-	if err != nil {
-		return DecisionRecord{}, err
-	}
-	riskEventText := string(riskEventJSON)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return DecisionRecord{}, err
@@ -426,21 +668,17 @@ on conflict(id) do update set
 		return DecisionRecord{}, err
 	}
 
-	actionID := ""
-	if event.HookEventName != "PreToolUse" && event.ToolUseID != "" {
-		actionID, err = existingAuthorizedActionID(ctx, tx, sessionID, event.ToolUseID)
-		if err != nil {
+	actionID := "act_" + uuid.NewString()
+	if event.HookEventName == "PreToolUse" {
+		proposedID := "act_" + uuid.NewString()
+		if err := s.insertAction(ctx, tx, proposedID, sessionID, event, decision, canonicalEventRequestProposed, "event", now); err != nil {
 			return DecisionRecord{}, err
 		}
-	}
-
-	if actionID != "" {
-		if err := s.updateActionOutcome(ctx, tx, actionID, event, decision, riskEventText, now); err != nil {
+		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventRequestDecided, "decision", now.Add(time.Millisecond)); err != nil {
 			return DecisionRecord{}, err
 		}
 	} else {
-		actionID = "act_" + uuid.NewString()
-		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, riskEventText, now); err != nil {
+		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventType(event.HookEventName), "outcome", now); err != nil {
 			return DecisionRecord{}, err
 		}
 	}
@@ -466,26 +704,14 @@ on conflict(id) do update set
 	}, nil
 }
 
-func existingAuthorizedActionID(ctx context.Context, tx *sql.Tx, sessionID, toolUseID string) (string, error) {
-	var actionID string
-	err := tx.QueryRowContext(ctx, `
-select id
-from authorization_actions
-where session_id = ? and tool_use_id = ? and status = 'authorized' and decision_result = 'ALLOW'
-order by created_at desc
-limit 1
-	`, sessionID, toolUseID).Scan(&actionID)
-	if err == sql.ErrNoRows {
-		return "", nil
+func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, canonicalEvent, receiptType string, now time.Time) error {
+	action, err := actionValues(actionID, sessionID, event, decision, canonicalEvent, now)
+	if err != nil {
+		return err
 	}
-	return actionID, err
-}
-
-func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, riskEventJSON string, now time.Time) error {
-	action := actionValues(actionID, sessionID, event, decision, riskEventJSON, now)
 	columns := []string{
 		"id", "session_id", "tool_use_id", "canonical_event_type", "adapter_event_name", "correlation_key",
-		"tool_name", "provider", "operation", "operation_class", "resource_class", "parameters_redacted_json", "parameters_hash",
+		"tool_name", "provider", "operation", "operation_class", "resource_class", "resource_id", "parameters_redacted_json", "parameters_hash",
 		"identity_context_json", "identity_hash", "context_json", "context_hash",
 		"policy_id", "policy_version", "policy_hash", "default_posture",
 		"decision_result", "decision_category", "adapter_decision", "reason_code", "reason",
@@ -496,7 +722,7 @@ func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionI
 	}
 	values := []any{
 		action["id"], action["session_id"], action["tool_use_id"], action["canonical_event_type"], action["adapter_event_name"], action["correlation_key"],
-		action["tool_name"], action["provider"], action["operation"], action["operation_class"], action["resource_class"], action["parameters_redacted_json"], action["parameters_hash"],
+		action["tool_name"], action["provider"], action["operation"], action["operation_class"], action["resource_class"], action["resource_id"], action["parameters_redacted_json"], action["parameters_hash"],
 		action["identity_context_json"], action["identity_hash"], action["context_json"], action["context_hash"],
 		action["policy_id"], action["policy_version"], action["policy_hash"], action["default_posture"],
 		action["decision_result"], action["decision_category"], action["adapter_decision"], action["reason_code"], action["reason"],
@@ -512,44 +738,28 @@ func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionI
 	); err != nil {
 		return err
 	}
-	if err := s.appendReceipt(ctx, tx, receiptInputFromAction(action, "decision", now)); err != nil {
-		return err
-	}
-	if event.HookEventName == "PreToolUse" {
-		return nil
-	}
-	return s.appendReceipt(ctx, tx, receiptInputFromAction(action, "outcome", now))
+	return s.appendReceipt(ctx, tx, receiptInputFromAction(action, receiptType, now))
 }
 
-func (s *Store) updateActionOutcome(ctx context.Context, tx *sql.Tx, actionID string, event risk.HookEvent, decision risk.RiskDecision, riskEventJSON string, now time.Time) error {
-	action := actionValues(actionID, normalizeSessionID(event.SessionID), event, decision, riskEventJSON, now)
-	_, err := tx.ExecContext(ctx, `
-update authorization_actions
-set canonical_event_type = ?,
-    adapter_event_name = ?,
-    status = ?,
-    outcome = ?,
-    output_summary = ?,
-    output_hash = ?,
-    error_redacted = ?,
-    completed_at = ?,
-    updated_at = ?
-where id = ?
-	`, action["canonical_event_type"], action["adapter_event_name"], action["status"],
-		action["outcome"], action["output_summary"], action["output_hash"], action["error_redacted"],
-		action["completed_at"], action["updated_at"], actionID)
-	if err != nil {
-		return err
-	}
-	storedAction, err := receiptActionValues(ctx, tx, actionID)
-	if err != nil {
-		return err
-	}
-	return s.appendReceipt(ctx, tx, receiptInputFromAction(storedAction, "outcome", now))
-}
-
-func actionValues(actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, riskEventJSON string, now time.Time) map[string]any {
+func actionValues(actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, canonicalEvent string, now time.Time) (map[string]any, error) {
 	riskEvent := decision.RiskEvent
+	if canonicalEvent != canonicalEventRequestDecided {
+		riskEvent.Decision = ""
+		riskEvent.ReasonCode = ""
+		riskEvent.DecisionStage = ""
+	}
+	resourceID, branch := githubResourceScope(event, riskEvent)
+	if resourceID != "" {
+		riskEvent.Provider = "github"
+		riskEvent.ProviderCategory = "source_control"
+		if riskEvent.ResourceClass == "" || riskEvent.ResourceClass == "unknown" {
+			riskEvent.ResourceClass = "repo"
+		}
+	}
+	riskEventJSON, err := json.Marshal(riskEvent)
+	if err != nil {
+		return nil, err
+	}
 	parametersJSON, parametersHash := mustHashJSON(map[string]any{
 		"command_summary": riskEvent.CommandSummary,
 		"request_summary": riskEvent.RequestSummary,
@@ -558,10 +768,14 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 	identityJSON, identityHash := mustHashJSON(map[string]any{
 		"agent": event.Agent,
 	})
-	contextJSON, contextHash := mustHashJSON(map[string]any{
+	contextPayload := map[string]any{
 		"cwd":             event.CWD,
 		"hook_event_name": event.HookEventName,
-	})
+	}
+	if branch != "" {
+		contextPayload["github"] = map[string]any{"branch_or_ref": branch}
+	}
+	contextJSON, contextHash := mustHashJSON(contextPayload)
 	policyJSON := map[string]any{
 		"policy_version":       riskEvent.PolicyVersion,
 		"policy_profile":       riskEvent.PolicyProfile,
@@ -569,52 +783,78 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		"policy_rule_id":       riskEvent.PolicyRuleID,
 		"policy_rule_category": riskEvent.PolicyRuleCategory,
 	}
-	_, policyHash := mustHashJSON(policyJSON)
+	_, computedPolicyHash := mustHashJSON(policyJSON)
 	if riskEvent.PolicyHash != "" {
-		policyHash = riskEvent.PolicyHash
+		computedPolicyHash = riskEvent.PolicyHash
 	}
 	matchedRulesJSON := mustJSONText(nonEmptyStrings([]string{riskEvent.PolicyRuleID}))
 	riskSignalsJSON := mustJSONText(append([]string{}, riskEvent.Signals...))
 	emptyObject := "{}"
-	decisionResult := canonicalDecisionResult(decision.Decision)
+	isDecisionEvent := canonicalEvent == canonicalEventRequestDecided
+	var decisionResult any
+	if isDecisionEvent {
+		decisionResult = canonicalDecisionResult(decision.Decision)
+	}
 	outcome, outputSummary, outputHash, errorRedacted := outcomeValues(event, decision)
 	proposedAt := ""
 	decisionAt := ""
 	completedAt := ""
-	if event.HookEventName == "PreToolUse" {
+	switch canonicalEvent {
+	case canonicalEventRequestProposed:
 		proposedAt = now.Format(time.RFC3339Nano)
+	case canonicalEventRequestDecided:
 		decisionAt = proposedAt
-	} else {
+		if decisionAt == "" {
+			decisionAt = now.Format(time.RFC3339Nano)
+		}
+	case canonicalEventRequestObserved, canonicalEventRequestFailed, canonicalEventSessionEnd:
 		completedAt = now.Format(time.RFC3339Nano)
+	case canonicalEventSessionStart:
+		proposedAt = now.Format(time.RFC3339Nano)
+	}
+	policyID, policyVersion, actionPolicyHash, decisionCategoryValue, adapterDecisionValue, reasonCode, reasonText := "", "", "", "", "", "", ""
+	if isDecisionEvent {
+		policyID = riskEvent.PolicyRuleID
+		policyVersion = riskEvent.PolicyVersion
+		actionPolicyHash = computedPolicyHash
+		decisionCategoryValue = decisionCategory(riskEvent)
+		adapterDecisionValue = adapterDecision(decision.Decision)
+		reasonCode = decision.ReasonCode
+		reasonText = decision.Reason
+	}
+	provider := riskEvent.Provider
+	if resourceID != "" {
+		provider = "github"
 	}
 
 	return map[string]any{
 		"id":                       actionID,
 		"session_id":               sessionID,
 		"tool_use_id":              event.ToolUseID,
-		"canonical_event_type":     canonicalEventType(event.HookEventName),
+		"canonical_event_type":     canonicalEvent,
 		"adapter_event_name":       event.HookEventName,
 		"correlation_key":          correlationKey(event),
 		"tool_name":                event.ToolName,
-		"provider":                 riskEvent.Provider,
+		"provider":                 provider,
 		"operation":                riskEvent.Operation,
 		"operation_class":          riskEvent.OperationClass,
 		"resource_class":           riskEvent.ResourceClass,
+		"resource_id":              nullIfEmpty(resourceID),
 		"parameters_redacted_json": parametersJSON,
 		"parameters_hash":          parametersHash,
 		"identity_context_json":    identityJSON,
 		"identity_hash":            identityHash,
 		"context_json":             contextJSON,
 		"context_hash":             contextHash,
-		"policy_id":                riskEvent.PolicyRuleID,
-		"policy_version":           riskEvent.PolicyVersion,
-		"policy_hash":              policyHash,
+		"policy_id":                policyID,
+		"policy_version":           policyVersion,
+		"policy_hash":              actionPolicyHash,
 		"default_posture":          "",
 		"decision_result":          decisionResult,
-		"decision_category":        decisionCategory(riskEvent),
-		"adapter_decision":         adapterDecision(decision.Decision, decisionResult),
-		"reason_code":              decision.ReasonCode,
-		"reason":                   decision.Reason,
+		"decision_category":        decisionCategoryValue,
+		"adapter_decision":         adapterDecisionValue,
+		"reason_code":              reasonCode,
+		"reason":                   reasonText,
 		"risk_level":               strings.ToUpper(riskEvent.JudgeRiskLevel),
 		"risk_score":               nullableFloat(decision.RiskScore),
 		"risk_threshold":           nullableFloat(decision.Threshold),
@@ -628,7 +868,7 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		"approval_channel":         "",
 		"approval_request_id":      "",
 		"deferral_context_json":    emptyObject,
-		"status":                   actionStatus(event.HookEventName, decisionResult),
+		"status":                   actionStatus(canonicalEvent, stringValue(decisionResult)),
 		"outcome":                  outcome,
 		"output_summary":           outputSummary,
 		"output_hash":              outputHash,
@@ -638,14 +878,14 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		"completed_at":             nullIfEmpty(completedAt),
 		"created_at":               now.Format(time.RFC3339Nano),
 		"updated_at":               now.Format(time.RFC3339Nano),
-	}
+	}, nil
 }
 
 type receiptInput struct {
 	ActionID           string
 	SessionID          string
 	ReceiptType        string
-	DecisionResult     string
+	DecisionResult     any
 	DecisionCategory   string
 	ReasonCode         string
 	PolicyHash         string
@@ -661,6 +901,7 @@ type receiptInput struct {
 func receiptInputFromAction(action map[string]any, receiptType string, now time.Time) receiptInput {
 	riskEventJSON, _ := action["risk_event_json"].(string)
 	riskHash := hashString(riskEventJSON)
+	decisionResult := stringValue(action["decision_result"])
 	actionPayload := map[string]any{
 		"id":              action["id"],
 		"session_id":      action["session_id"],
@@ -670,21 +911,17 @@ func receiptInputFromAction(action map[string]any, receiptType string, now time.
 		"context_hash":    action["context_hash"],
 		"identity_hash":   action["identity_hash"],
 		"policy_hash":     action["policy_hash"],
-		"decision_result": action["decision_result"],
 		"reason_code":     action["reason_code"],
 		"risk_hash":       riskHash,
 		"outcome_hash":    action["output_hash"],
+	}
+	if decisionResult != "" {
+		actionPayload["decision_result"] = decisionResult
 	}
 	_, actionHash := mustHashJSON(actionPayload)
 	payload := map[string]any{
 		"receipt_type": receiptType,
 		"action":       actionPayload,
-		"decision": map[string]any{
-			"result":      action["decision_result"],
-			"category":    action["decision_category"],
-			"reason_code": action["reason_code"],
-			"reason":      action["reason"],
-		},
 		"risk": map[string]any{
 			"risk_level": action["risk_level"],
 			"risk_score": action["risk_score"],
@@ -705,6 +942,14 @@ func receiptInputFromAction(action map[string]any, receiptType string, now time.
 			"outcome_hash":         action["output_hash"],
 		},
 	}
+	if decisionResult != "" {
+		payload["decision"] = map[string]any{
+			"result":      decisionResult,
+			"category":    action["decision_category"],
+			"reason_code": action["reason_code"],
+			"reason":      action["reason"],
+		}
+	}
 	if receiptType == "outcome" {
 		payload["outcome"] = map[string]any{
 			"outcome":        action["outcome"],
@@ -717,7 +962,7 @@ func receiptInputFromAction(action map[string]any, receiptType string, now time.
 		ActionID:           action["id"].(string),
 		SessionID:          action["session_id"].(string),
 		ReceiptType:        receiptType,
-		DecisionResult:     action["decision_result"].(string),
+		DecisionResult:     nullIfEmpty(decisionResult),
 		DecisionCategory:   stringValue(action["decision_category"]),
 		ReasonCode:         stringValue(action["reason_code"]),
 		PolicyHash:         stringValue(action["policy_hash"]),
@@ -735,10 +980,11 @@ func receiptActionValues(ctx context.Context, tx *sql.Tx, actionID string) (map[
 	var (
 		id, sessionID, toolUseID, toolName                    string
 		parametersHash, contextHash, identityHash, policyHash string
-		decisionResult, reasonCode, riskEventJSON, outputHash string
+		reasonCode, riskEventJSON, outputHash                 string
 		decisionCategory, reason, riskLevel, riskSignalsJSON  string
 		policyID, policyVersion, matchedRulesJSON             string
 		outcome, outputSummary, errorRedacted                 string
+		decisionResult                                        sql.NullString
 		riskScore, riskThreshold                              sql.NullFloat64
 	)
 	err := tx.QueryRowContext(ctx, `
@@ -772,7 +1018,7 @@ where id = ?
 		"context_hash":       contextHash,
 		"identity_hash":      identityHash,
 		"policy_hash":        policyHash,
-		"decision_result":    decisionResult,
+		"decision_result":    nullableSQLString(decisionResult),
 		"reason_code":        reasonCode,
 		"risk_event_json":    riskEventJSON,
 		"output_hash":        outputHash,
@@ -842,56 +1088,73 @@ limit 1
 	return previous, err
 }
 
+const (
+	canonicalEventRequestProposed = "request.proposed"
+	canonicalEventRequestDecided  = "request.decided"
+	canonicalEventRequestObserved = "request.observed"
+	canonicalEventRequestFailed   = "request.failed"
+	canonicalEventSessionStart    = "session.start"
+	canonicalEventSessionEnd      = "session.end"
+)
+
 func canonicalEventType(hookEventName string) string {
 	switch hookEventName {
+	case "SessionStart":
+		return canonicalEventSessionStart
+	case "SessionEnd":
+		return canonicalEventSessionEnd
 	case "PostToolUse":
-		return "action.completed"
+		return canonicalEventRequestObserved
 	case "PostToolUseFailure":
-		return "action.failed"
+		return canonicalEventRequestFailed
 	default:
-		return "action.proposed"
+		return canonicalEventRequestObserved
 	}
 }
 
 func canonicalDecisionResult(decision risk.Decision) string {
 	switch strings.ToLower(strings.TrimSpace(string(decision))) {
 	case "allow":
-		return string(risk.AuthorizationDecisionAllow)
-	case "modify":
-		return string(risk.AuthorizationDecisionModify)
-	case "ask", "step_up", "step-up":
-		return string(risk.AuthorizationDecisionStepUp)
-	case "defer":
-		return string(risk.AuthorizationDecisionDefer)
+		return "allow"
 	case "deny":
 		fallthrough
 	default:
-		return string(risk.AuthorizationDecisionDeny)
+		return "deny"
 	}
 }
 
-func actionStatus(hookEventName, decisionResult string) string {
-	switch hookEventName {
-	case "PostToolUse":
+func actionStatus(canonicalEvent, decisionResult string) string {
+	switch canonicalEvent {
+	case canonicalEventRequestProposed:
+		return "proposed"
+	case canonicalEventRequestObserved:
 		return "completed"
-	case "PostToolUseFailure":
+	case canonicalEventRequestFailed:
 		return "failed"
+	case canonicalEventSessionStart:
+		return "started"
+	case canonicalEventSessionEnd:
+		return "completed"
 	}
 	switch decisionResult {
-	case string(risk.AuthorizationDecisionAllow):
+	case "allow":
 		return "authorized"
 	default:
 		return "blocked"
 	}
 }
 
-func adapterDecision(decision risk.Decision, decisionResult string) string {
-	switch decisionResult {
-	case string(risk.AuthorizationDecisionAllow), string(risk.AuthorizationDecisionDeny):
-		return string(decision)
-	default:
-		return "unsupported_" + strings.ToLower(decisionResult) + "_fail_closed"
+func adapterDecision(decision risk.Decision) string {
+	normalized := strings.ToLower(strings.TrimSpace(string(decision)))
+	switch normalized {
+	case "allow", "deny":
+		return normalized
 	}
+	if normalized == "" {
+		normalized = "empty"
+	}
+	normalized = strings.NewReplacer(" ", "_", "-", "_").Replace(normalized)
+	return "unsupported_" + normalized + "_fail_closed"
 }
 
 func outcomeValues(event risk.HookEvent, decision risk.RiskDecision) (outcome, summary, outputHash, errorRedacted string) {
@@ -934,6 +1197,90 @@ func correlationKey(event risk.HookEvent) string {
 	return event.SessionID + ":" + event.HookEventName + ":" + event.ToolName
 }
 
+var (
+	githubRemoteRE = regexp.MustCompile(`(?i)(?:github\.com[:/])([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$`)
+	githubURLRE    = regexp.MustCompile(`(?i)github\.com[:/]([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?:\.git)?(?:[/\s'"<>]|$)`)
+	githubRepoRE   = regexp.MustCompile(`\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\b`)
+)
+
+func githubResourceScope(event risk.HookEvent, riskEvent risk.RiskEvent) (resourceID, branch string) {
+	command := commandFromHookInput(event.ToolInput)
+	if riskEvent.Provider != "github" && riskEvent.Provider != "git" && !strings.Contains(strings.ToLower(command), "github.com") {
+		return "", ""
+	}
+	if repo := githubRepoFromCommand(command); repo != "" {
+		return repo, currentGitBranch(event.CWD)
+	}
+	if repo := githubRepoFromCWD(event.CWD); repo != "" {
+		return repo, currentGitBranch(event.CWD)
+	}
+	return "", ""
+}
+
+func githubRepoFromCommand(command string) string {
+	lowerCommand := strings.ToLower(command)
+	if !strings.Contains(lowerCommand, "gh ") && !strings.Contains(lowerCommand, "github.com") {
+		return ""
+	}
+	if strings.Contains(lowerCommand, "github.com") {
+		match := githubURLRE.FindStringSubmatch(command)
+		if len(match) >= 2 {
+			return strings.TrimSuffix(match[1], ".git")
+		}
+	}
+	match := githubRepoRE.FindStringSubmatch(command)
+	if len(match) < 2 {
+		return ""
+	}
+	return strings.TrimSuffix(match[1], ".git")
+}
+
+func githubRepoFromCWD(cwd string) string {
+	if strings.TrimSpace(cwd) == "" {
+		return ""
+	}
+	remote := gitOutput(cwd, "remote", "get-url", "origin")
+	if remote == "" {
+		return ""
+	}
+	match := githubRemoteRE.FindStringSubmatch(remote)
+	if len(match) < 2 {
+		return ""
+	}
+	return strings.TrimSuffix(match[1], ".git")
+}
+
+func currentGitBranch(cwd string) string {
+	if strings.TrimSpace(cwd) == "" {
+		return ""
+	}
+	branch := gitOutput(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+	if branch == "HEAD" {
+		return ""
+	}
+	return branch
+}
+
+func gitOutput(cwd string, args ...string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", cwd}, args...)...)
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func commandFromHookInput(input map[string]any) string {
+	for _, key := range []string{"command", "cmd", "script"} {
+		if value, ok := input[key].(string); ok {
+			return value
+		}
+	}
+	return ""
+}
+
 func mustHashJSON(value any) (string, string) {
 	payload, hash, err := hashJSON(value)
 	if err != nil {
@@ -974,6 +1321,13 @@ func nullableSQLFloat(value sql.NullFloat64) any {
 	return value.Float64
 }
 
+func nullableSQLString(value sql.NullString) any {
+	if !value.Valid {
+		return nil
+	}
+	return value.String
+}
+
 func stringValue(value any) string {
 	if value == nil {
 		return ""
@@ -1000,10 +1354,11 @@ select
 	  0,
 	  coalesce(sum(actions), 0),
 	  (select count(*) from agent_sessions)
-from (
-  select case when decision_result = 'ALLOW' then 0 else 1 end as critical, 1 as actions
-  from authorization_actions
-)
+	from (
+	  select case when decision_result = 'deny' then 1 else 0 end as critical, 1 as actions
+	  from authorization_actions
+	  where canonical_event_type <> 'request.proposed'
+	)
 	`)
 	if err := row.Scan(&summary.Critical, &summary.Warnings, &summary.Actions, &summary.Sessions); err != nil {
 		return Summary{}, err
@@ -1018,13 +1373,18 @@ select actions.session_id,
 	  0 as warnings,
 	  count(*) as actions,
 	  max(latest_at) as latest_at,
-	  coalesce(agent_sessions.mode, '') as mode
-from (
-  select session_id, case when decision_result = 'ALLOW' then 0 else 1 end as critical, updated_at as latest_at
-  from authorization_actions
-	) actions
+	  coalesce(agent_sessions.mode, '') as mode,
+	  coalesce(agent_sessions.status, '') as status,
+	  coalesce(agent_sessions.created_at, max(latest_at)) as created_at,
+	  coalesce(agent_sessions.updated_at, max(latest_at)) as updated_at,
+	  agent_sessions.closed_at
+	from (
+	  select session_id, case when decision_result = 'deny' then 1 else 0 end as critical, updated_at as latest_at
+	  from authorization_actions
+	  where canonical_event_type <> 'request.proposed'
+		) actions
 left join agent_sessions on agent_sessions.id = actions.session_id
-group by actions.session_id, agent_sessions.mode
+group by actions.session_id, agent_sessions.mode, agent_sessions.status, agent_sessions.created_at, agent_sessions.updated_at, agent_sessions.closed_at
 order by latest_at desc
 	`)
 	if err != nil {
@@ -1034,15 +1394,14 @@ order by latest_at desc
 	sessions := []SessionSummary{}
 	for rows.Next() {
 		var item SessionSummary
-		var latest string
-		if err := rows.Scan(&item.SessionID, &item.Critical, &item.Warnings, &item.Actions, &latest, &item.Mode); err != nil {
+		var latest, created, updated string
+		var closed sql.NullString
+		if err := rows.Scan(&item.SessionID, &item.Critical, &item.Warnings, &item.Actions, &latest, &item.Mode, &item.Status, &created, &updated, &closed); err != nil {
 			return nil, err
 		}
-		latestAt, err := parseStoredTime("session latest_at", latest)
-		if err != nil {
+		if err := parseSessionSummaryTimes(&item, latest, created, updated, closed); err != nil {
 			return nil, err
 		}
-		item.LatestAt = latestAt
 		sessions = append(sessions, item)
 	}
 	return sessions, rows.Err()
@@ -1050,30 +1409,33 @@ order by latest_at desc
 
 func (s *Store) SessionSummary(ctx context.Context, sessionID string) (SessionSummary, error) {
 	var item SessionSummary
-	var latest string
+	var latest, created, updated string
+	var closed sql.NullString
 	row := s.db.QueryRowContext(ctx, `
 select actions.session_id,
 	  sum(critical),
 	  0,
 	  count(*),
 	  max(latest_at),
-	  coalesce(agent_sessions.mode, '')
-from (
-  select session_id, case when decision_result = 'ALLOW' then 0 else 1 end as critical, updated_at as latest_at
-  from authorization_actions
-  where session_id = ?
-	) actions
+	  coalesce(agent_sessions.mode, ''),
+	  coalesce(agent_sessions.status, ''),
+	  coalesce(agent_sessions.created_at, max(latest_at)),
+	  coalesce(agent_sessions.updated_at, max(latest_at)),
+	  agent_sessions.closed_at
+	from (
+	  select session_id, case when decision_result = 'deny' then 1 else 0 end as critical, updated_at as latest_at
+	  from authorization_actions
+	  where session_id = ? and canonical_event_type <> 'request.proposed'
+		) actions
 left join agent_sessions on agent_sessions.id = actions.session_id
-group by actions.session_id, agent_sessions.mode
+group by actions.session_id, agent_sessions.mode, agent_sessions.status, agent_sessions.created_at, agent_sessions.updated_at, agent_sessions.closed_at
 	`, sessionID)
-	if err := row.Scan(&item.SessionID, &item.Critical, &item.Warnings, &item.Actions, &latest, &item.Mode); err != nil {
+	if err := row.Scan(&item.SessionID, &item.Critical, &item.Warnings, &item.Actions, &latest, &item.Mode, &item.Status, &created, &updated, &closed); err != nil {
 		return SessionSummary{}, err
 	}
-	latestAt, err := parseStoredTime("session latest_at", latest)
-	if err != nil {
+	if err := parseSessionSummaryTimes(&item, latest, created, updated, closed); err != nil {
 		return SessionSummary{}, err
 	}
-	item.LatestAt = latestAt
 	return item, nil
 }
 
@@ -1082,12 +1444,13 @@ func (s *Store) Events(ctx context.Context, sessionID string) ([]DecisionRecord,
 select id, session_id, coalesce(tool_use_id, ''), hook_event_name, coalesce(tool_name, ''),
 	  decision, reason_code, reason, risk_score, threshold, coalesce(model_version, ''),
 	  risk_event_json, created_at
-from (
-  select id, session_id, tool_use_id, coalesce(adapter_event_name, '') as hook_event_name, tool_name,
-    case when decision_result = 'ALLOW' then 'allow' else 'deny' end as decision,
-    reason_code, reason, risk_score, risk_threshold as threshold, model_version, risk_event_json, updated_at as created_at
-  from authorization_actions
-)
+	from (
+	  select id, session_id, tool_use_id, coalesce(adapter_event_name, '') as hook_event_name, tool_name,
+	    coalesce(decision_result, '') as decision,
+	    coalesce(reason_code, '') as reason_code, coalesce(reason, '') as reason, risk_score, risk_threshold as threshold, model_version, risk_event_json, updated_at as created_at
+	  from authorization_actions
+	  where canonical_event_type = 'request.decided'
+	)
 where session_id = ?
 order by created_at desc
 	`, sessionID)
@@ -1126,25 +1489,12 @@ func scanDecision(scanner interface{ Scan(...any) error }) (DecisionRecord, erro
 	if err := json.Unmarshal([]byte(riskEventJSON), &record.RiskEvent); err != nil {
 		return DecisionRecord{}, err
 	}
-	normalizeAskRecord(&record)
 	createdAt, err := parseStoredTime("decision created_at", created)
 	if err != nil {
 		return DecisionRecord{}, err
 	}
 	record.CreatedAt = createdAt
 	return record, nil
-}
-
-func normalizeAskRecord(record *DecisionRecord) {
-	if record == nil {
-		return
-	}
-	if record.Decision == risk.Decision("ask") {
-		record.Decision = risk.DecisionDeny
-	}
-	if record.RiskEvent.Decision == risk.Decision("ask") {
-		record.RiskEvent.Decision = risk.DecisionDeny
-	}
 }
 
 func scanSession(scanner interface{ Scan(...any) error }) (SessionRecord, error) {
@@ -1183,6 +1533,32 @@ func scanSession(scanner interface{ Scan(...any) error }) (SessionRecord, error)
 		record.ClosedAt = &closedAt
 	}
 	return record, nil
+}
+
+func parseSessionSummaryTimes(item *SessionSummary, latest, created, updated string, closed sql.NullString) error {
+	latestAt, err := parseStoredTime("session latest_at", latest)
+	if err != nil {
+		return err
+	}
+	createdAt, err := parseStoredTime("session created_at", created)
+	if err != nil {
+		return err
+	}
+	updatedAt, err := parseStoredTime("session updated_at", updated)
+	if err != nil {
+		return err
+	}
+	item.LatestAt = latestAt
+	item.CreatedAt = createdAt
+	item.UpdatedAt = updatedAt
+	if closed.Valid && closed.String != "" {
+		closedAt, err := parseStoredTime("session closed_at", closed.String)
+		if err != nil {
+			return err
+		}
+		item.ClosedAt = &closedAt
+	}
+	return nil
 }
 
 func parseStoredTime(label, value string) (time.Time, error) {

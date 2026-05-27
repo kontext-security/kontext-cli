@@ -38,6 +38,10 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	if err != nil {
 		return fmt.Errorf("ensure installation identity: %w", err)
 	}
+	installToken, err := managedconfig.ResolveInstallToken(ctx, loadedConfig.Config.Credentials.InstallTokenRef)
+	if err != nil {
+		return fmt.Errorf("resolve install token: %w", err)
+	}
 
 	socketPath := opts.SocketPath
 	if socketPath == "" {
@@ -78,6 +82,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			CloudURL:       loadedConfig.Config.CloudURL,
 			OrganizationID: loadedConfig.Config.OrganizationID,
 			InstallationID: installationState.InstallationID,
+			InstallToken:   installToken,
 			DeviceLabel:    loadedConfig.Config.Device.Label,
 			Interval:       opts.StreamInterval,
 			HTTPClient:     opts.StreamHTTPClient,

@@ -23,6 +23,9 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 		if r.URL.Path != DefaultEndpoint {
 			t.Fatalf("path = %q, want %q", r.URL.Path, DefaultEndpoint)
 		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-install-token" {
+			t.Fatalf("Authorization = %q, want bearer install token", got)
+		}
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("Decode() error = %v", err)
 		}
@@ -37,6 +40,7 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
 		DeviceLabel:    "michel-macbook",
 		HTTPClient:     server.Client(),
 	}); err != nil {
@@ -55,8 +59,13 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	if got.Device == nil || got.Device.Label != "michel-macbook" {
 		t.Fatalf("device = %+v", got.Device)
 	}
-	if len(got.Sessions) != 1 || len(got.Actions) != 1 || len(got.Receipts) != 1 {
+	if len(got.Sessions) != 1 || len(got.Actions) != 2 || len(got.Receipts) != 2 {
 		t.Fatalf("batch counts = sessions %d actions %d receipts %d", len(got.Sessions), len(got.Actions), len(got.Receipts))
+	}
+	if got.Actions[0]["canonical_event_type"] != "request.proposed" ||
+		got.Actions[1]["canonical_event_type"] != "request.decided" ||
+		got.Actions[1]["decision_result"] != "allow" {
+		t.Fatalf("actions = %+v, want proposed and decided ledger events", got.Actions)
 	}
 
 	state, err := LoadState(statePath)
@@ -84,6 +93,7 @@ func TestFlushDoesNotAdvanceCursorWhenHostedBackendFails(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
 		HTTPClient:     server.Client(),
 	}); err == nil {
 		t.Fatal("Flush() error = nil, want hosted failure")
@@ -109,6 +119,7 @@ func TestFlushDefaultsStatePathBesideLedgerDB(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
 		HTTPClient:     server.Client(),
 	}); err != nil {
 		t.Fatalf("Flush() error = %v", err)
@@ -146,6 +157,7 @@ func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
 		HTTPClient:     server.Client(),
 	}); err != nil {
 		t.Fatalf("Flush() error = %v", err)

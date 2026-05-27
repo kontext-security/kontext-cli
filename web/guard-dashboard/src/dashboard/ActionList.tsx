@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { decisionLabel, decisionSource, decisionTone, prettyTool, summaryOf } from "./helpers";
 import { DecisionDot } from "./shared";
 import { DECISIONS } from "./types";
-import type { Decision, Event, EventGroups, GuardMode, LogView, ObservedActivityEvent, Tab } from "./types";
+import type { Decision, Event, EventGroups, GuardMode, Tab } from "./types";
 
 const VISIBLE_KINDS = {
   all: DECISIONS,
@@ -20,47 +20,33 @@ const VISIBLE_KINDS = {
 
 export function ActionList({
   tab,
-  view,
   decisionGroups,
-  observedEvents,
   openId,
   onOpen,
-  onViewChange,
   onClearFilter,
   mode,
 }: {
   tab: Tab;
-  view: LogView;
   decisionGroups: EventGroups;
-  observedEvents: ObservedActivityEvent[];
   openId: string | null;
   onOpen: (id: string) => void;
-  onViewChange: (view: LogView) => void;
   onClearFilter: () => void;
   mode: GuardMode;
 }) {
   const visibleDecisionGroups = VISIBLE_KINDS[tab]
     .map((kind) => ({ kind, items: decisionGroups[kind] }))
     .filter(({ items }) => items.length > 0);
-  const decisionCount = decisionGroups.allow.length + decisionGroups.deny.length;
-  const filterLabel = view === "decisions" && tab !== "all" ? decisionLabel(tab, mode) : null;
+  const decisionCount = DECISIONS.reduce((sum, kind) => sum + decisionGroups[kind].length, 0);
+  const filterLabel = tab !== "all" ? decisionLabel(tab, mode) : null;
 
   return (
     <section className="min-w-0 overflow-hidden rounded-xl border bg-card shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(0,0,0,0.04)]">
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b px-5 py-3">
-        <div className="inline-flex shrink-0 items-center rounded-lg bg-muted p-1">
-          <LogTab
-            active={view === "decisions"}
-            label="Decision Log"
-            count={decisionCount}
-            onClick={() => onViewChange("decisions")}
-          />
-          <LogTab
-            active={view === "observed"}
-            label="Observed Activity"
-            count={observedEvents.length}
-            onClick={() => onViewChange("observed")}
-          />
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className="text-[13px] font-medium text-foreground">Decision Log</span>
+          <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+            {decisionCount}
+          </span>
         </div>
 
         {filterLabel && (
@@ -76,96 +62,32 @@ export function ActionList({
       </div>
 
       <div className="grid">
-        <div
-          className={cn(
-            "col-start-1 row-start-1 min-w-0",
-            view !== "decisions" && "hidden",
-          )}
-          aria-hidden={view !== "decisions"}
-        >
-          {decisionCount === 0 ? (
-            <Empty
-              title="No decisions captured yet."
-              description="Pre-tool Guard decisions will appear here."
-            />
-          ) : visibleDecisionGroups.length === 0 ? (
-            <Empty
-              title={`No ${filterLabel?.toLowerCase() ?? "matching"} decisions.`}
-              description="Clear the filter to show all decisions."
-            />
-          ) : (
-            visibleDecisionGroups.map(({ kind, items }, index) => (
-              <Group
-                key={kind}
-                label={decisionLabel(kind, mode)}
-                count={items.length}
-                separated={index > 0}
-              >
-                {items.map((e) => (
-                  <Row key={e.id} event={e} active={openId === e.id} onClick={() => onOpen(e.id)} />
-                ))}
-              </Group>
-            ))
-          )}
-        </div>
-        <div
-          className={cn(
-            "col-start-1 row-start-1 min-w-0",
-            view !== "observed" && "hidden",
-          )}
-          aria-hidden={view !== "observed"}
-        >
-          {observedEvents.length === 0 ? (
-            <Empty
-              title="No observed activity yet."
-              description="Post-execution tool activity will appear here."
-            />
-          ) : (
-            <Group label="Observed Activity" count={observedEvents.length}>
-              {observedEvents.map((e) => (
+        {decisionCount === 0 ? (
+          <Empty
+            title="No decisions captured yet."
+            description="Pre-tool Guard decisions will appear here."
+          />
+        ) : visibleDecisionGroups.length === 0 ? (
+          <Empty
+            title={`No ${filterLabel?.toLowerCase() ?? "matching"} decisions.`}
+            description="Clear the filter to show all decisions."
+          />
+        ) : (
+          visibleDecisionGroups.map(({ kind, items }, index) => (
+            <Group
+              key={kind}
+              label={decisionLabel(kind, mode)}
+              count={items.length}
+              separated={index > 0}
+            >
+              {items.map((e) => (
                 <Row key={e.id} event={e} active={openId === e.id} onClick={() => onOpen(e.id)} />
               ))}
             </Group>
-          )}
-        </div>
+          ))
+        )}
       </div>
     </section>
-  );
-}
-
-function LogTab({
-  active,
-  label,
-  count,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  count: number;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        "inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-medium transition-colors",
-        active
-          ? "bg-background text-foreground shadow-sm"
-          : "text-muted-foreground hover:text-foreground",
-      )}
-    >
-      <span>{label}</span>
-      <span
-        className={cn(
-          "tabular-nums text-[11px] font-normal",
-          active ? "text-muted-foreground" : "text-muted-foreground/60",
-        )}
-      >
-        {count}
-      </span>
-    </button>
   );
 }
 

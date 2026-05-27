@@ -53,7 +53,6 @@ function stringList(value: unknown): string[] | undefined {
 
 function decision(value: unknown): Decision | undefined {
   if (isDecision(value)) return value;
-  if (value === "ask") return "deny";
   return undefined;
 }
 
@@ -118,6 +117,11 @@ function parseSession(value: unknown): Session | undefined {
   return {
     session_id: value.session_id,
     actions: value.actions,
+    latest_at: optionalString(value.latest_at),
+    status: optionalString(value.status),
+    created_at: optionalString(value.created_at),
+    updated_at: optionalString(value.updated_at),
+    closed_at: optionalString(value.closed_at),
     current,
     mode,
   };

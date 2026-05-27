@@ -31,7 +31,7 @@ func TestIngestEventRejectsBlockingHooks(t *testing.T) {
 
 func TestProcessHookRoutesByBlockingCapability(t *testing.T) {
 	runtime := &recordingRuntime{
-		evaluateResult: hook.Result{Decision: hook.DecisionAsk, Reason: "review"},
+		evaluateResult: hook.Result{Decision: hook.DecisionDeny, Reason: "review"},
 		ingestResult:   hook.Result{Decision: hook.DecisionAllow, Reason: "recorded"},
 	}
 	core, err := New(runtime)
@@ -49,7 +49,7 @@ func TestProcessHookRoutesByBlockingCapability(t *testing.T) {
 	if runtime.evaluateCalls != 1 || runtime.ingestCalls != 1 {
 		t.Fatalf("calls evaluate=%d ingest=%d", runtime.evaluateCalls, runtime.ingestCalls)
 	}
-	if evaluate.Decision != hook.DecisionAsk || ingest.Reason != "recorded" {
+	if evaluate.Decision != hook.DecisionDeny || ingest.Reason != "recorded" {
 		t.Fatalf("evaluate=%+v ingest=%+v", evaluate, ingest)
 	}
 }

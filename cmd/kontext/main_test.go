@@ -239,11 +239,11 @@ func TestClaudeManagedSettingsValidateCmdPassesGeneratedTemplate(t *testing.T) {
 	}
 }
 
-func TestClaudeManagedSettingsValidateCmdRejectsShellFormHooks(t *testing.T) {
+func TestClaudeManagedSettingsValidateCmdRejectsLegacyExecArgs(t *testing.T) {
 	data := []byte(`{
   "hooks": {
     "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "/usr/local/bin/kontext", "args": ["hook", "session-start"], "timeout": 5}]}],
-    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "/usr/local/bin/kontext hook pre-tool-use", "timeout": 5}]}],
+    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "'/usr/local/bin/kontext' hook 'pre-tool-use'", "args": ["hook", "pre-tool-use"], "timeout": 5}]}],
     "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "/usr/local/bin/kontext", "args": ["hook", "post-tool-use"], "timeout": 5}]}],
     "PostToolUseFailure": [{"matcher": "", "hooks": [{"type": "command", "command": "/usr/local/bin/kontext", "args": ["hook", "post-tool-use-failure"], "timeout": 5}]}],
     "SessionEnd": [{"matcher": "", "hooks": [{"type": "command", "command": "/usr/local/bin/kontext", "args": ["hook", "session-end"], "timeout": 5}]}]
@@ -256,10 +256,10 @@ func TestClaudeManagedSettingsValidateCmdRejectsShellFormHooks(t *testing.T) {
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("Execute() error = nil, want shell-form error")
+		t.Fatal("Execute() error = nil, want legacy args error")
 	}
-	if !strings.Contains(err.Error(), "shell-form Kontext command") {
-		t.Fatalf("error = %q, want shell-form error", err.Error())
+	if !strings.Contains(err.Error(), "args must be omitted") {
+		t.Fatalf("error = %q, want legacy args error", err.Error())
 	}
 }
 
