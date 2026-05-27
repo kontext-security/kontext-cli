@@ -206,40 +206,20 @@ func TestEncodeAllowIncludesUpdatedInput(t *testing.T) {
 	}
 }
 
-func TestEncodeClaudeResultMapsAskToAsk(t *testing.T) {
+func TestEncodeClaudeResultMapsUnsupportedDecisionToDeny(t *testing.T) {
 	t.Parallel()
 
 	out, err := hookruntime.EncodeClaudeResult("PreToolUse", hook.Result{
-		Decision:  hook.DecisionAsk,
-		Reason:    "approval required",
-		RequestID: "req-123",
+		Decision: hook.Decision("ask"),
+		Reason:   "approval required",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), `"permissionDecision":"ask"`) {
+	if !strings.Contains(string(out), `"permissionDecision":"deny"`) {
 		t.Fatalf("output = %s", string(out))
 	}
-	if !strings.Contains(string(out), `"permissionDecisionReason":"approval required Request ID: req-123"`) {
-		t.Fatalf("output = %s", string(out))
-	}
-}
-
-func TestEncodeClaudeResultDoesNotDuplicateAskRequestID(t *testing.T) {
-	t.Parallel()
-
-	out, err := hookruntime.EncodeClaudeResult("PreToolUse", hook.Result{
-		Decision:  hook.DecisionAsk,
-		Reason:    "approval required. Request ID: req-123",
-		RequestID: "req-123",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Count(string(out), "Request ID: req-123"); got != 1 {
-		t.Fatalf("output = %s, request id count = %d", string(out), got)
-	}
-	if !strings.Contains(string(out), `"permissionDecision":"ask"`) {
+	if !strings.Contains(string(out), `"permissionDecisionReason":"approval required"`) {
 		t.Fatalf("output = %s", string(out))
 	}
 }

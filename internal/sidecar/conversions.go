@@ -31,8 +31,6 @@ func HookResultFromHostedResult(result *backend.ProcessHookEventResult, accessMo
 	switch resp.GetDecision() {
 	case agentv1.Decision_DECISION_ALLOW:
 		out.Decision = hook.DecisionAllow
-	case agentv1.Decision_DECISION_ASK:
-		out.Decision = hook.DecisionAsk
 	case agentv1.Decision_DECISION_DENY:
 		fallthrough
 	default:

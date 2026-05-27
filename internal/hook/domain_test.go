@@ -14,7 +14,7 @@ func TestNormalizeDecision(t *testing.T) {
 		{name: "allow lowercase", in: "allow", want: DecisionAllow, ok: true},
 		{name: "allow uppercase", in: "ALLOW", want: DecisionAllow, ok: true},
 		{name: "deny mixed case", in: "DeNy", want: DecisionDeny, ok: true},
-		{name: "ask padded", in: " ask ", want: DecisionAsk, ok: true},
+		{name: "ask unsupported", in: " ask ", ok: false},
 		{name: "unknown", in: "retry", ok: false},
 	}
 
@@ -42,21 +42,6 @@ func TestResultClaudeReason(t *testing.T) {
 		in   Result
 		want string
 	}{
-		{
-			name: "ask includes request id",
-			in:   Result{Decision: DecisionAsk, Reason: "approval required", RequestID: "req-123"},
-			want: "approval required Request ID: req-123",
-		},
-		{
-			name: "ask does not duplicate request id",
-			in:   Result{Decision: DecisionAsk, Reason: "approval required request id: req-123", RequestID: "req-123"},
-			want: "approval required request id: req-123",
-		},
-		{
-			name: "ask default",
-			in:   Result{Decision: DecisionAsk},
-			want: "Kontext access policy requires approval.",
-		},
 		{
 			name: "deny default",
 			in:   Result{Decision: DecisionDeny},
