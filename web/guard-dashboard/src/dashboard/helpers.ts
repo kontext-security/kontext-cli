@@ -20,13 +20,12 @@ const JUDGE_STAGES = new Set(["judge_allow", "judge_deny", "judge_fail_open"]);
 const DETERMINISTIC_STAGES = new Set(["deterministic_deny", "deterministic_allow"]);
 
 export function bucket(events: Event[]): EventBuckets {
-  const groups: EventGroups = { deny: [], ask: [], allow: [] };
+  const groups: EventGroups = { deny: [], allow: [] };
   for (const e of events) groups[e.decision].push(e);
   return {
     counts: {
       all: events.length,
       deny: groups.deny.length,
-      ask: groups.ask.length,
       allow: groups.allow.length,
     },
     groups,
@@ -140,9 +139,6 @@ export function dateTime(value?: string): string {
 }
 
 export function decisionLabel(decision: Decision, mode: GuardMode): string {
-  if (decision === "ask") {
-    return mode === "enforce" ? "Needs approval" : "Would require approval";
-  }
   if (mode === "enforce") {
     return decision === "deny" ? "Denied" : "Allowed";
   }
@@ -158,12 +154,6 @@ export const decisionTone: Record<
     bg: "bg-destructive",
     ring: "ring-destructive/10",
     border: "border-destructive/20",
-  },
-  ask: {
-    text: "text-amber-600",
-    bg: "bg-amber-500",
-    ring: "ring-amber-500/10",
-    border: "border-amber-500/25",
   },
   allow: {
     text: "text-brand",

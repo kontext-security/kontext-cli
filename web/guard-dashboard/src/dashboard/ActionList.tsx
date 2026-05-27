@@ -15,7 +15,6 @@ import type { Decision, Event, EventGroups, GuardMode, Tab } from "./types";
 const VISIBLE_KINDS = {
   all: DECISIONS,
   deny: ["deny"],
-  ask: ["ask"],
   allow: ["allow"],
 } satisfies Record<Tab, readonly Decision[]>;
 

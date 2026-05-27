@@ -813,7 +813,7 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		policyVersion = riskEvent.PolicyVersion
 		actionPolicyHash = computedPolicyHash
 		decisionCategoryValue = decisionCategory(riskEvent)
-		adapterDecisionValue = adapterDecision(decision.Decision, stringValue(decisionResult))
+		adapterDecisionValue = adapterDecision(decision.Decision)
 		reasonCode = decision.ReasonCode
 		reasonText = decision.Reason
 	}
@@ -1111,8 +1111,6 @@ func canonicalDecisionResult(decision risk.Decision) string {
 	switch strings.ToLower(strings.TrimSpace(string(decision))) {
 	case "allow":
 		return "allow"
-	case "ask", "step_up", "step-up":
-		return "ask"
 	case "deny":
 		fallthrough
 	default:
@@ -1136,20 +1134,22 @@ func actionStatus(canonicalEvent, decisionResult string) string {
 	switch decisionResult {
 	case "allow":
 		return "authorized"
-	case "ask":
-		return "needs_approval"
 	default:
 		return "blocked"
 	}
 }
 
-func adapterDecision(decision risk.Decision, decisionResult string) string {
-	switch decisionResult {
-	case "allow", "ask", "deny":
-		return string(decision)
-	default:
-		return "unsupported_" + strings.ToLower(decisionResult) + "_fail_closed"
+func adapterDecision(decision risk.Decision) string {
+	normalized := strings.ToLower(strings.TrimSpace(string(decision)))
+	switch normalized {
+	case "allow", "deny":
+		return normalized
 	}
+	if normalized == "" {
+		normalized = "empty"
+	}
+	normalized = strings.NewReplacer(" ", "_", "-", "_").Replace(normalized)
+	return "unsupported_" + normalized + "_fail_closed"
 }
 
 func outcomeValues(event risk.HookEvent, decision risk.RiskDecision) (outcome, summary, outputHash, errorRedacted string) {
@@ -1350,7 +1350,7 @@ select
 	  coalesce(sum(actions), 0),
 	  (select count(*) from agent_sessions)
 	from (
-	  select case when decision_result in ('deny', 'ask') then 1 else 0 end as critical, 1 as actions
+	  select case when decision_result = 'deny' then 1 else 0 end as critical, 1 as actions
 	  from authorization_actions
 	  where canonical_event_type <> 'request.proposed'
 	)
@@ -1374,7 +1374,7 @@ select actions.session_id,
 	  coalesce(agent_sessions.updated_at, max(latest_at)) as updated_at,
 	  agent_sessions.closed_at
 	from (
-	  select session_id, case when decision_result in ('deny', 'ask') then 1 else 0 end as critical, updated_at as latest_at
+	  select session_id, case when decision_result = 'deny' then 1 else 0 end as critical, updated_at as latest_at
 	  from authorization_actions
 	  where canonical_event_type <> 'request.proposed'
 		) actions
@@ -1418,7 +1418,7 @@ select actions.session_id,
 	  coalesce(agent_sessions.updated_at, max(latest_at)),
 	  agent_sessions.closed_at
 	from (
-	  select session_id, case when decision_result in ('deny', 'ask') then 1 else 0 end as critical, updated_at as latest_at
+	  select session_id, case when decision_result = 'deny' then 1 else 0 end as critical, updated_at as latest_at
 	  from authorization_actions
 	  where session_id = ? and canonical_event_type <> 'request.proposed'
 		) actions

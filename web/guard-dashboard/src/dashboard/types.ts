@@ -1,4 +1,4 @@
-export const DECISIONS = ["deny", "ask", "allow"] as const;
+export const DECISIONS = ["deny", "allow"] as const;
 export type Decision = (typeof DECISIONS)[number];
 
 export const GUARD_MODES = ["observe", "enforce"] as const;
@@ -103,7 +103,6 @@ export type PolicyProfileDef = {
 export type Counts = {
   all: number;
   deny: number;
-  ask: number;
   allow: number;
 };
 

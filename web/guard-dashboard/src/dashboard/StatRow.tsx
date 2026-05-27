@@ -26,7 +26,7 @@ export function StatRow({
         loading={loading}
         onClick={() => onSelect("all")}
       />
-      <div className="grid divide-y md:grid-cols-3 md:divide-x md:divide-y-0">
+      <div className="grid divide-y md:grid-cols-2 md:divide-x md:divide-y-0">
         {DECISIONS.map((id) => (
           <StatTile
             key={id}

@@ -700,7 +700,7 @@ where id = ?
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decisionResult != "ask" || adapterDecision != "step_up" || status != "needs_approval" {
+	if decisionResult != "deny" || adapterDecision != "unsupported_step_up_fail_closed" || status != "blocked" {
 		t.Fatalf("decision_result=%q adapter_decision=%q status=%q", decisionResult, adapterDecision, status)
 	}
 
@@ -708,8 +708,8 @@ where id = ?
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].Decision != risk.Decision("ask") {
-		t.Fatalf("events = %+v, want step-up projected as ask", events)
+	if len(events) != 1 || events[0].Decision != risk.Decision("deny") {
+		t.Fatalf("events = %+v, want step-up fail-closed as deny", events)
 	}
 
 	summary, err := store.Summary(context.Background())
@@ -717,21 +717,21 @@ where id = ?
 		t.Fatal(err)
 	}
 	if summary.Critical != 1 || summary.Actions != 1 {
-		t.Fatalf("summary = %+v, want ask counted as one critical action", summary)
+		t.Fatalf("summary = %+v, want fail-closed deny counted as one critical action", summary)
 	}
 	sessions, err := store.Sessions(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(sessions) != 1 || sessions[0].Critical != 1 || sessions[0].Actions != 1 {
-		t.Fatalf("sessions = %+v, want ask counted as one critical action", sessions)
+		t.Fatalf("sessions = %+v, want fail-closed deny counted as one critical action", sessions)
 	}
 	sessionSummary, err := store.SessionSummary(context.Background(), "s1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sessionSummary.Critical != 1 || sessionSummary.Actions != 1 {
-		t.Fatalf("session summary = %+v, want ask counted as one critical action", sessionSummary)
+		t.Fatalf("session summary = %+v, want fail-closed deny counted as one critical action", sessionSummary)
 	}
 }
 
