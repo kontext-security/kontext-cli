@@ -231,7 +231,7 @@ func TestEvaluatePreToolUseUsesBackendDecision(t *testing.T) {
 	}
 }
 
-func TestEvaluatePreToolUseAskKeepsRawReasonAndRequestMetadata(t *testing.T) {
+func TestEvaluatePreToolUseUnsupportedAskFailsClosed(t *testing.T) {
 	t.Parallel()
 
 	s := withRuntimeCore(t, &Server{
@@ -276,11 +276,8 @@ func TestEvaluatePreToolUseAskKeepsRawReasonAndRequestMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncodeClaudeResult() error = %v", err)
 	}
-	if !strings.Contains(string(claudeOutput), `"permissionDecision":"ask"`) {
-		t.Fatalf("claude output = %s, want ask", claudeOutput)
-	}
-	if strings.Count(string(claudeOutput), "Request ID: request-123") != 1 {
-		t.Fatalf("claude output = %s, want one request id", claudeOutput)
+	if !strings.Contains(string(claudeOutput), `"permissionDecision":"deny"`) {
+		t.Fatalf("claude output = %s, want deny", claudeOutput)
 	}
 }
 
@@ -291,7 +288,7 @@ func TestEvaluatePreToolUseAllowsBackendBlocksWhenNotEnforcing(t *testing.T) {
 		name     string
 		decision agentv1.Decision
 	}{
-		{name: "ask", decision: agentv1.Decision_DECISION_ASK},
+		{name: "unsupported ask", decision: agentv1.Decision_DECISION_ASK},
 		{name: "deny", decision: agentv1.Decision_DECISION_DENY},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

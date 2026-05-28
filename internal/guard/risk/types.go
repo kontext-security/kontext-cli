@@ -3,6 +3,8 @@ package risk
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/kontext-security/kontext-cli/internal/guard/decision"
 )
 
 type HookEvent struct {
@@ -28,12 +30,12 @@ const (
 	EventUnknown                      EventType = "unknown"
 )
 
-type Decision string
-
 const (
-	DecisionAllow Decision = "allow"
-	DecisionDeny  Decision = "deny"
+	DecisionAllow = decision.Allow
+	DecisionDeny  = decision.Deny
 )
+
+type Decision = decision.Decision
 
 type AuthorizationDecision string
 

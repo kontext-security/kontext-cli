@@ -106,6 +106,12 @@ func NormalizeHookEvent(event HookEvent) RiskEvent {
 		riskEvent.Provider = "unknown"
 		riskEvent.ProviderCategory = "infrastructure"
 	}
+	if riskEvent.ProviderCategory == "source_control" && riskEvent.ResourceClass == "unknown" {
+		riskEvent.ResourceClass = "repo"
+	}
+	if riskEvent.ProviderCategory == "source_control" && riskEvent.Environment == "unknown" {
+		riskEvent.Environment = "local"
+	}
 	return riskEvent
 }
 
@@ -153,6 +159,12 @@ func classifySourceControl(event *RiskEvent, signalSet map[string]struct{}, comm
 			if fields[1] == "pr" && len(fields) > 2 {
 				switch fields[2] {
 				case "view", "list", "status", "checks", "diff":
+					event.OperationClass = "read"
+				}
+			}
+			if fields[1] == "repo" && len(fields) > 2 {
+				switch fields[2] {
+				case "view", "list":
 					event.OperationClass = "read"
 				}
 			}

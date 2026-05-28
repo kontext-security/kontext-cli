@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -40,6 +41,104 @@ func TestEmptyCollectionsEncodeAsJSONArray(t *testing.T) {
 	}
 	if string(encodedEvents) != "[]" {
 		t.Fatalf("empty events encoded as %s, want []", encodedEvents)
+	}
+}
+
+func TestMigrationCopiesDecisionNullableFromPartialLegacySchema(t *testing.T) {
+	path := t.TempDir() + "/guard.db"
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(context.Background(), `
+create table authorization_actions (
+  id text primary key,
+  session_id text not null,
+  canonical_event_type text not null,
+  decision_result text not null,
+  status text not null,
+  created_at text not null,
+  updated_at text not null
+);
+insert into authorization_actions (
+  id, session_id, canonical_event_type, decision_result, status, created_at, updated_at
+) values (
+  'act_legacy', 's1', 'request.decided', 'allow', 'authorized',
+  '2026-05-26T10:00:00Z', '2026-05-26T10:00:00Z'
+), (
+  'act_legacy_deny', 's1', 'action.proposed', 'DENY', 'blocked',
+  '2026-05-26T10:01:00Z', '2026-05-26T10:01:00Z'
+);
+`)
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	var notNull int
+	err = store.db.QueryRowContext(context.Background(), `
+select "notnull"
+from pragma_table_info('authorization_actions')
+where name = 'decision_result'
+	`).Scan(&notNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notNull != 0 {
+		t.Fatalf("decision_result notnull = %d, want nullable", notNull)
+	}
+
+	var canonicalEventType, decisionResult, resourceID, parametersJSON string
+	err = store.db.QueryRowContext(context.Background(), `
+select canonical_event_type, decision_result, coalesce(resource_id, ''), parameters_redacted_json
+from authorization_actions
+where id = 'act_legacy'
+	`).Scan(&canonicalEventType, &decisionResult, &resourceID, &parametersJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonicalEventType != "request.decided" || decisionResult != "allow" || resourceID != "" || parametersJSON != "{}" {
+		t.Fatalf("migrated row canonical=%q decision=%q resource=%q parameters=%q", canonicalEventType, decisionResult, resourceID, parametersJSON)
+	}
+
+	err = store.db.QueryRowContext(context.Background(), `
+select canonical_event_type, decision_result
+from authorization_actions
+where id = 'act_legacy_deny'
+	`).Scan(&canonicalEventType, &decisionResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonicalEventType != "request.decided" || decisionResult != "deny" {
+		t.Fatalf("legacy deny normalized to canonical=%q decision=%q", canonicalEventType, decisionResult)
+	}
+
+	summary, err := store.Summary(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Actions != 2 || summary.Critical != 1 {
+		t.Fatalf("summary actions=%d critical=%d, want actions=2 critical=1", summary.Actions, summary.Critical)
+	}
+
+	events, err := store.Events(context.Background(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events length = %d, want 2", len(events))
+	}
+	if events[0].ID != "act_legacy_deny" || events[0].Decision != "deny" {
+		t.Fatalf("latest event id=%q decision=%q, want act_legacy_deny deny", events[0].ID, events[0].Decision)
 	}
 }
 
@@ -95,11 +194,11 @@ func TestSaveDecisionGeneratesUniqueIDsConcurrently(t *testing.T) {
 	if len(seen) != total {
 		t.Fatalf("saved %d records, want %d", len(seen), total)
 	}
-	if got := countRows(t, store, "authorization_actions"); got != total {
-		t.Fatalf("authorization_actions rows = %d, want %d", got, total)
+	if got := countRows(t, store, "authorization_actions"); got != total*2 {
+		t.Fatalf("authorization_actions rows = %d, want %d", got, total*2)
 	}
-	if got := countRows(t, store, "authorization_receipts"); got != total {
-		t.Fatalf("authorization_receipts rows = %d, want %d", got, total)
+	if got := countRows(t, store, "authorization_receipts"); got != total*2 {
+		t.Fatalf("authorization_receipts rows = %d, want %d", got, total*2)
 	}
 }
 
@@ -152,7 +251,7 @@ where a.id = ?
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decisionResult != "ALLOW" || status != "authorized" || receiptType != "decision" {
+	if decisionResult != "allow" || status != "authorized" || receiptType != "decision" {
 		t.Fatalf("ledger row = decision %q status %q receipt %q", decisionResult, status, receiptType)
 	}
 	if signatureAlgorithm != "none" {
@@ -160,7 +259,64 @@ where a.id = ?
 	}
 }
 
-func TestPostToolUseUpdatesExistingAuthorizationAction(t *testing.T) {
+func TestSaveDecisionEnrichesGitHubRepoResource(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	event := risk.HookEvent{
+		SessionID:     "s1",
+		Agent:         "claude-code",
+		HookEventName: "PreToolUse",
+		ToolName:      "Bash",
+		ToolUseID:     "tool-1",
+		ToolInput:     map[string]any{"command": "gh repo view kontext-security/kontext-cli"},
+	}
+	decision, err := risk.DecideRisk(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.SaveDecision(context.Background(), event, decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var provider, operation, operationClass, resourceClass, resourceID, riskJSON string
+	err = store.db.QueryRowContext(context.Background(), `
+select provider, operation, operation_class, resource_class, resource_id, risk_event_json
+from authorization_actions
+where id = ?
+	`, record.ID).Scan(&provider, &operation, &operationClass, &resourceClass, &resourceID, &riskJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider != "github" || operation != "gh repo view" || operationClass != "read" || resourceClass != "repo" || resourceID != "kontext-security/kontext-cli" {
+		t.Fatalf("github action = provider %q operation %q/%q resource %q/%q", provider, operation, operationClass, resourceClass, resourceID)
+	}
+	var riskEvent risk.RiskEvent
+	if err := json.Unmarshal([]byte(riskJSON), &riskEvent); err != nil {
+		t.Fatal(err)
+	}
+	if riskEvent.Provider != "github" || riskEvent.ResourceClass != "repo" || riskEvent.Environment != "local" {
+		t.Fatalf("risk event = %+v, want github repo local", riskEvent)
+	}
+}
+
+func TestGitHubRepoFromCommandPrefersGitHubURLRepository(t *testing.T) {
+	got := githubRepoFromCommand("git clone https://github.com/kontext-security/kontext-cli.git")
+	if got != "kontext-security/kontext-cli" {
+		t.Fatalf("repo = %q, want kontext-security/kontext-cli", got)
+	}
+
+	got = githubRepoFromCommand("gh pr view https://github.com/kontext-security/kontext-cli/pull/223")
+	if got != "kontext-security/kontext-cli" {
+		t.Fatalf("pull URL repo = %q, want kontext-security/kontext-cli", got)
+	}
+}
+
+func TestPostToolUseWritesObservationAction(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {
 		t.Fatal(err)
@@ -199,40 +355,106 @@ func TestPostToolUseUpdatesExistingAuthorizationAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if post.ID != pre.ID {
-		t.Fatalf("post ID = %q, want existing action %q", post.ID, pre.ID)
+	if post.ID == pre.ID {
+		t.Fatalf("post ID = %q, want separate observation action", post.ID)
 	}
 
 	var eventType, status, outcome, outputHash string
 	err = store.db.QueryRowContext(context.Background(), `
-select canonical_event_type, status, outcome, output_hash
-from authorization_actions
-where id = ?
-	`, pre.ID).Scan(&eventType, &status, &outcome, &outputHash)
+	select canonical_event_type, status, outcome, output_hash
+	from authorization_actions
+	where id = ?
+		`, post.ID).Scan(&eventType, &status, &outcome, &outputHash)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if eventType != "action.completed" || status != "completed" || outcome != "success" || outputHash == "" {
+	if eventType != "request.observed" || status != "completed" || outcome != "success" || outputHash == "" {
 		t.Fatalf("action lifecycle = event %q status %q outcome %q output_hash %q", eventType, status, outcome, outputHash)
 	}
-	if got := countRows(t, store, "authorization_actions"); got != 1 {
-		t.Fatalf("authorization_actions rows = %d, want one lifecycle row", got)
+	if got := countRows(t, store, "authorization_actions"); got != 3 {
+		t.Fatalf("authorization_actions rows = %d, want proposed, decided, and observed rows", got)
 	}
-	if got := countRows(t, store, "authorization_receipts"); got != 2 {
-		t.Fatalf("authorization_receipts rows = %d, want decision and outcome receipts", got)
+	if got := countRows(t, store, "authorization_receipts"); got != 3 {
+		t.Fatalf("authorization_receipts rows = %d, want event, decision, and outcome receipts", got)
 	}
 
 	var outcomeReason, outcomePayload string
 	err = store.db.QueryRowContext(context.Background(), `
 select reason_code, receipt_payload_json
-from authorization_receipts
-where action_id = ? and receipt_type = 'outcome'
-	`, pre.ID).Scan(&outcomeReason, &outcomePayload)
+	from authorization_receipts
+	where action_id = ? and receipt_type = 'outcome'
+		`, post.ID).Scan(&outcomeReason, &outcomePayload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcomeReason != "normal_tool_call" || strings.Contains(outcomePayload, "async_telemetry") {
-		t.Fatalf("outcome receipt reason = %q payload = %s, want original authorization evidence", outcomeReason, outcomePayload)
+	if outcomeReason != "" || strings.Contains(outcomePayload, "async_telemetry") {
+		t.Fatalf("outcome receipt reason = %q payload = %s, want observation evidence without fake decision", outcomeReason, outcomePayload)
+	}
+}
+
+func TestSessionLifecycleHooksUseCanonicalSessionEvents(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	for _, hookEvent := range []string{"SessionStart", "SessionEnd"} {
+		if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
+			SessionID:     "s1",
+			Agent:         "claude-code",
+			HookEventName: hookEvent,
+			CWD:           "/tmp/project",
+		}, risk.RiskDecision{
+			Decision:   risk.DecisionAllow,
+			Reason:     "async telemetry event recorded",
+			ReasonCode: "async_telemetry",
+			RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
+		}); err != nil {
+			t.Fatalf("SaveDecision(%s) error = %v", hookEvent, err)
+		}
+	}
+
+	rows, err := store.db.QueryContext(context.Background(), `
+select canonical_event_type, status, outcome, proposed_at is not null, completed_at is not null
+from authorization_actions
+where adapter_event_name in ('SessionStart', 'SessionEnd')
+order by created_at
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	type lifecycleRow struct {
+		eventType    string
+		status       string
+		outcome      string
+		hasProposed  bool
+		hasCompleted bool
+	}
+	var got []lifecycleRow
+	for rows.Next() {
+		var row lifecycleRow
+		if err := rows.Scan(&row.eventType, &row.status, &row.outcome, &row.hasProposed, &row.hasCompleted); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, row)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := []lifecycleRow{
+		{eventType: "session.start", status: "started", outcome: "not_executed", hasProposed: true},
+		{eventType: "session.end", status: "completed", outcome: "not_executed", hasCompleted: true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("lifecycle rows = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("lifecycle row %d = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }
 
@@ -288,7 +510,7 @@ where id = ?
 	if err != nil {
 		t.Fatal(err)
 	}
-	if eventType != "action.proposed" || status != "blocked" || outcome != "not_executed" {
+	if eventType != "request.decided" || status != "blocked" || outcome != "not_executed" {
 		t.Fatalf("blocked action lifecycle = event %q status %q outcome %q", eventType, status, outcome)
 	}
 
@@ -306,7 +528,7 @@ where action_id = ?
 	}
 }
 
-func TestUnmatchedPostToolUseWritesDecisionAndOutcomeReceipts(t *testing.T) {
+func TestUnmatchedPostToolUseWritesOutcomeReceipt(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {
 		t.Fatal(err)
@@ -342,19 +564,17 @@ where id = ?
 		t.Fatalf("standalone post action status = %q outcome = %q", status, outcome)
 	}
 
-	for _, receiptType := range []string{"decision", "outcome"} {
-		var count int
-		err = store.db.QueryRowContext(context.Background(), `
-select count(*)
-from authorization_receipts
-where action_id = ? and receipt_type = ?
-		`, record.ID, receiptType).Scan(&count)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if count != 1 {
-			t.Fatalf("%s receipts = %d, want 1", receiptType, count)
-		}
+	var count int
+	err = store.db.QueryRowContext(context.Background(), `
+	select count(*)
+	from authorization_receipts
+	where action_id = ? and receipt_type = ?
+		`, record.ID, "outcome").Scan(&count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("outcome receipts = %d, want 1", count)
 	}
 }
 
@@ -460,8 +680,8 @@ order by rowid
 	if err := rows.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if len(receipts) != 3 {
-		t.Fatalf("receipts = %+v, want 3 receipts", receipts)
+	if len(receipts) != 6 {
+		t.Fatalf("receipts = %+v, want 6 receipts", receipts)
 	}
 
 	if _, err := store.db.ExecContext(context.Background(), `
@@ -514,7 +734,7 @@ where id = ?
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decisionResult != "STEP_UP" || adapterDecision != "unsupported_step_up_fail_closed" || status != "blocked" {
+	if decisionResult != "deny" || adapterDecision != "unsupported_step_up_fail_closed" || status != "blocked" {
 		t.Fatalf("decision_result=%q adapter_decision=%q status=%q", decisionResult, adapterDecision, status)
 	}
 
@@ -522,8 +742,30 @@ where id = ?
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].Decision != risk.DecisionDeny {
-		t.Fatalf("events = %+v, want unsupported canonical decision projected as deny", events)
+	if len(events) != 1 || events[0].Decision != risk.Decision("deny") {
+		t.Fatalf("events = %+v, want step-up fail-closed as deny", events)
+	}
+
+	summary, err := store.Summary(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Critical != 1 || summary.Actions != 1 {
+		t.Fatalf("summary = %+v, want fail-closed deny counted as one critical action", summary)
+	}
+	sessions, err := store.Sessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].Critical != 1 || sessions[0].Actions != 1 {
+		t.Fatalf("sessions = %+v, want fail-closed deny counted as one critical action", sessions)
+	}
+	sessionSummary, err := store.SessionSummary(context.Background(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionSummary.Critical != 1 || sessionSummary.Actions != 1 {
+		t.Fatalf("session summary = %+v, want fail-closed deny counted as one critical action", sessionSummary)
 	}
 }
 
@@ -534,6 +776,9 @@ func TestLedgerBatchExportsSessionsActionsAndReceipts(t *testing.T) {
 	}
 	defer store.Close()
 
+	if _, err := store.EnsureObservedSessionWithMode(context.Background(), "s1", "claude-code", "/tmp/project", "observe"); err != nil {
+		t.Fatal(err)
+	}
 	record, err := store.SaveDecision(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
 		Agent:         "claude-code",
@@ -557,19 +802,25 @@ func TestLedgerBatchExportsSessionsActionsAndReceipts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(batch.Sessions) != 1 || len(batch.Actions) != 1 || len(batch.Receipts) != 1 {
+	if len(batch.Sessions) != 1 || len(batch.Actions) != 2 || len(batch.Receipts) != 2 {
 		t.Fatalf("batch sizes = sessions %d actions %d receipts %d", len(batch.Sessions), len(batch.Actions), len(batch.Receipts))
 	}
-	if batch.Actions[0]["id"] != record.ID ||
-		batch.Actions[0]["decision_result"] != "ALLOW" ||
-		batch.Actions[0]["policy_hash"] != "sha256:policy" {
-		t.Fatalf("action export = %+v", batch.Actions[0])
+	if batch.Sessions[0]["mode"] != "observe" {
+		t.Fatalf("session export mode = %q, want observe", batch.Sessions[0]["mode"])
 	}
-	if _, ok := batch.Actions[0]["risk_event_json"].(map[string]any); !ok {
-		t.Fatalf("risk_event_json export = %#v, want decoded JSON object", batch.Actions[0]["risk_event_json"])
+	decided := ledgerRecordByID(batch.Actions, record.ID)
+	if decided == nil ||
+		decided["canonical_event_type"] != "request.decided" ||
+		decided["decision_result"] != "allow" ||
+		decided["policy_hash"] != "sha256:policy" {
+		t.Fatalf("decided action export = %+v", decided)
 	}
-	if batch.Receipts[0]["action_id"] != record.ID || batch.Receipts[0]["receipt_type"] != "decision" {
-		t.Fatalf("receipt export = %+v", batch.Receipts[0])
+	if _, ok := decided["risk_event_json"].(map[string]any); !ok {
+		t.Fatalf("risk_event_json export = %#v, want decoded JSON object", decided["risk_event_json"])
+	}
+	receipt := ledgerRecordByField(batch.Receipts, "action_id", record.ID)
+	if receipt == nil || receipt["receipt_type"] != "decision" {
+		t.Fatalf("receipt export = %+v", receipt)
 	}
 }
 
@@ -580,7 +831,7 @@ func TestLedgerBatchLimitReturnsReceiptsForSelectedActions(t *testing.T) {
 	}
 	defer store.Close()
 
-	first, err := store.SaveDecision(context.Background(), risk.HookEvent{
+	if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
 		HookEventName: "PreToolUse",
 		ToolName:      "Bash",
@@ -590,8 +841,7 @@ func TestLedgerBatchLimitReturnsReceiptsForSelectedActions(t *testing.T) {
 		Reason:     "normal",
 		ReasonCode: "normal_tool_call",
 		RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
@@ -626,15 +876,16 @@ func TestLedgerBatchLimitReturnsReceiptsForSelectedActions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(batch.Actions) != 1 || batch.Actions[0]["id"] != first.ID {
-		t.Fatalf("actions = %+v, want only first action", batch.Actions)
+	if len(batch.Actions) != 1 || batch.Actions[0]["canonical_event_type"] != "request.proposed" {
+		t.Fatalf("actions = %+v, want only first proposed action", batch.Actions)
 	}
-	if len(batch.Receipts) != 2 {
-		t.Fatalf("receipts = %+v, want both receipts for selected action", batch.Receipts)
+	if len(batch.Receipts) != 1 {
+		t.Fatalf("receipts = %+v, want receipt for selected action", batch.Receipts)
 	}
+	selectedID, _ := batch.Actions[0]["id"].(string)
 	for _, receipt := range batch.Receipts {
-		if receipt["action_id"] != first.ID {
-			t.Fatalf("receipt = %+v, want action_id %s", receipt, first.ID)
+		if receipt["action_id"] != selectedID {
+			t.Fatalf("receipt = %+v, want action_id %s", receipt, selectedID)
 		}
 	}
 }
@@ -712,7 +963,7 @@ func TestLedgerBatchIncludesReceiptChainAnchorForIncrementalExports(t *testing.T
 	}
 	defer store.Close()
 
-	first, err := store.SaveDecision(context.Background(), risk.HookEvent{
+	if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
 		HookEventName: "PreToolUse",
 		ToolName:      "Read",
@@ -722,11 +973,10 @@ func TestLedgerBatchIncludesReceiptChainAnchorForIncrementalExports(t *testing.T
 		Reason:     "normal",
 		ReasonCode: "normal_tool_call",
 		RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.SaveDecision(context.Background(), risk.HookEvent{
+	if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
 		HookEventName: "PreToolUse",
 		ToolName:      "Read",
@@ -736,31 +986,32 @@ func TestLedgerBatchIncludesReceiptChainAnchorForIncrementalExports(t *testing.T
 		Reason:     "normal",
 		ReasonCode: "normal_tool_call",
 		RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 
 	firstUpdated := "2026-05-19T10:00:00Z"
 	secondUpdated := "2026-05-19T11:00:00Z"
 	if _, err := store.db.ExecContext(context.Background(), `
-update authorization_actions
-set updated_at = case id
-  when ? then ?
-  when ? then ?
-  else updated_at
-end
-where id in (?, ?)
-	`, first.ID, firstUpdated, second.ID, secondUpdated, first.ID, second.ID); err != nil {
+	update authorization_actions
+	set updated_at = case tool_use_id
+	  when ? then ?
+	  when ? then ?
+	  else updated_at
+	end
+	where session_id = ? and tool_use_id in (?, ?)
+		`, "tool-1", firstUpdated, "tool-2", secondUpdated, "s1", "tool-1", "tool-2"); err != nil {
 		t.Fatal(err)
 	}
 
 	var firstReceiptHash string
 	err = store.db.QueryRowContext(context.Background(), `
-select receipt_hash
-from authorization_receipts
-where action_id = ?
-	`, first.ID).Scan(&firstReceiptHash)
+	select receipt_hash
+	from authorization_receipts
+	where action_id in (select id from authorization_actions where session_id = ? and tool_use_id = ?)
+	order by rowid desc
+	limit 1
+		`, "s1", "tool-1").Scan(&firstReceiptHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -773,11 +1024,11 @@ where action_id = ?
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(batch.Actions) != 1 || batch.Actions[0]["id"] != second.ID {
-		t.Fatalf("actions = %+v, want only second action", batch.Actions)
+	if len(batch.Actions) != 2 {
+		t.Fatalf("actions = %+v, want second proposed and decided actions", batch.Actions)
 	}
-	if len(batch.Receipts) != 1 || batch.Receipts[0]["action_id"] != second.ID {
-		t.Fatalf("receipts = %+v, want only second action receipt", batch.Receipts)
+	if len(batch.Receipts) != 2 {
+		t.Fatalf("receipts = %+v, want second proposed and decided receipts", batch.Receipts)
 	}
 	if batch.ReceiptChainAnchor == nil || batch.ReceiptChainAnchor.PreviousReceiptHash != firstReceiptHash {
 		t.Fatalf("receipt chain anchor = %+v, want previous hash %q", batch.ReceiptChainAnchor, firstReceiptHash)
@@ -794,7 +1045,7 @@ func TestLedgerBatchIncludesContiguousReceiptRangeAndBridgeActions(t *testing.T)
 	}
 	defer store.Close()
 
-	first, err := store.SaveDecision(context.Background(), risk.HookEvent{
+	if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
 		HookEventName: "PreToolUse",
 		ToolName:      "Read",
@@ -804,11 +1055,10 @@ func TestLedgerBatchIncludesContiguousReceiptRangeAndBridgeActions(t *testing.T)
 		Reason:     "normal",
 		ReasonCode: "normal_tool_call",
 		RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
-	bridge, err := store.SaveDecision(context.Background(), risk.HookEvent{
+	if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
 		HookEventName: "PreToolUse",
 		ToolName:      "Read",
@@ -818,11 +1068,10 @@ func TestLedgerBatchIncludesContiguousReceiptRangeAndBridgeActions(t *testing.T)
 		Reason:     "normal",
 		ReasonCode: "normal_tool_call",
 		RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.SaveDecision(context.Background(), risk.HookEvent{
+	if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
 		HookEventName: "PreToolUse",
 		ToolName:      "Read",
@@ -832,21 +1081,20 @@ func TestLedgerBatchIncludesContiguousReceiptRangeAndBridgeActions(t *testing.T)
 		Reason:     "normal",
 		ReasonCode: "normal_tool_call",
 		RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 
 	if _, err := store.db.ExecContext(context.Background(), `
-update authorization_actions
-set updated_at = case id
-  when ? then '2026-05-19T11:00:00Z'
-  when ? then '2026-05-19T10:00:00Z'
-  when ? then '2026-05-19T12:00:00Z'
-  else updated_at
-end
-where id in (?, ?, ?)
-	`, first.ID, bridge.ID, second.ID, first.ID, bridge.ID, second.ID); err != nil {
+	update authorization_actions
+	set updated_at = case tool_use_id
+	  when ? then '2026-05-19T11:00:00Z'
+	  when ? then '2026-05-19T10:00:00Z'
+	  when ? then '2026-05-19T12:00:00Z'
+	  else updated_at
+	end
+	where session_id = ? and tool_use_id in (?, ?, ?)
+		`, "tool-1", "tool-bridge", "tool-2", "s1", "tool-1", "tool-bridge", "tool-2"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -858,18 +1106,14 @@ where id in (?, ?, ?)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertRecordIDs(t, batch.Actions, map[string]bool{
-		first.ID:  true,
-		bridge.ID: true,
-		second.ID: true,
-	})
-	if len(batch.Receipts) != 3 {
+	if len(batch.Actions) != 6 {
+		t.Fatalf("actions = %+v, want selected actions plus bridge actions", batch.Actions)
+	}
+	if len(batch.Receipts) != 6 {
 		t.Fatalf("receipts = %+v, want contiguous range including bridge receipt", batch.Receipts)
 	}
-	if batch.Receipts[0]["action_id"] != first.ID ||
-		batch.Receipts[1]["action_id"] != bridge.ID ||
-		batch.Receipts[2]["action_id"] != second.ID {
-		t.Fatalf("receipt range = %+v, want first, bridge, second", batch.Receipts)
+	if receiptCountForTool(t, store, batch.Receipts, "tool-bridge") != 2 {
+		t.Fatalf("receipt range = %+v, want bridge receipts included", batch.Receipts)
 	}
 }
 
@@ -882,27 +1126,26 @@ func TestAuthorizationReceiptsExportUsesChainOrder(t *testing.T) {
 
 	record, err := store.SaveDecision(context.Background(), risk.HookEvent{
 		SessionID:     "s1",
-		HookEventName: "PostToolUse",
+		HookEventName: "PreToolUse",
 		ToolName:      "Bash",
-		ToolResponse:  map[string]any{"ok": true},
 	}, risk.RiskDecision{
 		Decision:   risk.DecisionAllow,
-		Reason:     "async telemetry event recorded",
-		ReasonCode: "async_telemetry",
+		Reason:     "normal",
+		ReasonCode: "normal_tool_call",
 		RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(context.Background(), `
-update authorization_receipts
-set id = case receipt_type
-  when 'decision' then 'rcpt_z'
-  when 'outcome' then 'rcpt_a'
-  else id
-end
-where action_id = ?
-	`, record.ID); err != nil {
+	update authorization_receipts
+	set id = case receipt_type
+	  when 'event' then 'rcpt_z'
+	  when 'decision' then 'rcpt_a'
+	  else id
+	end
+	where session_id = ?
+		`, record.SessionID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -913,7 +1156,7 @@ where action_id = ?
 	if len(receipts) != 2 {
 		t.Fatalf("receipts = %+v, want 2", receipts)
 	}
-	if receipts[0]["receipt_type"] != "decision" || receipts[1]["receipt_type"] != "outcome" {
+	if receipts[0]["receipt_type"] != "event" || receipts[1]["receipt_type"] != "decision" {
 		t.Fatalf("receipt export order = %+v, want chain insertion order", receipts)
 	}
 }
@@ -1128,7 +1371,7 @@ func TestSessionsRejectsInvalidStoredTimestamp(t *testing.T) {
 insert into authorization_actions(
   id, session_id, canonical_event_type, decision_result, status, reason_code, reason, risk_event_json, created_at, updated_at
 ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, "act_bad", "s1", "action.proposed", "ALLOW", "authorized", "normal_tool_call", "normal", `{}`, "2026-05-19T00:00:00Z", "not-a-time"); err != nil {
+	`, "act_bad", "s1", "request.decided", "allow", "authorized", "normal_tool_call", "normal", `{}`, "2026-05-19T00:00:00Z", "not-a-time"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1149,7 +1392,7 @@ func TestEventsRejectsInvalidStoredTimestamp(t *testing.T) {
 insert into authorization_actions(
   id, session_id, canonical_event_type, decision_result, status, reason_code, reason, risk_event_json, created_at, updated_at
 ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, "act_bad", "s1", "action.proposed", "ALLOW", "authorized", "normal_tool_call", "normal", `{}`, "2026-05-19T00:00:00Z", "not-a-time"); err != nil {
+	`, "act_bad", "s1", "request.decided", "allow", "authorized", "normal_tool_call", "normal", `{}`, "2026-05-19T00:00:00Z", "not-a-time"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1164,6 +1407,39 @@ func countRows(t *testing.T, store *Store, table string) int {
 	var count int
 	if err := store.db.QueryRowContext(context.Background(), "select count(*) from "+table).Scan(&count); err != nil {
 		t.Fatal(err)
+	}
+	return count
+}
+
+func ledgerRecordByID(records []LedgerRecord, id string) LedgerRecord {
+	return ledgerRecordByField(records, "id", id)
+}
+
+func ledgerRecordByField(records []LedgerRecord, field, value string) LedgerRecord {
+	for _, record := range records {
+		if record[field] == value {
+			return record
+		}
+	}
+	return nil
+}
+
+func receiptCountForTool(t *testing.T, store *Store, receipts []LedgerRecord, toolUseID string) int {
+	t.Helper()
+	count := 0
+	for _, receipt := range receipts {
+		actionID, _ := receipt["action_id"].(string)
+		var storedToolUseID string
+		if err := store.db.QueryRowContext(context.Background(), `
+	select coalesce(tool_use_id, '')
+	from authorization_actions
+	where id = ?
+		`, actionID).Scan(&storedToolUseID); err != nil {
+			t.Fatal(err)
+		}
+		if storedToolUseID == toolUseID {
+			count++
+		}
 	}
 	return count
 }

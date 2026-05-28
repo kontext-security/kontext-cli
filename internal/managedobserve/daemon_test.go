@@ -43,8 +43,8 @@ func TestDaemonPreservesHookSessionIDs(t *testing.T) {
 	defer store.Close()
 	for _, sessionID := range []string{"claude-session-one", "claude-session-two"} {
 		session := waitForSession(t, store, sessionID)
-		if session.ID != sessionID || session.Source != "daemon_observed" || session.Status != "open" {
-			t.Fatalf("session %s = %+v, want open daemon-observed session", sessionID, session)
+		if session.ID != sessionID || session.Source != "daemon_observed" || session.Status != "open" || session.Mode != "observe" {
+			t.Fatalf("session %s = %+v, want open observe daemon-observed session", sessionID, session)
 		}
 	}
 }
@@ -91,12 +91,26 @@ func TestDaemonSessionEndClosesHookSessionID(t *testing.T) {
 }
 
 func TestDaemonStreamsLedgerBatches(t *testing.T) {
-	requests := make(chan map[string]any, 1)
+	type ledgerBatchRequest struct {
+		OrganizationID string `json:"organization_id"`
+		InstallationID string `json:"installation_id"`
+		Device         *struct {
+			Label string `json:"label"`
+		} `json:"device,omitempty"`
+		Actions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"authorization_actions"`
+	}
+
+	requests := make(chan ledgerBatchRequest, 1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/authorization-ledger/batches" {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
-		var body map[string]any
+		if got := r.Header.Get("Authorization"); got != "Bearer test-install-token" {
+			t.Fatalf("Authorization = %q, want bearer install token", got)
+		}
+		var body ledgerBatchRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("Decode() error = %v", err)
 		}
@@ -155,25 +169,23 @@ func TestDaemonStreamsLedgerBatches(t *testing.T) {
 
 	select {
 	case body := <-requests:
-		if body["organization_id"] != "org_123" {
-			t.Fatalf("organization_id = %v", body["organization_id"])
+		if body.OrganizationID != "org_123" {
+			t.Fatalf("organization_id = %q", body.OrganizationID)
 		}
-		if body["installation_id"] != "ins_0123456789abcdefghijklmnopqrstuv" {
-			t.Fatalf("installation_id = %v", body["installation_id"])
+		if body.InstallationID != "ins_0123456789abcdefghijklmnopqrstuv" {
+			t.Fatalf("installation_id = %q", body.InstallationID)
 		}
-		actions, ok := body["authorization_actions"].([]any)
-		if !ok {
-			t.Fatalf("authorization_actions = %#v", body["authorization_actions"])
+		if body.Device == nil || body.Device.Label != "test-mac" {
+			t.Fatalf("device = %+v, want label from managed config", body.Device)
 		}
 		found := false
-		for _, raw := range actions {
-			action, ok := raw.(map[string]any)
-			if ok && action["session_id"] == "claude-stream-session" {
+		for _, action := range body.Actions {
+			if action.SessionID == "claude-stream-session" {
 				found = true
 			}
 		}
 		if !found {
-			t.Fatalf("authorization_actions = %#v, want claude stream session action", body["authorization_actions"])
+			t.Fatalf("authorization_actions = %+v, want claude stream session action", body.Actions)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for hosted ledger batch")
@@ -335,6 +347,7 @@ func writeTestManagedConfig(t *testing.T, path string) {
 
 func writeTestManagedConfigWithCloudURL(t *testing.T, path, cloudURL string) {
 	t.Helper()
+	t.Setenv("KONTEXT_INSTALL_TOKEN", "test-install-token")
 	if err := os.WriteFile(path, []byte(`{
   "version": "managed-install-v1",
   "organization_id": "org_123",

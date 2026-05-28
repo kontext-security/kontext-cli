@@ -16,15 +16,15 @@ func TestHookResultFromHostedResultMapsProtoDecision(t *testing.T) {
 			Decision: agentv1.Decision_DECISION_ASK,
 			Reason:   "approval required",
 		},
-		ReasonCode:     "needs_approval",
+		ReasonCode:     "unsupported_decision",
 		RequestID:      "req-123",
 		PolicySetEpoch: "epoch-1",
 	}, backend.HostedAccessModeEnforce)
 
-	if result.Decision != hook.DecisionAsk {
-		t.Fatalf("decision = %q, want ask", result.Decision)
+	if result.Decision != hook.DecisionDeny {
+		t.Fatalf("decision = %q, want deny", result.Decision)
 	}
-	if result.ReasonCode != "needs_approval" || result.RequestID != "req-123" || result.Epoch != "epoch-1" {
+	if result.ReasonCode != "unsupported_decision" || result.RequestID != "req-123" || result.Epoch != "epoch-1" {
 		t.Fatalf("result metadata = %+v, want hosted metadata preserved", result)
 	}
 }

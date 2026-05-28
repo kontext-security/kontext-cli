@@ -196,6 +196,50 @@ func TestUninstallClaudeHooksPreservesNonGuardHookInMixedGroup(t *testing.T) {
 	}
 }
 
+func TestPrintHookStatusReportsGuardAndHostedConflict(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {"type": "command", "command": "/usr/local/bin/kontext hook --agent claude --mode observe"}
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {"type": "command", "command": "/usr/local/bin/kontext hook --agent claude"}
+        ]
+      }
+    ]
+  }
+}`
+	if err := os.WriteFile(settingsPath, []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	PrintHookStatus(&out)
+
+	got := out.String()
+	if !strings.Contains(got, "Claude Code Guard hook: /usr/local/bin/kontext hook --agent claude --mode observe") {
+		t.Fatalf("PrintHookStatus() = %q, want guard hook line", got)
+	}
+	if !strings.Contains(got, "Claude Code hosted hook: /usr/local/bin/kontext hook --agent claude") {
+		t.Fatalf("PrintHookStatus() = %q, want hosted hook line", got)
+	}
+	if !strings.Contains(got, "Claude Code hook mode: conflict (hosted and Guard hooks are both installed)") {
+		t.Fatalf("PrintHookStatus() = %q, want conflict mode", got)
+	}
+}
+
 func TestValidateLocalJudgeURLRejectsHostedURL(t *testing.T) {
 	if err := validateLocalJudgeURL("https://api.example.com/v1"); err == nil {
 		t.Fatal("validateLocalJudgeURL() error = nil, want hosted URL rejection")

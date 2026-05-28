@@ -2,15 +2,19 @@ package managedconfig
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -142,6 +146,24 @@ func (r TokenRef) MarshalJSON() ([]byte, error) {
 	return json.Marshal(r.String())
 }
 
+func ResolveInstallToken(ctx context.Context, ref TokenRef) (string, error) {
+	if err := validateTokenRef(ref); err != nil {
+		return "", err
+	}
+	switch ref.Source {
+	case "env":
+		token := strings.TrimSpace(os.Getenv(ref.Name))
+		if token == "" {
+			return "", fmt.Errorf("install token env %s is empty", ref.Name)
+		}
+		return token, nil
+	case "keychain":
+		return resolveKeychainInstallToken(ctx, ref.Name)
+	default:
+		return "", errors.New("install token ref source must be keychain or env")
+	}
+}
+
 func normalizeAndValidate(cfg Config) (Config, error) {
 	cfg.Version = strings.TrimSpace(cfg.Version)
 	cfg.OrganizationID = strings.TrimSpace(cfg.OrganizationID)
@@ -182,7 +204,9 @@ func validateCloudURL(value string) error {
 		return fmt.Errorf("cloud_url is invalid: %w", err)
 	}
 	if parsed.Scheme != "https" {
-		return errors.New("cloud_url must use https")
+		if parsed.Scheme != "http" || !isLoopbackHost(parsed.Hostname()) {
+			return errors.New("cloud_url must use https unless it is loopback http")
+		}
 	}
 	if parsed.Host == "" || parsed.Hostname() == "" {
 		return errors.New("cloud_url must include host")
@@ -211,6 +235,14 @@ func validateCloudURL(value string) error {
 	return nil
 }
 
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func validateTokenRef(ref TokenRef) error {
 	switch ref.Source {
 	case "keychain", "env":
@@ -227,4 +259,19 @@ func validateTokenRef(ref TokenRef) error {
 		return errors.New("env install token ref name must be a valid environment variable name")
 	}
 	return nil
+}
+
+func resolveKeychainInstallToken(ctx context.Context, name string) (string, error) {
+	if runtime.GOOS != "darwin" {
+		return "", errors.New("keychain install token refs are only supported on macOS")
+	}
+	out, err := exec.CommandContext(ctx, "security", "find-generic-password", "-s", name, "-w").Output()
+	if err != nil {
+		return "", fmt.Errorf("read install token from keychain: %w", err)
+	}
+	token := strings.TrimSpace(string(out))
+	if token == "" {
+		return "", fmt.Errorf("install token keychain item %s is empty", name)
+	}
+	return token, nil
 }

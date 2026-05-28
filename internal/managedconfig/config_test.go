@@ -1,6 +1,7 @@
 package managedconfig
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -105,6 +106,21 @@ func TestParseRejectsInvalidCloudURL(t *testing.T) {
 	}
 }
 
+func TestParseAcceptsLoopbackHTTPCloudURLForLocalE2E(t *testing.T) {
+	for _, cloudURL := range []string{"http://127.0.0.1:4000", "http://localhost:4000", "http://[::1]:4000"} {
+		t.Run(cloudURL, func(t *testing.T) {
+			input := strings.Replace(validConfigJSON(), "https://api.kontext.dev", cloudURL, 1)
+			cfg, err := Parse([]byte(input))
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if cfg.CloudURL != cloudURL {
+				t.Fatalf("CloudURL = %q, want %q", cfg.CloudURL, cloudURL)
+			}
+		})
+	}
+}
+
 func TestParseTokenRefAcceptsValidRefs(t *testing.T) {
 	tests := map[string]TokenRef{
 		"keychain:kontext-managed-install-token": {Source: "keychain", Name: "kontext-managed-install-token"},
@@ -142,6 +158,31 @@ func TestParseTokenRefRejectsInvalidRefs(t *testing.T) {
 				t.Fatalf("ParseTokenRef() error = nil, want failure")
 			}
 		})
+	}
+}
+
+func TestResolveInstallTokenFromEnv(t *testing.T) {
+	t.Setenv("KONTEXT_INSTALL_TOKEN", " test-install-token ")
+	token, err := ResolveInstallToken(context.Background(), TokenRef{
+		Source: "env",
+		Name:   "KONTEXT_INSTALL_TOKEN",
+	})
+	if err != nil {
+		t.Fatalf("ResolveInstallToken() error = %v", err)
+	}
+	if token != "test-install-token" {
+		t.Fatalf("ResolveInstallToken() = %q", token)
+	}
+}
+
+func TestResolveInstallTokenRejectsEmptyEnv(t *testing.T) {
+	t.Setenv("KONTEXT_INSTALL_TOKEN", " ")
+	_, err := ResolveInstallToken(context.Background(), TokenRef{
+		Source: "env",
+		Name:   "KONTEXT_INSTALL_TOKEN",
+	})
+	if err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("ResolveInstallToken() error = %v, want empty env error", err)
 	}
 }
 

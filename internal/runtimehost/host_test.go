@@ -296,12 +296,12 @@ func TestCloseDrainsAsyncTelemetryBeforeClosingSession(t *testing.T) {
 		t.Fatalf("OpenStore() error = %v", err)
 	}
 	defer store.Close()
-	events, err := store.Events(ctx, sessionID)
+	batch, err := store.LedgerBatch(ctx, sqlite.LedgerExportOptions{})
 	if err != nil {
-		t.Fatalf("Events() error = %v", err)
+		t.Fatalf("LedgerBatch() error = %v", err)
 	}
-	if len(events) != 1 {
-		t.Fatalf("events len = %d, want 1", len(events))
+	if len(batch.Actions) != 1 || batch.Actions[0]["canonical_event_type"] != "request.observed" {
+		t.Fatalf("actions = %+v, want drained observed telemetry action", batch.Actions)
 	}
 	session, err := store.Session(ctx, sessionID)
 	if err != nil {

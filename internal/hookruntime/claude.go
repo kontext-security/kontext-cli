@@ -93,7 +93,6 @@ func EncodeClaudeResult(hookEventName string, result hook.Result) ([]byte, error
 
 	permissionDecision := string(result.Decision)
 	if permissionDecision != string(hook.DecisionAllow) &&
-		permissionDecision != string(hook.DecisionAsk) &&
 		permissionDecision != string(hook.DecisionDeny) {
 		permissionDecision = string(hook.DecisionDeny)
 	}
