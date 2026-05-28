@@ -56,7 +56,10 @@ func (r guardHookRuntime) EnsureSessionForEvent(ctx context.Context, event hook.
 }
 
 func (r guardHookRuntime) modeForSession(sessionID string) string {
-	if sessionID == "" || sessionID != r.currentSessionID {
+	if sessionID == "" {
+		return ""
+	}
+	if r.currentSessionID != "" && sessionID != r.currentSessionID {
 		return ""
 	}
 	return r.mode

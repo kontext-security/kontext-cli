@@ -19,15 +19,7 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	saveTestDecision(t, store, "session-1", "toolu_1")
 
 	var got Payload
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != DefaultEndpoint {
-			t.Fatalf("path = %q, want %q", r.URL.Path, DefaultEndpoint)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("Decode() error = %v", err)
-		}
-		w.WriteHeader(http.StatusAccepted)
-	}))
+	server := capturePayloadServer(t, &got)
 	t.Cleanup(server.Close)
 
 	statePath := filepath.Join(t.TempDir(), "stream-state.json")
@@ -37,6 +29,7 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
 		DeviceLabel:    "michel-macbook",
 		HTTPClient:     server.Client(),
 	}); err != nil {
@@ -55,8 +48,13 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	if got.Device == nil || got.Device.Label != "michel-macbook" {
 		t.Fatalf("device = %+v", got.Device)
 	}
-	if len(got.Sessions) != 1 || len(got.Actions) != 1 || len(got.Receipts) != 1 {
+	if len(got.Sessions) != 1 || len(got.Actions) != 2 || len(got.Receipts) != 2 {
 		t.Fatalf("batch counts = sessions %d actions %d receipts %d", len(got.Sessions), len(got.Actions), len(got.Receipts))
+	}
+	if got.Actions[0]["canonical_event_type"] != "request.proposed" ||
+		got.Actions[1]["canonical_event_type"] != "request.decided" ||
+		got.Actions[1]["decision_result"] != "allow" {
+		t.Fatalf("actions = %+v, want proposed and decided ledger events", got.Actions)
 	}
 
 	state, err := LoadState(statePath)
@@ -65,6 +63,32 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	}
 	if state.UpdatedAfter == "" {
 		t.Fatal("updated_after was not persisted")
+	}
+}
+
+func TestFlushOmitsBlankDeviceLabel(t *testing.T) {
+	store, dbPath := testStore(t)
+	saveTestDecision(t, store, "session-1", "toolu_1")
+
+	var got Payload
+	server := capturePayloadServer(t, &got)
+	t.Cleanup(server.Close)
+
+	if err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      filepath.Join(t.TempDir(), "stream-state.json"),
+		CloudURL:       server.URL,
+		OrganizationID: "org_123",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		DeviceLabel:    " \t\n ",
+		HTTPClient:     server.Client(),
+	}); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	if got.Device != nil {
+		t.Fatalf("device = %+v, want omitted", got.Device)
 	}
 }
 
@@ -84,6 +108,7 @@ func TestFlushDoesNotAdvanceCursorWhenHostedBackendFails(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
 		HTTPClient:     server.Client(),
 	}); err == nil {
 		t.Fatal("Flush() error = nil, want hosted failure")
@@ -109,6 +134,7 @@ func TestFlushDefaultsStatePathBesideLedgerDB(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
 		HTTPClient:     server.Client(),
 	}); err != nil {
 		t.Fatalf("Flush() error = %v", err)
@@ -146,6 +172,7 @@ func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 		CloudURL:       server.URL,
 		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
 		HTTPClient:     server.Client(),
 	}); err != nil {
 		t.Fatalf("Flush() error = %v", err)
@@ -164,6 +191,22 @@ func testStore(t *testing.T) (*sqlite.Store, string) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store, dbPath
+}
+
+func capturePayloadServer(t *testing.T, got *Payload) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != DefaultEndpoint {
+			t.Fatalf("path = %q, want %q", r.URL.Path, DefaultEndpoint)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-install-token" {
+			t.Fatalf("Authorization = %q, want bearer install token", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(got); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
 }
 
 func saveTestDecision(t *testing.T, store *sqlite.Store, sessionID, toolUseID string) {

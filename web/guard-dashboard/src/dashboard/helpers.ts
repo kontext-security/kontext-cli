@@ -3,9 +3,7 @@ import type {
   Event,
   EventBuckets,
   EventGroups,
-  EventPartitions,
   GuardMode,
-  ObservedActivityEvent,
   Session,
 } from "./types";
 
@@ -34,23 +32,6 @@ export function bucket(events: Event[]): EventBuckets {
   };
 }
 
-export function isObservedActivity(e: Event): e is ObservedActivityEvent {
-  return e.reason_code === "async_telemetry" || e.risk_event?.decision_stage === "async_telemetry";
-}
-
-export function partitionEvents(events: Event[]): EventPartitions {
-  const decisionEvents: Event[] = [];
-  const observedActivityEvents: ObservedActivityEvent[] = [];
-  for (const event of events) {
-    if (isObservedActivity(event)) {
-      observedActivityEvents.push(event);
-    } else {
-      decisionEvents.push(event);
-    }
-  }
-  return { decisionEvents, observedActivityEvents };
-}
-
 export function summaryOf(e: Event, fallback = "—"): string {
   const r = e.risk_event ?? {};
   return r.command_summary || r.request_summary || r.path_class || r.type || fallback;
@@ -67,6 +48,11 @@ export function sameSessions(a: Session[], b: Session[]): boolean {
     if (
       a[i].session_id !== b[i].session_id ||
       a[i].actions !== b[i].actions ||
+      a[i].latest_at !== b[i].latest_at ||
+      a[i].status !== b[i].status ||
+      a[i].created_at !== b[i].created_at ||
+      a[i].updated_at !== b[i].updated_at ||
+      a[i].closed_at !== b[i].closed_at ||
       a[i].current !== b[i].current ||
       a[i].mode !== b[i].mode
     ) {
@@ -90,7 +76,6 @@ export function isDeterministicGuard(e: Event): boolean {
 }
 
 export function humanReason(e: Event): string {
-  if (e.reason_code === "async_telemetry") return "Recorded after execution.";
   if (e.risk_event?.decision_stage === "judge_fail_open") {
     return "Local judge was unavailable, so Guard allowed by fail-open policy.";
   }
@@ -99,9 +84,6 @@ export function humanReason(e: Event): string {
 
 export function technicalExplanation(e: Event): string {
   const r = e.risk_event ?? {};
-  if (e.reason_code === "async_telemetry") {
-    return "Not a live gate. Recorded after execution for session context.";
-  }
   if (r.decision_stage === "judge_allow") {
     return "Deterministic policy allowed this action, then the local judge allowed it.";
   }
@@ -125,7 +107,6 @@ export function technicalExplanation(e: Event): string {
 export function decisionSource(e: Event): string {
   const stage = e.risk_event?.decision_stage;
   if (stage && JUDGE_STAGES.has(stage)) return "Local LLM judge";
-  if (isObservedActivity(e)) return "Observed";
   if (isDeterministicGuard(e)) return "Deterministic policy";
   return "Guard policy";
 }

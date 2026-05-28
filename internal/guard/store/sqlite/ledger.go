@@ -111,7 +111,7 @@ func (s *Store) AgentSessions(ctx context.Context, ids []string) ([]LedgerRecord
 select id, runtime_kind, runtime_instance_id, adapter_kind, adapter_version, agent,
   conversation_id, trace_id, principal_id, identity_context_json, identity_hash,
   policy_version, policy_hash, cwd, source, status, external_id, closed_at,
-  created_at, updated_at
+  mode, created_at, updated_at
 from agent_sessions
 where id in (%s)
 order by created_at, id

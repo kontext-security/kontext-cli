@@ -19,7 +19,15 @@ export const SAMPLE_POLICY: PolicyProfile = {
 };
 
 export const SAMPLE_SESSIONS: Session[] = [
-  { session_id: SAMPLE_SESSION_ID, actions: 9, current: true },
+  {
+    session_id: SAMPLE_SESSION_ID,
+    actions: 6,
+    current: true,
+    status: "open",
+    mode: "observe",
+    created_at: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
+    updated_at: new Date(Date.now() - 1 * 60 * 1000).toISOString(),
+  },
 ];
 
 export const SAMPLE_EVENTS: Event[] = [
@@ -156,61 +164,6 @@ export const SAMPLE_EVENTS: Event[] = [
       ...SAMPLE_RISK_POLICY,
       judge_duration_ms: 142,
       judge_risk_level: "low",
-    },
-  },
-  {
-    id: "evt-source-read-001",
-    session_id: SAMPLE_SESSION_ID,
-    tool_name: "Read",
-    decision: "allow",
-    reason_code: "async_telemetry",
-    reason: "Recorded after execution.",
-    created_at: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
-    risk_event: {
-      type: "normal_tool_call",
-      operation: "read",
-      environment: "local",
-      path_class: "source_code",
-      command_summary: "Read internal/guard/app/server/server.go",
-      signals: ["source_code_read"],
-      decision_stage: "async_telemetry",
-    },
-  },
-  {
-    id: "evt-dashboard-edit-001",
-    session_id: SAMPLE_SESSION_ID,
-    tool_name: "Edit",
-    decision: "allow",
-    reason_code: "async_telemetry",
-    reason: "Recorded after execution.",
-    created_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-    risk_event: {
-      type: "normal_tool_call",
-      operation: "write",
-      operation_class: "write",
-      environment: "local",
-      path_class: "source_code",
-      command_summary: "Edit web/guard-dashboard/src/App.tsx",
-      signals: ["workspace_file", "source_code_write"],
-      decision_stage: "async_telemetry",
-    },
-  },
-  {
-    id: "evt-dashboard-build-001",
-    session_id: SAMPLE_SESSION_ID,
-    tool_name: "Bash",
-    decision: "allow",
-    reason_code: "async_telemetry",
-    reason: "Recorded after execution.",
-    created_at: new Date(Date.now() - 1 * 60 * 1000).toISOString(),
-    risk_event: {
-      type: "normal_tool_call",
-      operation: "test",
-      operation_class: "read",
-      environment: "local",
-      command_summary: "pnpm --dir web/guard-dashboard build",
-      signals: ["local_build", "known_safe_command"],
-      decision_stage: "async_telemetry",
     },
   },
 ];

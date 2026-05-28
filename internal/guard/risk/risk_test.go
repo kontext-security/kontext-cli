@@ -78,6 +78,41 @@ func TestNormalizeDestructiveSourceControlOperation(t *testing.T) {
 	}
 }
 
+func TestNormalizeSourceControlReadDefaultsRepoAndLocalEnvironment(t *testing.T) {
+	event := NormalizeHookEvent(HookEvent{ToolName: "Bash", ToolInput: map[string]any{"command": "git status"}})
+	if event.Provider != "git" {
+		t.Fatalf("provider = %s, want git", event.Provider)
+	}
+	if event.ProviderCategory != "source_control" {
+		t.Fatalf("provider category = %s, want source_control", event.ProviderCategory)
+	}
+	if event.Operation != "status" || event.OperationClass != "read" {
+		t.Fatalf("operation = %s/%s, want status/read", event.Operation, event.OperationClass)
+	}
+	if event.ResourceClass != "repo" {
+		t.Fatalf("resource class = %s, want repo", event.ResourceClass)
+	}
+	if event.Environment != "local" {
+		t.Fatalf("environment = %s, want local", event.Environment)
+	}
+}
+
+func TestNormalizeGitHubRepoViewIsReadOnly(t *testing.T) {
+	event := NormalizeHookEvent(HookEvent{ToolName: "Bash", ToolInput: map[string]any{"command": "gh repo view kontext-security/kontext-cli"}})
+	if event.Provider != "github" {
+		t.Fatalf("provider = %s, want github", event.Provider)
+	}
+	if event.Operation != "gh repo view" || event.OperationClass != "read" {
+		t.Fatalf("operation = %s/%s, want gh repo view/read", event.Operation, event.OperationClass)
+	}
+	if event.ResourceClass != "repo" {
+		t.Fatalf("resource class = %s, want repo", event.ResourceClass)
+	}
+	if event.Environment != "local" {
+		t.Fatalf("environment = %s, want local", event.Environment)
+	}
+}
+
 func TestNormalizeGitCommitIgnoresCommitMessageBody(t *testing.T) {
 	event := NormalizeHookEvent(HookEvent{ToolName: "Bash", ToolInput: map[string]any{"command": `git commit -m "$(cat <<'EOF'
 feat: improve dashboard
@@ -124,6 +159,19 @@ func TestNormalizeDirectProviderAPIStillSeesAuthorizationHeader(t *testing.T) {
 	}
 	if !event.CredentialObserved {
 		t.Fatal("credential material was not observed")
+	}
+}
+
+func TestNormalizeDirectProviderAPIGoogleCloud(t *testing.T) {
+	event := NormalizeHookEvent(HookEvent{ToolName: "Bash", ToolInput: map[string]any{"command": `curl https://storage.googleapis.com/storage/v1/b/example-bucket/o`}})
+	if event.Type != EventDirectProviderAPICall {
+		t.Fatalf("type = %s", event.Type)
+	}
+	if event.Provider != "google_cloud" {
+		t.Fatalf("provider = %s, want google_cloud", event.Provider)
+	}
+	if event.ProviderCategory != "infrastructure" {
+		t.Fatalf("provider category = %s, want infrastructure", event.ProviderCategory)
 	}
 }
 

@@ -153,7 +153,7 @@ process.stdin.on("data", (chunk) => raw += chunk);
 process.stdin.on("end", () => {
   const events = JSON.parse(raw);
   const decisions = events.map((event) => event.decision).sort().join(",");
-  if (events.length !== 4 || decisions !== "allow,allow,deny,deny") {
+  if (events.length !== 3 || decisions !== "allow,deny,deny") {
     throw new Error(`unexpected decisions ${decisions} in ${JSON.stringify(events)}`);
   }
 });

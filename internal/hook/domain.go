@@ -1,9 +1,6 @@
 package hook
 
-import (
-	"fmt"
-	"strings"
-)
+import "strings"
 
 type HookName string
 
@@ -37,7 +34,6 @@ type Decision string
 
 const (
 	DecisionAllow Decision = "allow"
-	DecisionAsk   Decision = "ask"
 	DecisionDeny  Decision = "deny"
 )
 
@@ -45,8 +41,6 @@ func NormalizeDecision(value string) (Decision, bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case string(DecisionAllow):
 		return DecisionAllow, true
-	case string(DecisionAsk):
-		return DecisionAsk, true
 	case string(DecisionDeny):
 		return DecisionDeny, true
 	default:
@@ -95,29 +89,13 @@ func (r Result) Allowed() bool {
 }
 
 func (r Result) Blocking() bool {
-	return r.Decision == DecisionAsk || r.Decision == DecisionDeny
+	return r.Decision == DecisionDeny
 }
 
 func (r Result) ClaudeReason() string {
 	reason := r.Reason
-	if r.Decision == DecisionAsk && r.RequestID != "" {
-		if reason != "" {
-			if containsRequestID(reason) {
-				return reason
-			}
-			return fmt.Sprintf("%s Request ID: %s", reason, r.RequestID)
-		}
-		return fmt.Sprintf("Kontext access policy requires approval. Request ID: %s", r.RequestID)
-	}
-	if reason == "" && r.Decision == DecisionAsk {
-		return "Kontext access policy requires approval."
-	}
 	if reason == "" && r.Decision == DecisionDeny {
 		return "Blocked by Kontext access policy."
 	}
 	return reason
-}
-
-func containsRequestID(reason string) bool {
-	return strings.Contains(strings.ToLower(reason), "request id")
 }

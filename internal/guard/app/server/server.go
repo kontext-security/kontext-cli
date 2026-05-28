@@ -275,6 +275,10 @@ func (s *Server) withCurrentSession(ctx context.Context, sessions []sqlite.Sessi
 		SessionID: record.ID,
 		Actions:   0,
 		LatestAt:  record.UpdatedAt,
+		Status:    record.Status,
+		CreatedAt: record.CreatedAt,
+		UpdatedAt: record.UpdatedAt,
+		ClosedAt:  record.ClosedAt,
 		Current:   true,
 		Mode:      s.modeForSession(record.ID),
 	}}, sessions...)
