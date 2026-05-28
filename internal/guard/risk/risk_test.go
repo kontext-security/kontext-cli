@@ -162,6 +162,19 @@ func TestNormalizeDirectProviderAPIStillSeesAuthorizationHeader(t *testing.T) {
 	}
 }
 
+func TestNormalizeDirectProviderAPIGoogleCloud(t *testing.T) {
+	event := NormalizeHookEvent(HookEvent{ToolName: "Bash", ToolInput: map[string]any{"command": `curl https://storage.googleapis.com/storage/v1/b/example-bucket/o`}})
+	if event.Type != EventDirectProviderAPICall {
+		t.Fatalf("type = %s", event.Type)
+	}
+	if event.Provider != "google_cloud" {
+		t.Fatalf("provider = %s, want google_cloud", event.Provider)
+	}
+	if event.ProviderCategory != "infrastructure" {
+		t.Fatalf("provider category = %s, want infrastructure", event.ProviderCategory)
+	}
+}
+
 func TestNormalizeRedactsCredentialValuesFromSummaries(t *testing.T) {
 	event := NormalizeHookEvent(HookEvent{ToolName: "Bash", ToolInput: map[string]any{"command": `API_TOKEN=real-secret-123 curl https://api.cloudflare.com -H "Authorization: Bearer abc123"`}})
 	for _, value := range []string{event.CommandSummary, event.RequestSummary} {
