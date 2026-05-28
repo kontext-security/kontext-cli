@@ -183,6 +183,42 @@ func TestServiceShutdownDrainsAfterSocketRemoveError(t *testing.T) {
 	}
 }
 
+func TestServiceStartRejectsNonSocketPath(t *testing.T) {
+	t.Parallel()
+
+	socketPath := filepath.Join(t.TempDir(), "kontext.sock")
+	if err := os.WriteFile(socketPath, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	core, err := runtimecore.New(&stubRuntime{})
+	if err != nil {
+		t.Fatalf("runtimecore.New() error = %v", err)
+	}
+	service, err := NewService(Options{
+		SocketPath: socketPath,
+		Core:       core,
+		AgentName:  "claude",
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	err = service.Start(context.Background())
+	if err == nil {
+		t.Fatal("Start() error = nil, want non-socket path error")
+	}
+	if !strings.Contains(err.Error(), "not a Unix socket") {
+		t.Fatalf("Start() error = %v, want non-socket path error", err)
+	}
+	got, readErr := os.ReadFile(socketPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile() error = %v", readErr)
+	}
+	if string(got) != "keep" {
+		t.Fatalf("socket path contents = %q, want preserved file", got)
+	}
+}
+
 func TestServiceUsesCustomFailureResult(t *testing.T) {
 	t.Parallel()
 

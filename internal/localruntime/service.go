@@ -64,8 +64,16 @@ func NewService(opts Options) (*Service, error) {
 func (s *Service) SocketPath() string { return s.socketPath }
 
 func (s *Service) Start(ctx context.Context) error {
-	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove stale local runtime socket: %w", err)
+	info, err := os.Lstat(s.socketPath)
+	if err == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			return fmt.Errorf("local runtime socket path exists and is not a Unix socket: %s", s.socketPath)
+		}
+		if err := os.Remove(s.socketPath); err != nil {
+			return fmt.Errorf("remove stale local runtime socket: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect local runtime socket: %w", err)
 	}
 	ln, err := net.Listen("unix", s.socketPath)
 	if err != nil {
