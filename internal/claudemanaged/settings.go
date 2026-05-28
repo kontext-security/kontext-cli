@@ -32,6 +32,18 @@ var SupportedEvents = []Event{
 	{Name: hook.HookSessionEnd, Alias: "session-end", Async: true},
 }
 
+var (
+	eventNameByAlias = make(map[string]hook.HookName, len(SupportedEvents))
+	aliasByEventName = make(map[hook.HookName]string, len(SupportedEvents))
+)
+
+func init() {
+	for _, event := range SupportedEvents {
+		eventNameByAlias[event.Alias] = event.Name
+		aliasByEventName[event.Name] = event.Alias
+	}
+}
+
 func DefaultManagedSettingsPath() string {
 	return managedSettingsPathForGOOS(runtime.GOOS)
 }
@@ -131,21 +143,13 @@ func Validate(data []byte, kontextBinary string) error {
 
 func ParseEventAlias(value string) (hook.HookName, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(value))
-	for _, event := range SupportedEvents {
-		if normalized == event.Alias {
-			return event.Name, true
-		}
-	}
-	return "", false
+	name, ok := eventNameByAlias[normalized]
+	return name, ok
 }
 
 func AliasForEvent(name hook.HookName) (string, bool) {
-	for _, event := range SupportedEvents {
-		if event.Name == name {
-			return event.Alias, true
-		}
-	}
-	return "", false
+	alias, ok := aliasByEventName[name]
+	return alias, ok
 }
 
 func validateEvent(groups []MatcherGroup, event Event, kontextBinary string) error {

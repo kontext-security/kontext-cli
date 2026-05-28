@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/kontext-security/kontext-cli/internal/hook"
 )
 
 func TestTemplateIncludesManagedKontextHooks(t *testing.T) {
@@ -317,5 +319,20 @@ func TestParseEventAlias(t *testing.T) {
 	}
 	if _, ok := ParseEventAlias("pretooluse"); ok {
 		t.Fatal("ParseEventAlias(pretooluse) ok = true, want false")
+	}
+}
+
+func TestAliasForEvent(t *testing.T) {
+	t.Parallel()
+
+	got, ok := AliasForEvent(hook.HookPreToolUse)
+	if !ok {
+		t.Fatal("AliasForEvent() ok = false")
+	}
+	if got != "pre-tool-use" {
+		t.Fatalf("AliasForEvent() = %q, want pre-tool-use", got)
+	}
+	if _, ok := AliasForEvent(hook.HookName("Missing")); ok {
+		t.Fatal("AliasForEvent(Missing) ok = true, want false")
 	}
 }
