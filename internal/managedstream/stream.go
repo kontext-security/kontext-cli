@@ -31,17 +31,18 @@ const (
 )
 
 type Options struct {
-	DBPath         string
-	StatePath      string
-	CloudURL       string
-	OrganizationID string
-	InstallationID string
-	InstallToken   string
-	DeviceLabel    string
-	Interval       time.Duration
-	BatchLimit     int
-	HTTPClient     *http.Client
-	Diagnostic     diagnostic.Logger
+	DBPath            string
+	StatePath         string
+	CloudURL          string
+	OrganizationID    string
+	InstallationID    string
+	InstallToken      string
+	DeviceLabel       string
+	DeploymentVersion func() string
+	Interval          time.Duration
+	BatchLimit        int
+	HTTPClient        *http.Client
+	Diagnostic        diagnostic.Logger
 }
 
 type Payload struct {
@@ -58,7 +59,8 @@ type Payload struct {
 }
 
 type Device struct {
-	Label string `json:"label,omitempty"`
+	Label             string `json:"label,omitempty"`
+	DeploymentVersion string `json:"deployment_version,omitempty"`
 }
 
 type State struct {
@@ -148,8 +150,15 @@ func Flush(ctx context.Context, opts Options) error {
 		Receipts:           batch.Receipts,
 		ReceiptChainAnchor: batch.ReceiptChainAnchor,
 	}
-	if label := strings.TrimSpace(opts.DeviceLabel); label != "" {
-		payload.Device = &Device{Label: label}
+	// Resolve the deployment version per flush so an in-place package upgrade
+	// is reflected without restarting the daemon.
+	label := strings.TrimSpace(opts.DeviceLabel)
+	deploymentVersion := ""
+	if opts.DeploymentVersion != nil {
+		deploymentVersion = strings.TrimSpace(opts.DeploymentVersion())
+	}
+	if label != "" || deploymentVersion != "" {
+		payload.Device = &Device{Label: label, DeploymentVersion: deploymentVersion}
 	}
 	if err := post(ctx, opts, payload); err != nil {
 		return err

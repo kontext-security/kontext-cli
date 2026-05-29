@@ -77,16 +77,17 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	streamErr := make(chan error, 1)
 	go func() {
 		streamErr <- managedstream.Run(streamCtx, managedstream.Options{
-			DBPath:         dbPath,
-			StatePath:      opts.StreamStatePath,
-			CloudURL:       loadedConfig.Config.CloudURL,
-			OrganizationID: loadedConfig.Config.OrganizationID,
-			InstallationID: installationState.InstallationID,
-			InstallToken:   installToken,
-			DeviceLabel:    loadedConfig.Config.Device.Label,
-			Interval:       opts.StreamInterval,
-			HTTPClient:     opts.StreamHTTPClient,
-			Diagnostic:     opts.Diagnostic,
+			DBPath:            dbPath,
+			StatePath:         opts.StreamStatePath,
+			CloudURL:          loadedConfig.Config.CloudURL,
+			OrganizationID:    loadedConfig.Config.OrganizationID,
+			InstallationID:    installationState.InstallationID,
+			InstallToken:      installToken,
+			DeviceLabel:       loadedConfig.Config.Device.Label,
+			DeploymentVersion: managedconfig.DeploymentVersion,
+			Interval:          opts.StreamInterval,
+			HTTPClient:        opts.StreamHTTPClient,
+			Diagnostic:        opts.Diagnostic,
 		})
 	}()
 

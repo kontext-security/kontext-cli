@@ -92,6 +92,46 @@ func TestFlushOmitsBlankDeviceLabel(t *testing.T) {
 	}
 }
 
+func TestFlushResolvesDeploymentVersionPerFlush(t *testing.T) {
+	store, dbPath := testStore(t)
+	saveTestDecision(t, store, "session-1", "toolu_1")
+
+	var got Payload
+	server := capturePayloadServer(t, &got)
+	t.Cleanup(server.Close)
+
+	version := "  0.2.0  "
+	flushOpts := func() Options {
+		return Options{
+			DBPath:            dbPath,
+			StatePath:         filepath.Join(t.TempDir(), "stream-state.json"),
+			CloudURL:          server.URL,
+			OrganizationID:    "org_123",
+			InstallationID:    "ins_0123456789abcdefghijklmnopqrstuv",
+			InstallToken:      "test-install-token",
+			DeploymentVersion: func() string { return version },
+			HTTPClient:        server.Client(),
+		}
+	}
+
+	if err := Flush(context.Background(), flushOpts()); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	if got.Device == nil || got.Device.DeploymentVersion != "0.2.0" {
+		t.Fatalf("device = %+v, want deployment_version 0.2.0", got.Device)
+	}
+
+	// A later flush reflects a marker change (e.g. in-place upgrade) without
+	// rebuilding the daemon's options. Fresh state path re-posts the decision.
+	version = "0.3.0"
+	if err := Flush(context.Background(), flushOpts()); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	if got.Device == nil || got.Device.DeploymentVersion != "0.3.0" {
+		t.Fatalf("device = %+v, want deployment_version 0.3.0", got.Device)
+	}
+}
+
 func TestFlushDoesNotAdvanceCursorWhenHostedBackendFails(t *testing.T) {
 	store, dbPath := testStore(t)
 	saveTestDecision(t, store, "session-1", "toolu_1")
