@@ -24,8 +24,9 @@ const (
 	Mode    = "observe"
 	Agent   = "claude"
 
-	DefaultPath = "/Library/Application Support/Kontext/managed.json"
-	EnvPath     = "KONTEXT_MANAGED_CONFIG"
+	DefaultPath  = "/Library/Application Support/Kontext/managed.json"
+	EnvPath      = "KONTEXT_MANAGED_CONFIG"
+	EnvAllowHTTP = "KONTEXT_MANAGED_ALLOW_HTTP_LOCALHOST"
 )
 
 var ErrNotManaged = errors.New("managed config not found")
@@ -204,8 +205,8 @@ func validateCloudURL(value string) error {
 		return fmt.Errorf("cloud_url is invalid: %w", err)
 	}
 	if parsed.Scheme != "https" {
-		if parsed.Scheme != "http" || !isLoopbackHost(parsed.Hostname()) {
-			return errors.New("cloud_url must use https unless it is loopback http")
+		if parsed.Scheme != "http" || !allowHTTPLoopback(parsed.Hostname()) {
+			return errors.New("cloud_url must use https unless local loopback http is explicitly enabled")
 		}
 	}
 	if parsed.Host == "" || parsed.Hostname() == "" {
@@ -235,7 +236,12 @@ func validateCloudURL(value string) error {
 	return nil
 }
 
-func isLoopbackHost(host string) bool {
+func allowHTTPLoopback(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvAllowHTTP))) {
+	case "1", "true", "yes", "on":
+	default:
+		return false
+	}
 	if strings.EqualFold(host, "localhost") {
 		return true
 	}
