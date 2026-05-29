@@ -27,6 +27,9 @@ const (
 	DefaultPath  = "/Library/Application Support/Kontext/managed.json"
 	EnvPath      = "KONTEXT_MANAGED_CONFIG"
 	EnvAllowHTTP = "KONTEXT_MANAGED_ALLOW_HTTP_LOCALHOST"
+
+	DeploymentVersionPath    = "/Library/Application Support/Kontext/deployment-version"
+	EnvDeploymentVersionPath = "KONTEXT_DEPLOYMENT_VERSION_PATH"
 )
 
 var ErrNotManaged = errors.New("managed config not found")
@@ -67,6 +70,20 @@ func PathFromEnv() string {
 		return path
 	}
 	return DefaultPath
+}
+
+// DeploymentVersion returns the installed package version recorded in the
+// deployment marker, or "" if the marker is missing or unreadable.
+func DeploymentVersion() string {
+	path := DeploymentVersionPath
+	if override := strings.TrimSpace(os.Getenv(EnvDeploymentVersionPath)); override != "" {
+		path = override
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func Load() (LoadedConfig, error) {

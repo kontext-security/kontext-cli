@@ -203,6 +203,24 @@ func TestPathFromEnvHonorsOverride(t *testing.T) {
 	}
 }
 
+func TestDeploymentVersionReadsAndTrimsMarker(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "deployment-version")
+	if err := os.WriteFile(marker, []byte("  0.2.0\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	t.Setenv(EnvDeploymentVersionPath, marker)
+	if got := DeploymentVersion(); got != "0.2.0" {
+		t.Fatalf("DeploymentVersion() = %q, want %q", got, "0.2.0")
+	}
+}
+
+func TestDeploymentVersionMissingMarkerReturnsEmpty(t *testing.T) {
+	t.Setenv(EnvDeploymentVersionPath, filepath.Join(t.TempDir(), "missing"))
+	if got := DeploymentVersion(); got != "" {
+		t.Fatalf("DeploymentVersion() = %q, want empty", got)
+	}
+}
+
 func TestLoadFileReturnsChecksumAndPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "managed.json")
 	if err := os.WriteFile(path, []byte(validConfigJSON()), 0o600); err != nil {
