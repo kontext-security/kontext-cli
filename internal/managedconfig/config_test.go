@@ -106,10 +106,15 @@ func TestParseRejectsInvalidCloudURL(t *testing.T) {
 	}
 }
 
-func TestParseAcceptsLoopbackHTTPCloudURLForLocalE2E(t *testing.T) {
+func TestParseAllowsLoopbackHTTPCloudURLOnlyWithExplicitDevOverride(t *testing.T) {
 	for _, cloudURL := range []string{"http://127.0.0.1:4000", "http://localhost:4000", "http://[::1]:4000"} {
 		t.Run(cloudURL, func(t *testing.T) {
 			input := strings.Replace(validConfigJSON(), "https://api.kontext.dev", cloudURL, 1)
+			if _, err := Parse([]byte(input)); err == nil {
+				t.Fatal("Parse() error = nil, want loopback http rejected without override")
+			}
+
+			t.Setenv(EnvAllowHTTP, "1")
 			cfg, err := Parse([]byte(input))
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
@@ -118,6 +123,11 @@ func TestParseAcceptsLoopbackHTTPCloudURLForLocalE2E(t *testing.T) {
 				t.Fatalf("CloudURL = %q, want %q", cfg.CloudURL, cloudURL)
 			}
 		})
+	}
+
+	remote := strings.Replace(validConfigJSON(), "https://api.kontext.dev", "http://api.kontext.dev", 1)
+	if _, err := Parse([]byte(remote)); err == nil {
+		t.Fatal("Parse() error = nil, want remote http rejected with override")
 	}
 }
 
