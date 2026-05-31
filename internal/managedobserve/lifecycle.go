@@ -101,7 +101,9 @@ func (l Lifecycle) probe(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
+	if err := conn.Close(); err != nil {
+		l.Diagnostic.Printf("managed observe probe close: %v\n", err)
+	}
 	return true
 }
 
