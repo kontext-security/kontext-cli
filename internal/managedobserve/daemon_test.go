@@ -14,6 +14,7 @@ import (
 
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 	"github.com/kontext-security/kontext-cli/internal/hook"
+	"github.com/kontext-security/kontext-cli/internal/ledger"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
 )
 
@@ -91,26 +92,15 @@ func TestDaemonSessionEndClosesHookSessionID(t *testing.T) {
 }
 
 func TestDaemonStreamsLedgerBatches(t *testing.T) {
-	type ledgerBatchRequest struct {
-		OrganizationID string `json:"organization_id"`
-		InstallationID string `json:"installation_id"`
-		Device         *struct {
-			Label string `json:"label"`
-		} `json:"device,omitempty"`
-		Actions []struct {
-			SessionID string `json:"session_id"`
-		} `json:"authorization_actions"`
-	}
-
-	requests := make(chan ledgerBatchRequest, 1)
+	requests := make(chan ledger.Payload, 1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/authorization-ledger/batches" {
+		if r.URL.Path != ledger.DefaultEndpoint {
 			t.Fatalf("path = %q", r.URL.Path)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer test-install-token" {
 			t.Fatalf("Authorization = %q, want bearer install token", got)
 		}
-		var body ledgerBatchRequest
+		var body ledger.Payload
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("Decode() error = %v", err)
 		}
@@ -180,7 +170,8 @@ func TestDaemonStreamsLedgerBatches(t *testing.T) {
 		}
 		found := false
 		for _, action := range body.Actions {
-			if action.SessionID == "claude-stream-session" {
+			sessionID, _ := action["session_id"].(string)
+			if sessionID == "claude-stream-session" {
 				found = true
 			}
 		}

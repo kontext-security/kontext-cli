@@ -12,13 +12,14 @@ import (
 
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
+	"github.com/kontext-security/kontext-cli/internal/ledger"
 )
 
 func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	store, dbPath := testStore(t)
 	saveTestDecision(t, store, "session-1", "toolu_1")
 
-	var got Payload
+	var got ledger.Payload
 	server := capturePayloadServer(t, &got)
 	t.Cleanup(server.Close)
 
@@ -36,8 +37,8 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 		t.Fatalf("Flush() error = %v", err)
 	}
 
-	if got.SchemaVersion != SchemaVersion {
-		t.Fatalf("schema_version = %q, want %q", got.SchemaVersion, SchemaVersion)
+	if got.SchemaVersion != ledger.SchemaVersion {
+		t.Fatalf("schema_version = %q, want %q", got.SchemaVersion, ledger.SchemaVersion)
 	}
 	if got.OrganizationID != "org_123" {
 		t.Fatalf("organization_id = %q", got.OrganizationID)
@@ -61,7 +62,7 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadState() error = %v", err)
 	}
-	if state.UpdatedAfter == "" {
+	if state.UpdatedAfter == nil {
 		t.Fatal("updated_after was not persisted")
 	}
 }
@@ -70,7 +71,7 @@ func TestFlushOmitsBlankDeviceLabel(t *testing.T) {
 	store, dbPath := testStore(t)
 	saveTestDecision(t, store, "session-1", "toolu_1")
 
-	var got Payload
+	var got ledger.Payload
 	server := capturePayloadServer(t, &got)
 	t.Cleanup(server.Close)
 
@@ -96,7 +97,7 @@ func TestFlushResolvesDeploymentVersionPerFlush(t *testing.T) {
 	store, dbPath := testStore(t)
 	saveTestDecision(t, store, "session-1", "toolu_1")
 
-	var got Payload
+	var got ledger.Payload
 	server := capturePayloadServer(t, &got)
 	t.Cleanup(server.Close)
 
@@ -185,7 +186,7 @@ func TestFlushDefaultsStatePathBesideLedgerDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadState() error = %v", err)
 	}
-	if state.UpdatedAfter == "" {
+	if state.UpdatedAfter == nil {
 		t.Fatal("updated_after was not persisted")
 	}
 }
@@ -194,8 +195,9 @@ func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 	store, dbPath := testStore(t)
 	saveTestDecision(t, store, "session-1", "toolu_1")
 
+	updatedAfter := time.Now().Add(time.Hour).UTC()
 	statePath := filepath.Join(t.TempDir(), "stream-state.json")
-	if err := SaveState(statePath, State{UpdatedAfter: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano)}); err != nil {
+	if err := SaveState(statePath, State{UpdatedAfter: &updatedAfter}); err != nil {
 		t.Fatalf("SaveState() error = %v", err)
 	}
 
@@ -222,6 +224,54 @@ func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 	}
 }
 
+func TestLoadStateParsesAndTrimsFields(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	if err := os.WriteFile(statePath, []byte(`{
+  "updated_after": " 2026-05-31T10:11:12.123456789Z ",
+  "action_id": "  act_123  "
+}
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	state, err := LoadState(statePath)
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if state.UpdatedAfter == nil || state.UpdatedAfter.UTC().Format(time.RFC3339Nano) != "2026-05-31T10:11:12.123456789Z" {
+		t.Fatalf("UpdatedAfter = %+v, want parsed timestamp", state.UpdatedAfter)
+	}
+	if state.ActionID != "act_123" {
+		t.Fatalf("ActionID = %q, want %q", state.ActionID, "act_123")
+	}
+}
+
+func TestLoadStateTreatsBlankTimestampAsUnset(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	if err := os.WriteFile(statePath, []byte(`{"updated_after":" \t\n ","action_id":" act_123 "}`+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	state, err := LoadState(statePath)
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if state.UpdatedAfter != nil {
+		t.Fatalf("UpdatedAfter = %+v, want unset", state.UpdatedAfter)
+	}
+	if state.ActionID != "act_123" {
+		t.Fatalf("ActionID = %q, want %q", state.ActionID, "act_123")
+	}
+}
+
+func TestLoadStateRejectsInvalidTimestamp(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	if err := os.WriteFile(statePath, []byte(`{"updated_after":"not-a-time"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := LoadState(statePath); err == nil {
+		t.Fatal("LoadState() error = nil, want invalid timestamp failure")
+	}
+}
+
 func testStore(t *testing.T) (*sqlite.Store, string) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "guard.db")
@@ -233,11 +283,11 @@ func testStore(t *testing.T) (*sqlite.Store, string) {
 	return store, dbPath
 }
 
-func capturePayloadServer(t *testing.T, got *Payload) *httptest.Server {
+func capturePayloadServer(t *testing.T, got *ledger.Payload) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != DefaultEndpoint {
-			t.Fatalf("path = %q, want %q", r.URL.Path, DefaultEndpoint)
+		if r.URL.Path != ledger.DefaultEndpoint {
+			t.Fatalf("path = %q, want %q", r.URL.Path, ledger.DefaultEndpoint)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer test-install-token" {
 			t.Fatalf("Authorization = %q, want bearer install token", got)
