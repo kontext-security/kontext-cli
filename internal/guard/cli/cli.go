@@ -290,7 +290,7 @@ func PrintHookStatus(out io.Writer) {
 	hosted := false
 	guard := false
 	for _, raw := range hooks {
-		visitHookCommands(raw, func(command string) {
+		walkHookCommands(raw, func(command string) bool {
 			switch {
 			case isGuardHookCommand(command):
 				guard = true
@@ -299,6 +299,7 @@ func PrintHookStatus(out io.Writer) {
 				hosted = true
 				fmt.Fprintf(out, "Claude Code hosted hook: %s\n", command)
 			}
+			return false
 		})
 	}
 	if guard && hosted {
@@ -316,10 +317,10 @@ func PrintHookStatus(out io.Writer) {
 	fmt.Fprintln(out, "Claude Code hook mode: no Kontext hook detected")
 }
 
-func visitHookCommands(raw any, visit func(string)) {
+func walkHookCommands(raw any, visit func(string) bool) bool {
 	groups, ok := raw.([]any)
 	if !ok {
-		return
+		return false
 	}
 	for _, group := range groups {
 		groupMap, ok := group.(map[string]any)
@@ -336,10 +337,13 @@ func visitHookCommands(raw any, visit func(string)) {
 				continue
 			}
 			if command, ok := hookMap["command"].(string); ok {
-				visit(command)
+				if visit(command) {
+					return true
+				}
 			}
 		}
 	}
+	return false
 }
 
 func runHooks(args []string, out io.Writer) error {
@@ -534,7 +538,12 @@ func isGuardHookObject(raw any) bool {
 }
 
 func isGuardHookEntry(entry any) bool {
-	return isGuardHookCommand(fmt.Sprintf("%v", entry))
+	if command, ok := entry.(string); ok {
+		return isGuardHookCommand(command)
+	}
+	return walkHookCommands([]any{entry}, func(command string) bool {
+		return isGuardHookCommand(command)
+	})
 }
 
 func isGuardHookCommand(command string) bool {
