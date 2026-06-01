@@ -29,7 +29,3 @@ func enabledCategories(profile Profile) map[RuleCategory]bool {
 	}
 	return categories
 }
-
-func categoryEnabled(profile Profile, category RuleCategory) bool {
-	return enabledCategories(profile)[category]
-}
