@@ -342,6 +342,7 @@ func resolveCredentials(
 	}
 	fmt.Fprintln(os.Stderr, "\nResolving credentials...")
 	resolved := make([]credential.Resolved, 0, len(entries))
+	connectable := make([]credential.Entry, 0, len(entries))
 	failures := make(map[string]error)
 	entryByEnvVar := make(map[string]credential.Entry, len(entries))
 
@@ -352,17 +353,22 @@ func resolveCredentials(
 		if err != nil {
 			printCredentialFailure(entry, err, diagnostics)
 			failures[entry.EnvVar] = err
+			if resolutionErr, ok := err.(*credentialResolutionError); ok && resolutionErr.Reason == failureDisconnected {
+				connectable = append(connectable, entry)
+			}
 			continue
 		}
 		fmt.Fprintln(os.Stderr, "✓")
 		resolved = append(resolved, resolvedCredential)
 	}
 
-	connectable := unresolvedConnectableEntries(entryByEnvVar, failures)
 	if len(connectable) == 0 {
 		printLaunchWarnings(entryByEnvVar, failures, diagnostics)
 		return resolved, nil
 	}
+	slices.SortFunc(connectable, func(a, b credential.Entry) int {
+		return strings.Compare(a.EnvVar, b.EnvVar)
+	})
 
 	interactive := isInteractiveTerminal()
 	connectURL, connectErr := provider.ConnectURL(
@@ -433,25 +439,6 @@ func printHostedConnectInstructions(out io.Writer, providerList, connectURL stri
 		fmt.Fprintf(out, "  Could not open the browser automatically. Open this URL instead:\n  %s\n", connectURL)
 	}
 	return true
-}
-
-func unresolvedConnectableEntries(entryByEnvVar map[string]credential.Entry, failures map[string]error) []credential.Entry {
-	var entries []credential.Entry
-	for envVar, err := range failures {
-		resolutionErr, ok := err.(*credentialResolutionError)
-		if !ok || resolutionErr.Reason != failureDisconnected {
-			continue
-		}
-		entry, ok := entryByEnvVar[envVar]
-		if !ok {
-			continue
-		}
-		entries = append(entries, entry)
-	}
-	slices.SortFunc(entries, func(a, b credential.Entry) int {
-		return strings.Compare(a.EnvVar, b.EnvVar)
-	})
-	return entries
 }
 
 func retryConnectableCredentials(
