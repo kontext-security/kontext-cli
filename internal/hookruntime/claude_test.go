@@ -39,20 +39,26 @@ func TestDecodeClaudeEventToolResponseArray(t *testing.T) {
 func TestDecodeClaudeEventToolResponsePreservesLargeNumbers(t *testing.T) {
 	t.Parallel()
 
-	// Large IDs must not be rounded through float64 when wrapping array payloads.
-	input := []byte(`{"hook_event_name":"PostToolUse","tool_name":"mcp__x__get","tool_response":[{"id":9007199254740993}]}`)
-	ev, err := DecodeClaudeEvent(input, "claude")
+	// Large IDs must not be rounded through float64, for both array (MCP) and
+	// object (built-in) payloads.
+	arrInput := []byte(`{"hook_event_name":"PostToolUse","tool_name":"mcp__x__get","tool_response":[{"id":9007199254740993}]}`)
+	arrEv, err := DecodeClaudeEvent(arrInput, "claude")
 	if err != nil {
-		t.Fatalf("DecodeClaudeEvent() error = %v", err)
+		t.Fatalf("DecodeClaudeEvent(array) error = %v", err)
 	}
-	content := ev.ToolResponse["content"].([]any)
-	id := content[0].(map[string]any)["id"]
-	num, ok := id.(json.Number)
-	if !ok {
-		t.Fatalf("id type = %T, want json.Number (UseNumber)", id)
+	arrID := arrEv.ToolResponse["content"].([]any)[0].(map[string]any)["id"]
+	if num, ok := arrID.(json.Number); !ok || num.String() != "9007199254740993" {
+		t.Fatalf("array id = %v (%T), want json.Number 9007199254740993", arrID, arrID)
 	}
-	if num.String() != "9007199254740993" {
-		t.Fatalf("id = %s, want 9007199254740993 (no float rounding)", num.String())
+
+	objInput := []byte(`{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_response":{"id":9007199254740993}}`)
+	objEv, err := DecodeClaudeEvent(objInput, "claude")
+	if err != nil {
+		t.Fatalf("DecodeClaudeEvent(object) error = %v", err)
+	}
+	objID := objEv.ToolResponse["id"]
+	if num, ok := objID.(json.Number); !ok || num.String() != "9007199254740993" {
+		t.Fatalf("object id = %v (%T), want json.Number 9007199254740993", objID, objID)
 	}
 }
 
