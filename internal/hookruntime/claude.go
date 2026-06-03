@@ -102,7 +102,9 @@ func normalizeToolResponse(values ...json.RawMessage) map[string]any {
 			return obj
 		}
 		var v any
-		if err := json.Unmarshal(trimmed, &v); err == nil {
+		decoder := json.NewDecoder(bytes.NewReader(trimmed))
+		decoder.UseNumber()
+		if err := decoder.Decode(&v); err == nil {
 			return map[string]any{"content": v}
 		}
 	}

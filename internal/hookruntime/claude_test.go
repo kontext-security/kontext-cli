@@ -1,6 +1,9 @@
 package hookruntime
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestDecodeClaudeEventToolResponseObject(t *testing.T) {
 	t.Parallel()
@@ -30,6 +33,26 @@ func TestDecodeClaudeEventToolResponseArray(t *testing.T) {
 	}
 	if len(content) != 1 {
 		t.Fatalf("len(content) = %d, want 1", len(content))
+	}
+}
+
+func TestDecodeClaudeEventToolResponsePreservesLargeNumbers(t *testing.T) {
+	t.Parallel()
+
+	// Large IDs must not be rounded through float64 when wrapping array payloads.
+	input := []byte(`{"hook_event_name":"PostToolUse","tool_name":"mcp__x__get","tool_response":[{"id":9007199254740993}]}`)
+	ev, err := DecodeClaudeEvent(input, "claude")
+	if err != nil {
+		t.Fatalf("DecodeClaudeEvent() error = %v", err)
+	}
+	content := ev.ToolResponse["content"].([]any)
+	id := content[0].(map[string]any)["id"]
+	num, ok := id.(json.Number)
+	if !ok {
+		t.Fatalf("id type = %T, want json.Number (UseNumber)", id)
+	}
+	if num.String() != "9007199254740993" {
+		t.Fatalf("id = %s, want 9007199254740993 (no float rounding)", num.String())
 	}
 }
 
