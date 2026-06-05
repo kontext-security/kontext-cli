@@ -231,7 +231,7 @@ func (s *Service) closeSessionEnd(ctx context.Context, event hook.Event) {
 
 func decodeFailureResult(req *EvaluateRequest) hook.Result {
 	if req != nil {
-		hookName, ok := normalizeHookName(req.HookEvent)
+		hookName, ok := hook.ParseHookName(req.HookEvent)
 		if ok && !hookName.CanBlock() {
 			return hook.Result{
 				Decision: hook.DecisionAllow,
