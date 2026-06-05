@@ -1,6 +1,7 @@
 package hookruntime
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -9,25 +10,25 @@ import (
 )
 
 type claudeHookInput struct {
-	SessionID        string         `json:"session_id"`
-	SessionIDAlt     string         `json:"sessionId"`
-	HookEventName    string         `json:"hook_event_name"`
-	HookEventNameAlt string         `json:"hookEventName"`
-	HookEventLegacy  string         `json:"hook_event"`
-	ToolName         string         `json:"tool_name"`
-	ToolNameAlt      string         `json:"toolName"`
-	ToolInput        map[string]any `json:"tool_input"`
-	ToolInputAlt     map[string]any `json:"toolInput"`
-	ToolResponse     map[string]any `json:"tool_response"`
-	ToolResponseAlt  map[string]any `json:"toolResponse"`
-	ToolUseID        string         `json:"tool_use_id"`
-	ToolUseIDAlt     string         `json:"toolUseId"`
-	ToolUseIDUpper   string         `json:"toolUseID"`
-	CWD              string         `json:"cwd"`
-	PermissionMode   *string        `json:"permission_mode"`
-	DurationMs       *int64         `json:"duration_ms"`
-	Error            *string        `json:"error"`
-	IsInterrupt      *bool          `json:"is_interrupt"`
+	SessionID        string          `json:"session_id"`
+	SessionIDAlt     string          `json:"sessionId"`
+	HookEventName    string          `json:"hook_event_name"`
+	HookEventNameAlt string          `json:"hookEventName"`
+	HookEventLegacy  string          `json:"hook_event"`
+	ToolName         string          `json:"tool_name"`
+	ToolNameAlt      string          `json:"toolName"`
+	ToolInput        map[string]any  `json:"tool_input"`
+	ToolInputAlt     map[string]any  `json:"toolInput"`
+	ToolResponse     json.RawMessage `json:"tool_response"`
+	ToolResponseAlt  json.RawMessage `json:"toolResponse"`
+	ToolUseID        string          `json:"tool_use_id"`
+	ToolUseIDAlt     string          `json:"toolUseId"`
+	ToolUseIDUpper   string          `json:"toolUseID"`
+	CWD              string          `json:"cwd"`
+	PermissionMode   *string         `json:"permission_mode"`
+	DurationMs       *int64          `json:"duration_ms"`
+	Error            *string         `json:"error"`
+	IsInterrupt      *bool           `json:"is_interrupt"`
 }
 
 type claudeHookOutput struct {
@@ -58,7 +59,7 @@ func DecodeClaudeEvent(input []byte, agentName string) (hook.Event, error) {
 		HookName:       hook.HookName(hookName),
 		ToolName:       firstString(h.ToolName, h.ToolNameAlt),
 		ToolInput:      firstMap(h.ToolInput, h.ToolInputAlt),
-		ToolResponse:   firstMap(h.ToolResponse, h.ToolResponseAlt),
+		ToolResponse:   normalizeToolResponse(h.ToolResponse, h.ToolResponseAlt),
 		ToolUseID:      firstString(h.ToolUseID, h.ToolUseIDAlt, h.ToolUseIDUpper),
 		CWD:            h.CWD,
 		PermissionMode: stringPtrValue(h.PermissionMode),
@@ -84,6 +85,36 @@ func firstMap(values ...map[string]any) map[string]any {
 		}
 	}
 	return nil
+}
+
+// normalizeToolResponse decodes the tool_response payload, which Claude Code
+// delivers as a JSON object for built-in tools but as an array (of content
+// blocks) for MCP tools. Object payloads are returned as-is; any other shape is
+// wrapped under "content" so the rest of the pipeline keeps a map[string]any.
+func normalizeToolResponse(values ...json.RawMessage) map[string]any {
+	for _, raw := range values {
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) == 0 || string(trimmed) == "null" {
+			continue
+		}
+		var obj map[string]any
+		if err := decodeUseNumber(trimmed, &obj); err == nil {
+			return obj
+		}
+		var v any
+		if err := decodeUseNumber(trimmed, &v); err == nil {
+			return map[string]any{"content": v}
+		}
+	}
+	return nil
+}
+
+// decodeUseNumber unmarshals JSON while preserving numeric precision, so large
+// integer IDs beyond float64's exact range survive recording and hashing.
+func decodeUseNumber(data []byte, dst any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return decoder.Decode(dst)
 }
 
 func EncodeClaudeResult(hookEventName string, result hook.Result) ([]byte, error) {
