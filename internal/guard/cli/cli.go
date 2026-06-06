@@ -28,7 +28,8 @@ import (
 )
 
 const (
-	defaultBaseURL = "http://" + server.DefaultAddr
+	defaultBaseURL  = "http://" + server.DefaultAddr
+	privateFileMode = 0o600
 )
 
 // Run executes the Kontext command line.
@@ -440,7 +441,8 @@ func readClaudeSettings() (string, map[string]any, error) {
 }
 
 func backupFile(path, label string) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
 		return err
@@ -450,16 +452,33 @@ func backupFile(path, label string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(backupPath, input, 0o644)
+	return os.WriteFile(backupPath, input, privateMode(info.Mode()))
 }
 
 func writeJSONFile(path string, value any) error {
+	mode := os.FileMode(privateFileMode)
+	if info, err := os.Stat(path); err == nil {
+		mode = privateMode(info.Mode())
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	bytes, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
 	bytes = append(bytes, '\n')
-	return os.WriteFile(path, bytes, 0o644)
+	if err := os.WriteFile(path, bytes, mode); err != nil {
+		return err
+	}
+	return os.Chmod(path, mode)
+}
+
+func privateMode(mode os.FileMode) os.FileMode {
+	private := mode.Perm() & privateFileMode
+	if private == 0 {
+		return privateFileMode
+	}
+	return private
 }
 
 func mergeHooks(raw any, hookCommand string) map[string]any {
