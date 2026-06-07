@@ -65,6 +65,8 @@ type Host struct {
 	sessionCloseOnce bool
 }
 
+var currentWorkingDir = os.Getwd
+
 func Start(ctx context.Context, opts Options) (*Host, error) {
 	if strings.TrimSpace(opts.AgentName) == "" {
 		return nil, errors.New("runtime host requires agent name")
@@ -174,7 +176,11 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 
 	cwd := opts.CWD
 	if cwd == "" {
-		cwd, _ = os.Getwd()
+		cwd, err = currentWorkingDir()
+		if err != nil {
+			_ = host.Close(context.Background())
+			return nil, fmt.Errorf("resolve current working directory: %w", err)
+		}
 	}
 	if !opts.SkipInitialSession {
 		if _, err := localServer.RuntimeCore().OpenSession(ctx, runtimecore.Session{

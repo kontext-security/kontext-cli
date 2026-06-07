@@ -30,6 +30,28 @@ func TestStartWorksOutsideRepoCWD(t *testing.T) {
 	defer host.Close(context.Background())
 }
 
+func TestStartFailsWhenCurrentDirectoryCannotBeResolved(t *testing.T) {
+	original := currentWorkingDir
+	currentWorkingDir = func() (string, error) {
+		return "", os.ErrNotExist
+	}
+	t.Cleanup(func() {
+		currentWorkingDir = original
+	})
+
+	host, err := Start(context.Background(), Options{
+		AgentName: "claude",
+		DBPath:    filepath.Join(t.TempDir(), "guard.db"),
+	})
+	if err == nil {
+		_ = host.Close(context.Background())
+		t.Fatal("Start() error = nil, want current working directory failure")
+	}
+	if !strings.Contains(err.Error(), "resolve current working directory") {
+		t.Fatalf("error = %v, want current working directory failure", err)
+	}
+}
+
 func TestStartUsesFullSessionIDForSessionDir(t *testing.T) {
 	sessionID := "1234567890abcdef1234567890abcdef"
 	host, err := Start(context.Background(), Options{
