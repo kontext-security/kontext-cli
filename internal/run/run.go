@@ -344,6 +344,7 @@ func resolveCredentials(
 	resolved := make([]credential.Resolved, 0, len(entries))
 	failures := make(map[string]error)
 	entryByEnvVar := make(map[string]credential.Entry, len(entries))
+	connectableByEnvVar := make(map[string]credential.Entry)
 
 	for _, entry := range entries {
 		entryByEnvVar[entry.EnvVar] = entry
@@ -352,13 +353,19 @@ func resolveCredentials(
 		if err != nil {
 			printCredentialFailure(entry, err, diagnostics)
 			failures[entry.EnvVar] = err
+			if resolutionErr, ok := err.(*credentialResolutionError); ok && resolutionErr.Reason == failureDisconnected {
+				connectableByEnvVar[entry.EnvVar] = entry
+			} else {
+				delete(connectableByEnvVar, entry.EnvVar)
+			}
 			continue
 		}
 		fmt.Fprintln(os.Stderr, "✓")
+		delete(connectableByEnvVar, entry.EnvVar)
 		resolved = append(resolved, resolvedCredential)
 	}
 
-	connectable := unresolvedConnectableEntries(entryByEnvVar, failures)
+	connectable := sortedConnectableEntries(connectableByEnvVar)
 	if len(connectable) == 0 {
 		printLaunchWarnings(entryByEnvVar, failures, diagnostics)
 		return resolved, nil
@@ -435,17 +442,9 @@ func printHostedConnectInstructions(out io.Writer, providerList, connectURL stri
 	return true
 }
 
-func unresolvedConnectableEntries(entryByEnvVar map[string]credential.Entry, failures map[string]error) []credential.Entry {
-	var entries []credential.Entry
-	for envVar, err := range failures {
-		resolutionErr, ok := err.(*credentialResolutionError)
-		if !ok || resolutionErr.Reason != failureDisconnected {
-			continue
-		}
-		entry, ok := entryByEnvVar[envVar]
-		if !ok {
-			continue
-		}
+func sortedConnectableEntries(entriesByEnvVar map[string]credential.Entry) []credential.Entry {
+	entries := make([]credential.Entry, 0, len(entriesByEnvVar))
+	for _, entry := range entriesByEnvVar {
 		entries = append(entries, entry)
 	}
 	slices.SortFunc(entries, func(a, b credential.Entry) int {
