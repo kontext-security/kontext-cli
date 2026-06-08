@@ -127,7 +127,7 @@ func Flush(ctx context.Context, opts Options) error {
 
 	var updatedAfter *time.Time
 	if state.UpdatedAfter != "" {
-		parsed, err := time.Parse(time.RFC3339Nano, state.UpdatedAfter)
+		parsed, err := parseStateUpdatedAfter(state.UpdatedAfter)
 		if err != nil {
 			return fmt.Errorf("parse managed stream state: %w", err)
 		}
@@ -323,6 +323,23 @@ func saveCursor(statePath string, batch sqlite.LedgerBatch) error {
 		UpdatedAfter: batch.Cursor.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		ActionID:     batch.Cursor.ActionID,
 	})
+}
+
+func parseStateUpdatedAfter(value string) (time.Time, error) {
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, nil
+	}
+	for _, layout := range []string{
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid timestamp %q", value)
 }
 
 func responseBodySummary(body io.Reader) string {
