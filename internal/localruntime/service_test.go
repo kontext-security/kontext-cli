@@ -226,7 +226,7 @@ func TestServiceFailsClosedWhenBlockingHookPayloadCannotDecode(t *testing.T) {
 	if result.Allowed {
 		t.Fatal("result.Allowed = true, want false")
 	}
-	if result.Decision != string(hook.DecisionDeny) {
+	if result.Decision != hook.DecisionDeny {
 		t.Fatalf("result.Decision = %q, want deny", result.Decision)
 	}
 }
@@ -243,7 +243,7 @@ func TestServiceAllowsNonblockingHookPayloadDecodeFailure(t *testing.T) {
 	if !result.Allowed {
 		t.Fatal("result.Allowed = false, want true")
 	}
-	if result.Decision != string(hook.DecisionAllow) {
+	if result.Decision != hook.DecisionAllow {
 		t.Fatalf("result.Decision = %q, want allow", result.Decision)
 	}
 }

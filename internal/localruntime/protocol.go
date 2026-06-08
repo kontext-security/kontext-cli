@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+
+	"github.com/kontext-security/kontext-cli/internal/hook"
 )
 
 type EvaluateRequest struct {
@@ -26,7 +28,7 @@ type EvaluateRequest struct {
 
 type EvaluateResult struct {
 	Type         string         `json:"type"`
-	Decision     string         `json:"decision,omitempty"`
+	Decision     hook.Decision  `json:"decision,omitempty"`
 	Allowed      bool           `json:"allowed"`
 	Reason       string         `json:"reason"`
 	ReasonCode   string         `json:"reason_code,omitempty"`

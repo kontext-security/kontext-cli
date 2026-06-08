@@ -323,7 +323,7 @@ func TestEvaluatePreToolUseAllowsBackendBlocksWhenNotEnforcing(t *testing.T) {
 			if !result.Allowed {
 				t.Fatalf("evaluate().Allowed = false, want true for %s in no_policy mode", tc.name)
 			}
-			if result.Decision != string(hook.DecisionAllow) {
+			if result.Decision != hook.DecisionAllow {
 				t.Fatalf("evaluate().Decision = %q, want allow", result.Decision)
 			}
 			if result.Reason != "backend observed a block" {
@@ -365,7 +365,7 @@ func TestEvaluatePreToolUseUsesCachedModeWhenBackendOmitsMode(t *testing.T) {
 	if result.Allowed {
 		t.Fatal("evaluate().Allowed = true, want false")
 	}
-	if result.Decision != string(hook.DecisionDeny) {
+	if result.Decision != hook.DecisionDeny {
 		t.Fatalf("evaluate().Decision = %q, want deny", result.Decision)
 	}
 	if result.Mode != string(backend.HostedAccessModeEnforce) {

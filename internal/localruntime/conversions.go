@@ -1,8 +1,6 @@
 package localruntime
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -26,14 +24,14 @@ func EvaluateRequestFromEvent(event hook.Event) (EvaluateRequest, error) {
 	}
 
 	if event.ToolInput != nil {
-		data, err := marshalMap(event.ToolInput)
+		data, err := hook.MarshalMapJSON(event.ToolInput)
 		if err != nil {
 			return EvaluateRequest{}, fmt.Errorf("marshal tool input: %w", err)
 		}
 		req.ToolInput = data
 	}
 	if event.ToolResponse != nil {
-		data, err := marshalMap(event.ToolResponse)
+		data, err := hook.MarshalMapJSON(event.ToolResponse)
 		if err != nil {
 			return EvaluateRequest{}, fmt.Errorf("marshal tool response: %w", err)
 		}
@@ -74,11 +72,11 @@ func EventFromEvaluateRequest(sessionID, fallbackAgent string, req *EvaluateRequ
 	}
 
 	var err error
-	event.ToolInput, err = rawMap(req.ToolInput)
+	event.ToolInput, err = hook.UnmarshalMapJSON(req.ToolInput)
 	if err != nil {
 		return hook.Event{}, fmt.Errorf("decode tool input: %w", err)
 	}
-	event.ToolResponse, err = rawMap(req.ToolResponse)
+	event.ToolResponse, err = hook.UnmarshalMapJSON(req.ToolResponse)
 	if err != nil {
 		return hook.Event{}, fmt.Errorf("decode tool response: %w", err)
 	}
@@ -88,7 +86,7 @@ func EventFromEvaluateRequest(sessionID, fallbackAgent string, req *EvaluateRequ
 func EvaluateResultFromResult(result hook.Result) EvaluateResult {
 	return EvaluateResult{
 		Type:         "result",
-		Decision:     string(result.Decision),
+		Decision:     result.Decision,
 		Allowed:      result.Allowed(),
 		Reason:       result.Reason,
 		ReasonCode:   result.ReasonCode,
@@ -100,7 +98,7 @@ func EvaluateResultFromResult(result hook.Result) EvaluateResult {
 }
 
 func ResultFromEvaluateResult(result EvaluateResult) hook.Result {
-	decision, ok := hook.NormalizeDecision(result.Decision)
+	decision, ok := hook.NormalizeDecision(string(result.Decision))
 	if !ok {
 		decision = resultFromBool(result.Allowed).Decision
 	}
@@ -120,26 +118,6 @@ func resultFromBool(allowed bool) hook.Result {
 		return hook.Result{Decision: hook.DecisionAllow}
 	}
 	return hook.Result{Decision: hook.DecisionDeny}
-}
-
-func marshalMap(value map[string]any) (json.RawMessage, error) {
-	if value == nil {
-		return nil, nil
-	}
-	return json.Marshal(value)
-}
-
-func rawMap(data json.RawMessage) (map[string]any, error) {
-	if len(data) == 0 {
-		return nil, nil
-	}
-	var value map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&value); err != nil {
-		return nil, err
-	}
-	return value, nil
 }
 
 func normalizeHookName(value string) (hook.HookName, bool) {
