@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,12 +25,21 @@ const (
 	SchemaVersion   = "authorization-ledger-v1"
 	DefaultEndpoint = "/api/v1/authorization-ledger/batches"
 
-	DefaultBatchLimit = 500
+	DefaultBatchLimit = 100
+	MaxPayloadBytes   = 192 * 1024
 	DefaultInterval   = 10 * time.Second
+
+	maxPayloadSessions = 100
+	maxPayloadActions  = 1000
+	maxPayloadReceipts = 2000
+
+	maxErrorBodyBytes = 4096
 
 	envStatePath = "KONTEXT_MANAGED_STREAM_STATE"
 	envInterval  = "KONTEXT_MANAGED_STREAM_INTERVAL"
 )
+
+var hostedErrorSecretPattern = regexp.MustCompile(`(?i)("(?:[^"]*(?:api[_-]?key|authorization|client[_-]?secret|credential|install[_-]?token|password|secret|token)[^"]*)"\s*:\s*")([^"]*)(")`)
 
 type Options struct {
 	DBPath            string
@@ -123,61 +134,88 @@ func Flush(ctx context.Context, opts Options) error {
 		updatedAfter = &parsed
 	}
 
-	limit := opts.BatchLimit
-	if limit <= 0 {
-		limit = DefaultBatchLimit
-	}
-	batch, err := store.LedgerBatch(ctx, sqlite.LedgerExportOptions{
-		UpdatedAfter:   updatedAfter,
-		UpdatedAfterID: state.ActionID,
-		Limit:          limit,
-	})
-	if err != nil {
-		return err
-	}
-	if len(batch.Actions) == 0 {
+	limit := batchLimit(opts.BatchLimit)
+	for {
+		batch, err := store.LedgerBatch(ctx, sqlite.LedgerExportOptions{
+			UpdatedAfter:   updatedAfter,
+			UpdatedAfterID: state.ActionID,
+			Limit:          limit,
+		})
+		if err != nil {
+			return err
+		}
+		if len(batch.Actions) == 0 {
+			return nil
+		}
+
+		payload := Payload{
+			SchemaVersion:      SchemaVersion,
+			OrganizationID:     opts.OrganizationID,
+			InstallationID:     opts.InstallationID,
+			BatchID:            "batch_" + uuid.NewString(),
+			SentAt:             time.Now().UTC().Format(time.RFC3339Nano),
+			Sessions:           batch.Sessions,
+			Actions:            batch.Actions,
+			Receipts:           batch.Receipts,
+			ReceiptChainAnchor: batch.ReceiptChainAnchor,
+		}
+		// Resolve the deployment version per flush so an in-place package upgrade
+		// is reflected without restarting the daemon.
+		label := strings.TrimSpace(opts.DeviceLabel)
+		deploymentVersion := ""
+		if opts.DeploymentVersion != nil {
+			deploymentVersion = strings.TrimSpace(opts.DeploymentVersion())
+		}
+		if label != "" || deploymentVersion != "" {
+			payload.Device = &Device{Label: label, DeploymentVersion: deploymentVersion}
+		}
+
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		if reason := payloadLimitViolation(payload, len(body)); reason != "" {
+			if limit == 1 {
+				return advancePastMinimumBatch(statePath, batch, reason, nil)
+			}
+			nextLimit := reducedBatchLimit(limit)
+			opts.Diagnostic.Printf(
+				"managed stream payload exceeds hosted limits (%s); reducing batch limit from %d to %d\n",
+				reason,
+				limit,
+				nextLimit,
+			)
+			limit = nextLimit
+			continue
+		}
+
+		if err := post(ctx, opts, body); err != nil {
+			var hostedErr *hostedIngestError
+			if errors.As(err, &hostedErr) && shouldRetryWithSmallerBatch(hostedErr.StatusCode) {
+				if limit == 1 {
+					return err
+				}
+				nextLimit := reducedBatchLimit(limit)
+				opts.Diagnostic.Printf(
+					"managed stream hosted ingest returned status %d; reducing batch limit from %d to %d\n",
+					hostedErr.StatusCode,
+					limit,
+					nextLimit,
+				)
+				limit = nextLimit
+				continue
+			}
+			return err
+		}
+
+		if batch.Cursor != nil {
+			return saveCursor(statePath, batch)
+		}
 		return nil
 	}
-
-	payload := Payload{
-		SchemaVersion:      SchemaVersion,
-		OrganizationID:     opts.OrganizationID,
-		InstallationID:     opts.InstallationID,
-		BatchID:            "batch_" + uuid.NewString(),
-		SentAt:             time.Now().UTC().Format(time.RFC3339Nano),
-		Sessions:           batch.Sessions,
-		Actions:            batch.Actions,
-		Receipts:           batch.Receipts,
-		ReceiptChainAnchor: batch.ReceiptChainAnchor,
-	}
-	// Resolve the deployment version per flush so an in-place package upgrade
-	// is reflected without restarting the daemon.
-	label := strings.TrimSpace(opts.DeviceLabel)
-	deploymentVersion := ""
-	if opts.DeploymentVersion != nil {
-		deploymentVersion = strings.TrimSpace(opts.DeploymentVersion())
-	}
-	if label != "" || deploymentVersion != "" {
-		payload.Device = &Device{Label: label, DeploymentVersion: deploymentVersion}
-	}
-	if err := post(ctx, opts, payload); err != nil {
-		return err
-	}
-
-	if batch.Cursor != nil {
-		return SaveState(statePath, State{
-			UpdatedAfter: batch.Cursor.UpdatedAt.UTC().Format(time.RFC3339Nano),
-			ActionID:     batch.Cursor.ActionID,
-		})
-	}
-	return nil
 }
 
-func post(ctx context.Context, opts Options, payload Payload) error {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
+func post(ctx context.Context, opts Options, body []byte) error {
 	endpoint, err := endpointURL(opts.CloudURL)
 	if err != nil {
 		return err
@@ -199,9 +237,108 @@ func post(ctx context.Context, opts Options, payload Payload) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("hosted ledger ingest failed: status %d", resp.StatusCode)
+		return &hostedIngestError{
+			StatusCode: resp.StatusCode,
+			Body:       responseBodySummary(resp.Body),
+		}
 	}
 	return nil
+}
+
+type hostedIngestError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *hostedIngestError) Error() string {
+	body := redactHostedErrorBody(e.Body)
+	if body == "" {
+		return fmt.Sprintf("hosted ledger ingest failed: status %d", e.StatusCode)
+	}
+	return fmt.Sprintf("hosted ledger ingest failed: status %d: %s", e.StatusCode, body)
+}
+
+func redactHostedErrorBody(body string) string {
+	redacted := hostedErrorSecretPattern.ReplaceAllString(strings.TrimSpace(body), `${1}[REDACTED]${3}`)
+	return diagnostic.Redact(redacted)
+}
+
+func batchLimit(limit int) int {
+	if limit <= 0 {
+		return DefaultBatchLimit
+	}
+	if limit > DefaultBatchLimit {
+		return DefaultBatchLimit
+	}
+	return limit
+}
+
+func reducedBatchLimit(limit int) int {
+	next := limit / 2
+	if next < 1 {
+		return 1
+	}
+	return next
+}
+
+func shouldRetryWithSmallerBatch(statusCode int) bool {
+	return statusCode == http.StatusBadRequest ||
+		statusCode == http.StatusRequestEntityTooLarge ||
+		statusCode == http.StatusUnprocessableEntity
+}
+
+func payloadLimitViolation(payload Payload, bodyBytes int) string {
+	switch {
+	case len(payload.Sessions) > maxPayloadSessions:
+		return fmt.Sprintf("agent_sessions=%d exceeds max %d", len(payload.Sessions), maxPayloadSessions)
+	case len(payload.Actions) > maxPayloadActions:
+		return fmt.Sprintf("authorization_actions=%d exceeds max %d", len(payload.Actions), maxPayloadActions)
+	case len(payload.Receipts) > maxPayloadReceipts:
+		return fmt.Sprintf("authorization_receipts=%d exceeds max %d", len(payload.Receipts), maxPayloadReceipts)
+	case bodyBytes > MaxPayloadBytes:
+		return fmt.Sprintf("body_bytes=%d exceeds max %d", bodyBytes, MaxPayloadBytes)
+	default:
+		return ""
+	}
+}
+
+func advancePastMinimumBatch(statePath string, batch sqlite.LedgerBatch, reason string, cause error) error {
+	if batch.Cursor == nil {
+		if cause != nil {
+			return cause
+		}
+		return fmt.Errorf("managed stream minimum batch rejected: %s", reason)
+	}
+	if err := saveCursor(statePath, batch); err != nil {
+		return err
+	}
+	if cause != nil {
+		return fmt.Errorf("managed stream advanced cursor past rejected minimum batch (%s): %w", reason, cause)
+	}
+	return fmt.Errorf("managed stream advanced cursor past oversized minimum batch: %s", reason)
+}
+
+func saveCursor(statePath string, batch sqlite.LedgerBatch) error {
+	return SaveState(statePath, State{
+		UpdatedAfter: batch.Cursor.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		ActionID:     batch.Cursor.ActionID,
+	})
+}
+
+func responseBodySummary(body io.Reader) string {
+	data, err := io.ReadAll(io.LimitReader(body, maxErrorBodyBytes+1))
+	if err != nil {
+		return ""
+	}
+	truncated := len(data) > maxErrorBodyBytes
+	if truncated {
+		data = data[:maxErrorBodyBytes]
+	}
+	summary := strings.Join(strings.Fields(string(data)), " ")
+	if truncated {
+		summary += "..."
+	}
+	return summary
 }
 
 func endpointURL(cloudURL string) (string, error) {
