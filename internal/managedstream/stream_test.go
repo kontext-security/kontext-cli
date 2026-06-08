@@ -3,10 +3,12 @@ package managedstream
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,6 +161,224 @@ func TestFlushDoesNotAdvanceCursorWhenHostedBackendFails(t *testing.T) {
 	}
 }
 
+func TestFlushCapsBatchLimitBeforePosting(t *testing.T) {
+	store, dbPath := testStore(t)
+	for i := 0; i < 80; i++ {
+		saveTestDecision(t, store, fmt.Sprintf("session-%03d", i), fmt.Sprintf("toolu_%03d", i))
+	}
+
+	var got Payload
+	server := capturePayloadServer(t, &got)
+	t.Cleanup(server.Close)
+
+	if err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      filepath.Join(t.TempDir(), "stream-state.json"),
+		CloudURL:       server.URL,
+		OrganizationID: "org_123",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     1000,
+		HTTPClient:     server.Client(),
+	}); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	if len(got.Actions) > DefaultBatchLimit {
+		t.Fatalf("posted %d actions, want at most %d", len(got.Actions), DefaultBatchLimit)
+	}
+}
+
+func TestFlushRetriesWithSmallerBatchWhenHostedBackendRejectsSize(t *testing.T) {
+	store, dbPath := testStore(t)
+	for i := 0; i < 4; i++ {
+		saveTestDecision(t, store, fmt.Sprintf("session-%03d", i), fmt.Sprintf("toolu_%03d", i))
+	}
+
+	var actionCounts []int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got Payload
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		actionCounts = append(actionCounts, len(got.Actions))
+		if len(actionCounts) == 1 {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = w.Write([]byte(`{"message":"payload too large"}`))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	if err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      statePath,
+		CloudURL:       server.URL,
+		OrganizationID: "org_123",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     4,
+		HTTPClient:     server.Client(),
+	}); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	if len(actionCounts) != 2 {
+		t.Fatalf("request count = %d, want 2", len(actionCounts))
+	}
+	if actionCounts[0] <= actionCounts[1] {
+		t.Fatalf("action counts = %v, want retry with a smaller batch", actionCounts)
+	}
+	state, err := LoadState(statePath)
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if state.UpdatedAfter == "" {
+		t.Fatal("updated_after was not persisted after smaller retry")
+	}
+}
+
+func TestFlushReportsHostedValidationBody(t *testing.T) {
+	store, dbPath := testStore(t)
+	saveTestDecision(t, store, "session-1", "toolu_1")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"authorization_actions must contain no more than 1000 records"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      filepath.Join(t.TempDir(), "stream-state.json"),
+		CloudURL:       server.URL,
+		OrganizationID: "org_123",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     1,
+		HTTPClient:     server.Client(),
+	})
+	if err == nil {
+		t.Fatal("Flush() error = nil, want hosted validation failure")
+	}
+	if !strings.Contains(err.Error(), "status 400") ||
+		!strings.Contains(err.Error(), "authorization_actions must contain no more than 1000 records") {
+		t.Fatalf("Flush() error = %q, want status and response body", err.Error())
+	}
+}
+
+func TestFlushRedactsHostedValidationBody(t *testing.T) {
+	store, dbPath := testStore(t)
+	saveTestDecision(t, store, "session-1", "toolu_1")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"api_key":"raw-api-key","client_secret":"raw-client-secret","install_token":"raw-install-token","password":"raw-password","secret":"raw-secret","token":"raw-token","message":"Bearer raw-bearer"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      filepath.Join(t.TempDir(), "stream-state.json"),
+		CloudURL:       server.URL,
+		OrganizationID: "org_123",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     1,
+		HTTPClient:     server.Client(),
+	})
+	if err == nil {
+		t.Fatal("Flush() error = nil, want hosted validation failure")
+	}
+	for _, secret := range []string{
+		"raw-api-key",
+		"raw-client-secret",
+		"raw-install-token",
+		"raw-password",
+		"raw-secret",
+		"raw-token",
+		"raw-bearer",
+	} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("Flush() error = %q, want %q redacted", err.Error(), secret)
+		}
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("Flush() error = %q, want hosted body secrets redacted", err.Error())
+	}
+}
+
+func TestFlushDoesNotAdvanceCursorPastHostedRejectedMinimumBatch(t *testing.T) {
+	store, dbPath := testStore(t)
+	saveTestDecision(t, store, "session-1", "toolu_1")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"schema validation failed"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      statePath,
+		CloudURL:       server.URL,
+		OrganizationID: "org_123",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     1,
+		HTTPClient:     server.Client(),
+	})
+	if err == nil {
+		t.Fatal("Flush() error = nil, want hosted validation failure")
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("state file error = %v, want not exist", err)
+	}
+}
+
+func TestFlushAdvancesCursorPastOversizedMinimumBatch(t *testing.T) {
+	store, dbPath := testStore(t)
+	saveLargeTestDecision(t, store, "session-1", "toolu_1")
+
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      statePath,
+		CloudURL:       server.URL,
+		OrganizationID: "org_123",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     1,
+		HTTPClient:     server.Client(),
+	})
+	if err == nil {
+		t.Fatal("Flush() error = nil, want oversized minimum batch diagnostic")
+	}
+	if !strings.Contains(err.Error(), "advanced cursor past oversized minimum batch") {
+		t.Fatalf("Flush() error = %q, want oversized skip diagnostic", err.Error())
+	}
+	if called {
+		t.Fatal("server was called despite oversized local minimum batch")
+	}
+	state, err := LoadState(statePath)
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if state.UpdatedAfter == "" || state.ActionID == "" {
+		t.Fatalf("state = %+v, want cursor advanced", state)
+	}
+}
+
 func TestFlushDefaultsStatePathBesideLedgerDB(t *testing.T) {
 	t.Setenv(envStatePath, "")
 	store, dbPath := testStore(t)
@@ -266,6 +486,31 @@ func saveTestDecision(t *testing.T, store *sqlite.Store, sessionID, toolUseID st
 			Operation:      "read",
 			OperationClass: "read",
 			ResourceClass:  "file",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveDecision() error = %v", err)
+	}
+}
+
+func saveLargeTestDecision(t *testing.T, store *sqlite.Store, sessionID, toolUseID string) {
+	t.Helper()
+	_, err := store.SaveDecision(context.Background(), risk.HookEvent{
+		SessionID:     sessionID,
+		Agent:         "claude",
+		CWD:           "/tmp/project",
+		HookEventName: "PreToolUse",
+		ToolName:      "Write",
+		ToolUseID:     toolUseID,
+	}, risk.RiskDecision{
+		Decision:   risk.DecisionAllow,
+		ReasonCode: "OBSERVE_MODE",
+		Reason:     "Allowed in observe mode",
+		RiskEvent: risk.RiskEvent{
+			Operation:      "write",
+			OperationClass: "write",
+			ResourceClass:  "file",
+			CommandSummary: strings.Repeat("x", MaxPayloadBytes),
 		},
 	})
 	if err != nil {
