@@ -956,6 +956,214 @@ where id in (?, ?)
 	}
 }
 
+func TestLedgerBatchNormalizesNaiveTimestampsForHostedExport(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	for _, hookEvent := range []string{"SessionStart", "SessionEnd"} {
+		if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
+			SessionID:     "s1",
+			Agent:         "claude-code",
+			HookEventName: hookEvent,
+			CWD:           "/tmp/project",
+		}, risk.RiskDecision{
+			Decision:   risk.DecisionAllow,
+			Reason:     "async telemetry event recorded",
+			ReasonCode: "async_telemetry",
+			RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
+		}); err != nil {
+			t.Fatalf("SaveDecision(%s) error = %v", hookEvent, err)
+		}
+	}
+
+	naive := "2026-06-08T12:20:07.853885"
+	if _, err := store.db.ExecContext(context.Background(), `
+update authorization_actions
+set proposed_at = case when proposed_at is null then null else ? end,
+    completed_at = case when completed_at is null then null else ? end,
+    created_at = ?,
+    updated_at = ?
+where session_id = ?
+	`, naive, naive, naive, naive, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `
+update authorization_receipts
+set created_at = ?
+where session_id = ?
+	`, naive, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `
+update agent_sessions
+set status = 'closed',
+    closed_at = ?,
+    created_at = ?,
+    updated_at = ?
+where id = ?
+	`, naive, naive, naive, "s1"); err != nil {
+		t.Fatal(err)
+	}
+
+	batch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Sessions) != 1 || len(batch.Actions) != 2 || len(batch.Receipts) != 2 {
+		t.Fatalf("batch sizes sessions=%d actions=%d receipts=%d, want 1/2/2", len(batch.Sessions), len(batch.Actions), len(batch.Receipts))
+	}
+	for _, record := range append(append([]LedgerRecord{}, batch.Sessions...), append(batch.Actions, batch.Receipts...)...) {
+		assertLedgerTimestampHasOffset(t, record, "created_at")
+		assertLedgerTimestampHasOffset(t, record, "updated_at")
+		assertLedgerTimestampHasOffset(t, record, "closed_at")
+		assertLedgerTimestampHasOffset(t, record, "proposed_at")
+		assertLedgerTimestampHasOffset(t, record, "completed_at")
+	}
+	if batch.Cursor == nil {
+		t.Fatal("cursor = nil")
+	}
+	if got := batch.Cursor.UpdatedAt.Format(time.RFC3339Nano); got != "2026-06-08T12:20:07.853885Z" {
+		t.Fatalf("cursor updated_at = %q, want normalized UTC timestamp", got)
+	}
+}
+
+func TestLedgerBatchCursorComparesNaiveTimestampsAfterNormalization(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	for _, hookEvent := range []string{"SessionStart", "SessionEnd"} {
+		if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
+			SessionID:     "s1",
+			Agent:         "claude-code",
+			HookEventName: hookEvent,
+			CWD:           "/tmp/project",
+		}, risk.RiskDecision{
+			Decision:   risk.DecisionAllow,
+			Reason:     "async telemetry event recorded",
+			ReasonCode: "async_telemetry",
+			RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
+		}); err != nil {
+			t.Fatalf("SaveDecision(%s) error = %v", hookEvent, err)
+		}
+	}
+
+	naive := "2026-06-08T12:20:07.853885"
+	if _, err := store.db.ExecContext(context.Background(), `
+update authorization_actions
+set created_at = ?,
+    updated_at = ?
+where session_id = ?
+	`, naive, naive, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `
+update authorization_receipts
+set created_at = ?
+where session_id = ?
+	`, naive, "s1"); err != nil {
+		t.Fatal(err)
+	}
+
+	actionIDs := ledgerActionIDs(t, store, "s1")
+	if len(actionIDs) != 2 {
+		t.Fatalf("action IDs = %+v, want 2", actionIDs)
+	}
+	firstBatch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstBatch.Cursor == nil {
+		t.Fatal("first batch cursor = nil")
+	}
+	if firstBatch.Cursor.ActionID != actionIDs[0] {
+		t.Fatalf("first cursor action = %q, want %q", firstBatch.Cursor.ActionID, actionIDs[0])
+	}
+
+	secondBatch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{
+		UpdatedAfter:   &firstBatch.Cursor.UpdatedAt,
+		UpdatedAfterID: firstBatch.Cursor.ActionID,
+		Limit:          1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondBatch.Actions) != 1 || secondBatch.Actions[0]["id"] != actionIDs[1] {
+		t.Fatalf("second batch actions = %+v, want %s", secondBatch.Actions, actionIDs[1])
+	}
+}
+
+func TestLedgerBatchCursorComparesOffsetTimestampsAfterNormalization(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	for _, hookEvent := range []string{"SessionStart", "SessionEnd"} {
+		if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
+			SessionID:     "s1",
+			Agent:         "claude-code",
+			HookEventName: hookEvent,
+			CWD:           "/tmp/project",
+		}, risk.RiskDecision{
+			Decision:   risk.DecisionAllow,
+			Reason:     "async telemetry event recorded",
+			ReasonCode: "async_telemetry",
+			RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
+		}); err != nil {
+			t.Fatalf("SaveDecision(%s) error = %v", hookEvent, err)
+		}
+	}
+
+	actionIDs := ledgerActionIDs(t, store, "s1")
+	if len(actionIDs) != 2 {
+		t.Fatalf("action IDs = %+v, want 2", actionIDs)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `
+update authorization_actions
+set updated_at = case id
+  when ? then ?
+  when ? then ?
+  else updated_at
+end
+where session_id = ?
+	`, actionIDs[0], "2026-06-08T14:20:07.853885+02:00", actionIDs[1], "2026-06-08T12:20:07.853885Z", "s1"); err != nil {
+		t.Fatal(err)
+	}
+
+	firstBatch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstBatch.Cursor == nil {
+		t.Fatal("first batch cursor = nil")
+	}
+	if firstBatch.Cursor.ActionID != actionIDs[0] {
+		t.Fatalf("first cursor action = %q, want %q", firstBatch.Cursor.ActionID, actionIDs[0])
+	}
+	if got := firstBatch.Cursor.UpdatedAt.UTC().Format(time.RFC3339Nano); got != "2026-06-08T12:20:07.853885Z" {
+		t.Fatalf("first cursor updated_at = %q, want normalized UTC timestamp", got)
+	}
+
+	secondBatch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{
+		UpdatedAfter:   &firstBatch.Cursor.UpdatedAt,
+		UpdatedAfterID: firstBatch.Cursor.ActionID,
+		Limit:          1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondBatch.Actions) != 1 || secondBatch.Actions[0]["id"] != actionIDs[1] {
+		t.Fatalf("second batch actions = %+v, want %s", secondBatch.Actions, actionIDs[1])
+	}
+}
+
 func TestLedgerBatchIncludesReceiptChainAnchorForIncrementalExports(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {
@@ -1424,6 +1632,33 @@ func ledgerRecordByField(records []LedgerRecord, field, value string) LedgerReco
 	return nil
 }
 
+func ledgerActionIDs(t *testing.T, store *Store, sessionID string) []string {
+	t.Helper()
+	rows, err := store.db.QueryContext(context.Background(), `
+select id
+from authorization_actions
+where session_id = ?
+order by id
+	`, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
 func receiptCountForTool(t *testing.T, store *Store, receipts []LedgerRecord, toolUseID string) int {
 	t.Helper()
 	count := 0
@@ -1442,6 +1677,25 @@ func receiptCountForTool(t *testing.T, store *Store, receipts []LedgerRecord, to
 		}
 	}
 	return count
+}
+
+func assertLedgerTimestampHasOffset(t *testing.T, record LedgerRecord, column string) {
+	t.Helper()
+	value, ok := record[column]
+	if !ok || value == nil {
+		return
+	}
+	raw, ok := value.(string)
+	if !ok || raw == "" {
+		return
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		t.Fatalf("%s = %q does not parse as RFC3339Nano: %v", column, raw, err)
+	}
+	if !strings.HasSuffix(raw, "Z") {
+		t.Fatalf("%s = %q has offset %s, want normalized UTC", column, raw, parsed.Format("-07:00"))
+	}
 }
 
 func assertRecordIDs(t *testing.T, records []LedgerRecord, want map[string]bool) {

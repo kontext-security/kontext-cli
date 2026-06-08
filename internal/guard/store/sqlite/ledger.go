@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -117,24 +118,11 @@ order by created_at, id
 }
 
 func (s *Store) AuthorizationActions(ctx context.Context, opts LedgerExportOptions) ([]LedgerRecord, error) {
-	query := authorizationActionsSelect
-	args := []any{}
-	if opts.UpdatedAfter != nil {
-		if opts.UpdatedAfterID != "" {
-			query += "\nwhere updated_at > ? or (updated_at = ? and id > ?)"
-			updatedAfter := opts.UpdatedAfter.Format(time.RFC3339Nano)
-			args = append(args, updatedAfter, updatedAfter, opts.UpdatedAfterID)
-		} else {
-			query += "\nwhere updated_at > ?"
-			args = append(args, opts.UpdatedAfter.Format(time.RFC3339Nano))
-		}
+	actions, err := queryLedgerRecords(ctx, s.db, authorizationActionsSelect)
+	if err != nil {
+		return nil, err
 	}
-	query += "\norder by updated_at, id"
-	if opts.Limit > 0 {
-		query += "\nlimit ?"
-		args = append(args, opts.Limit)
-	}
-	return queryLedgerRecords(ctx, s.db, query, args...)
+	return filterLedgerActions(actions, opts)
 }
 
 func ledgerCursor(actions []LedgerRecord) (*LedgerCursor, error) {
@@ -164,7 +152,11 @@ func (s *Store) authorizationActionsByIDs(ctx context.Context, ids []string) ([]
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	return queryLedgerRecords(ctx, s.db, fmt.Sprintf("%s\nwhere id in (%s)\norder by updated_at, id", authorizationActionsSelect, placeholders), args...)
+	actions, err := queryLedgerRecords(ctx, s.db, fmt.Sprintf("%s\nwhere id in (%s)", authorizationActionsSelect, placeholders), args...)
+	if err != nil {
+		return nil, err
+	}
+	return orderLedgerActions(actions)
 }
 
 func (s *Store) AuthorizationReceipts(ctx context.Context, opts LedgerExportOptions) ([]LedgerRecord, error) {
@@ -258,7 +250,111 @@ func normalizeLedgerString(column, value string) any {
 			return decoded
 		}
 	}
+	if isLedgerTimeColumn(column) {
+		if normalized, ok := normalizeLedgerTimestamp(value); ok {
+			return normalized
+		}
+	}
 	return value
+}
+
+func isLedgerTimeColumn(column string) bool {
+	return strings.HasSuffix(column, "_at")
+}
+
+func normalizeLedgerTimestamp(value string) (string, bool) {
+	if value == "" {
+		return value, false
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed.UTC().Format(time.RFC3339Nano), true
+	}
+	for _, layout := range []string{
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+	} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return parsed.UTC().Format(time.RFC3339Nano), true
+		}
+	}
+	return value, false
+}
+
+func filterLedgerActions(actions []LedgerRecord, opts LedgerExportOptions) ([]LedgerRecord, error) {
+	ordered, err := orderLedgerActions(actions)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LedgerRecord, 0, len(ordered))
+	for _, action := range ordered {
+		afterCursor, err := ledgerActionAfterCursor(action, opts)
+		if err != nil {
+			return nil, err
+		}
+		if !afterCursor {
+			continue
+		}
+		out = append(out, action)
+		if opts.Limit > 0 && len(out) >= opts.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func orderLedgerActions(actions []LedgerRecord) ([]LedgerRecord, error) {
+	type sortableAction struct {
+		record    LedgerRecord
+		updatedAt time.Time
+		id        string
+	}
+	sortable := make([]sortableAction, 0, len(actions))
+	for _, action := range actions {
+		updatedAt, id, err := ledgerActionCursorValues(action)
+		if err != nil {
+			return nil, err
+		}
+		sortable = append(sortable, sortableAction{record: action, updatedAt: updatedAt, id: id})
+	}
+	sort.SliceStable(sortable, func(i, j int) bool {
+		if sortable[i].updatedAt.Equal(sortable[j].updatedAt) {
+			return sortable[i].id < sortable[j].id
+		}
+		return sortable[i].updatedAt.Before(sortable[j].updatedAt)
+	})
+	ordered := make([]LedgerRecord, 0, len(sortable))
+	for _, action := range sortable {
+		ordered = append(ordered, action.record)
+	}
+	return ordered, nil
+}
+
+func ledgerActionAfterCursor(action LedgerRecord, opts LedgerExportOptions) (bool, error) {
+	if opts.UpdatedAfter == nil {
+		return true, nil
+	}
+	updatedAt, actionID, err := ledgerActionCursorValues(action)
+	if err != nil {
+		return false, err
+	}
+	if updatedAt.After(*opts.UpdatedAfter) {
+		return true, nil
+	}
+	return updatedAt.Equal(*opts.UpdatedAfter) && opts.UpdatedAfterID != "" && actionID > opts.UpdatedAfterID, nil
+}
+
+func ledgerActionCursorValues(action LedgerRecord) (time.Time, string, error) {
+	rawUpdatedAt, _ := action["updated_at"].(string)
+	actionID, _ := action["id"].(string)
+	if rawUpdatedAt == "" || actionID == "" {
+		return time.Time{}, actionID, nil
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, rawUpdatedAt)
+	if err != nil {
+		return time.Time{}, actionID, err
+	}
+	return updatedAt, actionID, nil
 }
 
 func sessionIDs(groups ...[]LedgerRecord) []string {
