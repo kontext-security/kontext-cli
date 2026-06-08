@@ -207,7 +207,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	  decision_at text,
 	  completed_at text,
 	  created_at text not null,
-	  updated_at text not null
+	  updated_at text not null,
+	  updated_at_cursor_key text not null default ''
 	);
 
 	create table if not exists authorization_receipts (
@@ -251,9 +252,18 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureAuthorizationActionsDecisionNullable(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "authorization_actions", "updated_at_cursor_key", "text not null default ''"); err != nil {
+		return err
+	}
+	if err := s.backfillAuthorizationActionCursorKeys(ctx); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `
 	create index if not exists idx_authorization_actions_session_updated
 	on authorization_actions(session_id, updated_at);
+
+	create index if not exists idx_authorization_actions_cursor
+	on authorization_actions(updated_at_cursor_key, id);
 
 	create index if not exists idx_authorization_actions_session_tool_use
 	on authorization_actions(session_id, tool_use_id);
@@ -427,7 +437,8 @@ func (s *Store) ensureAuthorizationActionsDecisionNullable(ctx context.Context) 
 	  decision_at text,
 	  completed_at text,
 	  created_at text not null,
-	  updated_at text not null
+	  updated_at text not null,
+	  updated_at_cursor_key text not null default ''
 	);
 
 	insert into authorization_actions (
@@ -441,6 +452,9 @@ func (s *Store) ensureAuthorizationActionsDecisionNullable(ctx context.Context) 
 
 	create index if not exists idx_authorization_actions_session_updated
 	on authorization_actions(session_id, updated_at);
+
+	create index if not exists idx_authorization_actions_cursor
+	on authorization_actions(updated_at_cursor_key, id);
 
 	create index if not exists idx_authorization_actions_session_tool_use
 	on authorization_actions(session_id, tool_use_id);
@@ -524,6 +538,7 @@ var authorizationActionColumns = []authorizationActionColumn{
 	{name: "completed_at", defaultExpr: "null"},
 	{name: "created_at", copyExpr: "coalesce(created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", defaultExpr: "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"},
 	{name: "updated_at", copyExpr: "coalesce(updated_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", defaultExpr: "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"},
+	{name: "updated_at_cursor_key", copyExpr: "coalesce(nullif(updated_at_cursor_key, ''), updated_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", defaultExpr: "''"},
 }
 
 func authorizationActionInsertColumns() string {
@@ -547,6 +562,50 @@ func authorizationActionSelectExpressions(existingColumns map[string]bool) strin
 		expressions = append(expressions, fmt.Sprintf("%s as %s", expr, column.name))
 	}
 	return strings.Join(expressions, ",\n\t  ")
+}
+
+func (s *Store) backfillAuthorizationActionCursorKeys(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+select id, updated_at, updated_at_cursor_key
+from authorization_actions
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type rowValue struct {
+		id  string
+		key string
+	}
+	updates := []rowValue{}
+	for rows.Next() {
+		var id, updatedAt, currentKey string
+		if err := rows.Scan(&id, &updatedAt, &currentKey); err != nil {
+			return err
+		}
+		key, err := ledgerTimestampCursorKey(updatedAt)
+		if err != nil {
+			return err
+		}
+		if currentKey == key {
+			continue
+		}
+		updates = append(updates, rowValue{id: id, key: key})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, update := range updates {
+		if _, err := s.db.ExecContext(ctx, `
+update authorization_actions
+set updated_at_cursor_key = ?
+where id = ?
+		`, update.key, update.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) OpenSession(ctx context.Context, sessionID, agent, cwd, source, externalID string) (SessionRecord, error) {
@@ -718,7 +777,7 @@ func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionI
 		"risk_level", "risk_score", "risk_threshold", "model_version", "confidence", "matched_rules_json", "risk_signals_json", "risk_event_json",
 		"modifications_json", "approval_context_json", "approval_channel", "approval_request_id", "deferral_context_json",
 		"status", "outcome", "output_summary", "output_hash", "error_redacted",
-		"proposed_at", "decision_at", "completed_at", "created_at", "updated_at",
+		"proposed_at", "decision_at", "completed_at", "created_at", "updated_at", "updated_at_cursor_key",
 	}
 	values := []any{
 		action["id"], action["session_id"], action["tool_use_id"], action["canonical_event_type"], action["adapter_event_name"], action["correlation_key"],
@@ -729,7 +788,7 @@ func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionI
 		action["risk_level"], action["risk_score"], action["risk_threshold"], action["model_version"], action["confidence"], action["matched_rules_json"], action["risk_signals_json"], action["risk_event_json"],
 		action["modifications_json"], action["approval_context_json"], action["approval_channel"], action["approval_request_id"], action["deferral_context_json"],
 		action["status"], action["outcome"], action["output_summary"], action["output_hash"], action["error_redacted"],
-		action["proposed_at"], action["decision_at"], action["completed_at"], action["created_at"], action["updated_at"],
+		action["proposed_at"], action["decision_at"], action["completed_at"], action["created_at"], action["updated_at"], action["updated_at_cursor_key"],
 	}
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(columns)), ",")
 	if _, err := tx.ExecContext(ctx,
@@ -827,6 +886,12 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		provider = "github"
 	}
 
+	updatedAt := now.Format(time.RFC3339Nano)
+	updatedAtCursorKey, err := ledgerTimestampCursorKey(updatedAt)
+	if err != nil {
+		return nil, err
+	}
+
 	return map[string]any{
 		"id":                       actionID,
 		"session_id":               sessionID,
@@ -876,8 +941,9 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		"proposed_at":              nullIfEmpty(proposedAt),
 		"decision_at":              nullIfEmpty(decisionAt),
 		"completed_at":             nullIfEmpty(completedAt),
-		"created_at":               now.Format(time.RFC3339Nano),
-		"updated_at":               now.Format(time.RFC3339Nano),
+		"created_at":               updatedAt,
+		"updated_at":               updatedAt,
+		"updated_at_cursor_key":    updatedAtCursorKey,
 	}, nil
 }
 
