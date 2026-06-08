@@ -927,11 +927,13 @@ func TestLedgerBatchCursorUsesUpdatedAtAndActionID(t *testing.T) {
 	}
 
 	sharedUpdated := "2026-05-19T10:00:00Z"
+	sharedUpdatedKey := ledgerTimestampCursorKeyFromValues(sharedUpdated)
 	if _, err := store.db.ExecContext(context.Background(), `
 update authorization_actions
-set updated_at = ?
+set updated_at = ?,
+    updated_at_cursor_key = ?
 where id in (?, ?)
-	`, sharedUpdated, first.ID, second.ID); err != nil {
+	`, sharedUpdated, sharedUpdatedKey, first.ID, second.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -953,6 +955,157 @@ where id in (?, ?)
 	}
 	if len(secondBatch.Actions) != 1 || secondBatch.Actions[0]["id"] == firstBatch.Cursor.ActionID {
 		t.Fatalf("second batch actions = %+v, cursor = %+v", secondBatch.Actions, firstBatch.Cursor)
+	}
+}
+
+func TestLedgerBatchNormalizesLegacyTimestampsForHostedExport(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	insertLifecycleActions(t, store)
+	naive := "2026-06-08T12:20:07.853885"
+	naiveKey := ledgerTimestampCursorKeyFromValues(naive)
+	if _, err := store.db.ExecContext(context.Background(), `
+update authorization_actions
+set proposed_at = case when proposed_at is null then null else ? end,
+    completed_at = case when completed_at is null then null else ? end,
+    created_at = ?,
+    updated_at = ?,
+    updated_at_cursor_key = ?
+	`, naive, naive, naive, naive, naiveKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `update authorization_receipts set created_at = ?`, naive); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `update agent_sessions set closed_at = ?, created_at = ?, updated_at = ?`, naive, naive, naive); err != nil {
+		t.Fatal(err)
+	}
+
+	batch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range append(append([]LedgerRecord{}, batch.Sessions...), append(batch.Actions, batch.Receipts...)...) {
+		for _, column := range []string{"created_at", "updated_at", "closed_at", "proposed_at", "completed_at"} {
+			assertHostedTimestamp(t, record, column)
+		}
+		if _, ok := record[ledgerCursorUpdatedAtKeyColumn]; ok {
+			t.Fatalf("record leaked cursor key: %+v", record)
+		}
+	}
+}
+
+func TestLedgerBatchToleratesCorruptLegacyActionTimestamps(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	actions := insertLifecycleActions(t, store)
+	actionID := actions[0].ID
+	if _, err := store.db.ExecContext(context.Background(), `
+update authorization_actions
+set proposed_at = 'bad-proposed-at',
+    created_at = 'bad-created-at',
+    updated_at = 'bad-updated-at',
+    updated_at_cursor_key = ?
+where id = ?
+	`, ledgerTimestampCursorKeyFromValues("bad-updated-at", "bad-created-at"), actionID); err != nil {
+		t.Fatal(err)
+	}
+
+	batch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if batch.Cursor == nil || !batch.Cursor.UpdatedAt.Equal(ledgerFallbackTimestamp) {
+		t.Fatalf("cursor = %+v, want fallback timestamp", batch.Cursor)
+	}
+	if len(batch.Actions) != 1 {
+		t.Fatalf("actions = %+v, want one action", batch.Actions)
+	}
+	action := batch.Actions[0]
+	if action["id"] != actionID {
+		t.Fatalf("action id = %v, want %s", action["id"], actionID)
+	}
+	if action["created_at"] != "1970-01-01T00:00:00Z" || action["updated_at"] != "1970-01-01T00:00:00Z" {
+		t.Fatalf("required timestamps = created %v updated %v", action["created_at"], action["updated_at"])
+	}
+	if action["proposed_at"] != nil {
+		t.Fatalf("proposed_at = %v, want nil for corrupt optional timestamp", action["proposed_at"])
+	}
+}
+
+func TestLedgerBatchCursorUsesFixedWidthTimestampKey(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	first, err := store.SaveDecision(context.Background(), risk.HookEvent{
+		SessionID:     "s1",
+		HookEventName: "PreToolUse",
+		ToolName:      "Read",
+		ToolUseID:     "tool-1",
+	}, risk.RiskDecision{
+		Decision:   risk.DecisionAllow,
+		Reason:     "normal",
+		ReasonCode: "normal_tool_call",
+		RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.SaveDecision(context.Background(), risk.HookEvent{
+		SessionID:     "s1",
+		HookEventName: "PreToolUse",
+		ToolName:      "Read",
+		ToolUseID:     "tool-2",
+	}, risk.RiskDecision{
+		Decision:   risk.DecisionAllow,
+		Reason:     "normal",
+		ReasonCode: "normal_tool_call",
+		RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstUpdated := "2026-06-08T12:20:07Z"
+	secondUpdated := "2026-06-08T12:20:07.1Z"
+	if _, err := store.db.ExecContext(context.Background(), `
+update authorization_actions
+set updated_at = case id when ? then ? when ? then ? else updated_at end,
+    updated_at_cursor_key = case id when ? then ? when ? then ? else updated_at_cursor_key end
+where id in (?, ?)
+	`, first.ID, firstUpdated, second.ID, secondUpdated, first.ID, ledgerTimestampCursorKeyFromValues(firstUpdated), second.ID, ledgerTimestampCursorKeyFromValues(secondUpdated), first.ID, second.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	firstBatch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstBatch.Cursor == nil || firstBatch.Cursor.ActionID != first.ID {
+		t.Fatalf("first cursor = %+v, want %s", firstBatch.Cursor, first.ID)
+	}
+
+	secondBatch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{
+		UpdatedAfter:   &firstBatch.Cursor.UpdatedAt,
+		UpdatedAfterID: firstBatch.Cursor.ActionID,
+		Limit:          1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondBatch.Actions) != 1 || secondBatch.Actions[0]["id"] != second.ID {
+		t.Fatalf("second batch actions = %+v, want %s", secondBatch.Actions, second.ID)
 	}
 }
 
@@ -992,15 +1145,22 @@ func TestLedgerBatchIncludesReceiptChainAnchorForIncrementalExports(t *testing.T
 
 	firstUpdated := "2026-05-19T10:00:00Z"
 	secondUpdated := "2026-05-19T11:00:00Z"
+	firstUpdatedKey := ledgerTimestampCursorKeyFromValues(firstUpdated)
+	secondUpdatedKey := ledgerTimestampCursorKeyFromValues(secondUpdated)
 	if _, err := store.db.ExecContext(context.Background(), `
 	update authorization_actions
 	set updated_at = case tool_use_id
 	  when ? then ?
 	  when ? then ?
 	  else updated_at
+	end,
+	updated_at_cursor_key = case tool_use_id
+	  when ? then ?
+	  when ? then ?
+	  else updated_at_cursor_key
 	end
 	where session_id = ? and tool_use_id in (?, ?)
-		`, "tool-1", firstUpdated, "tool-2", secondUpdated, "s1", "tool-1", "tool-2"); err != nil {
+		`, "tool-1", firstUpdated, "tool-2", secondUpdated, "tool-1", firstUpdatedKey, "tool-2", secondUpdatedKey, "s1", "tool-1", "tool-2"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1085,6 +1245,9 @@ func TestLedgerBatchIncludesContiguousReceiptRangeAndBridgeActions(t *testing.T)
 		t.Fatal(err)
 	}
 
+	firstUpdatedKey := ledgerTimestampCursorKeyFromValues("2026-05-19T11:00:00Z")
+	bridgeUpdatedKey := ledgerTimestampCursorKeyFromValues("2026-05-19T10:00:00Z")
+	secondUpdatedKey := ledgerTimestampCursorKeyFromValues("2026-05-19T12:00:00Z")
 	if _, err := store.db.ExecContext(context.Background(), `
 	update authorization_actions
 	set updated_at = case tool_use_id
@@ -1092,9 +1255,15 @@ func TestLedgerBatchIncludesContiguousReceiptRangeAndBridgeActions(t *testing.T)
 	  when ? then '2026-05-19T10:00:00Z'
 	  when ? then '2026-05-19T12:00:00Z'
 	  else updated_at
+	end,
+	updated_at_cursor_key = case tool_use_id
+	  when ? then ?
+	  when ? then ?
+	  when ? then ?
+	  else updated_at_cursor_key
 	end
 	where session_id = ? and tool_use_id in (?, ?, ?)
-		`, "tool-1", "tool-bridge", "tool-2", "s1", "tool-1", "tool-bridge", "tool-2"); err != nil {
+		`, "tool-1", "tool-bridge", "tool-2", "tool-1", firstUpdatedKey, "tool-bridge", bridgeUpdatedKey, "tool-2", secondUpdatedKey, "s1", "tool-1", "tool-bridge", "tool-2"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1399,6 +1568,43 @@ insert into authorization_actions(
 	_, err = store.Events(context.Background(), "s1")
 	if err == nil || !strings.Contains(err.Error(), "parse decision created_at") {
 		t.Fatalf("err = %v, want invalid created_at parse error", err)
+	}
+}
+
+func insertLifecycleActions(t *testing.T, store *Store) []DecisionRecord {
+	t.Helper()
+	records := []DecisionRecord{}
+	for _, hookEvent := range []string{"SessionStart", "SessionEnd"} {
+		record, err := store.SaveDecision(context.Background(), risk.HookEvent{
+			SessionID:     "s1",
+			Agent:         "claude-code",
+			HookEventName: hookEvent,
+			CWD:           "/tmp/project",
+		}, risk.RiskDecision{
+			Decision:   risk.DecisionAllow,
+			Reason:     "async telemetry event recorded",
+			ReasonCode: "async_telemetry",
+			RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
+		})
+		if err != nil {
+			t.Fatalf("SaveDecision(%s) error = %v", hookEvent, err)
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+func assertHostedTimestamp(t *testing.T, record LedgerRecord, column string) {
+	t.Helper()
+	value, ok := record[column].(string)
+	if !ok || value == "" {
+		return
+	}
+	if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
+		t.Fatalf("%s = %q does not parse as RFC3339Nano: %v", column, value, err)
+	}
+	if !strings.HasSuffix(value, "Z") {
+		t.Fatalf("%s = %q, want UTC timestamp with offset", column, value)
 	}
 }
 
