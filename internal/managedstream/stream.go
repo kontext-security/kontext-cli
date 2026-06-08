@@ -33,7 +33,8 @@ const (
 	maxPayloadActions  = 1000
 	maxPayloadReceipts = 2000
 
-	maxErrorBodyBytes = 4096
+	maxErrorBodyBytes             = 4096
+	stateTimestampCursorKeyLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 	envStatePath = "KONTEXT_MANAGED_STREAM_STATE"
 	envInterval  = "KONTEXT_MANAGED_STREAM_INTERVAL"
@@ -126,20 +127,23 @@ func Flush(ctx context.Context, opts Options) error {
 	}
 
 	var updatedAfter *time.Time
+	updatedAfterKey := ""
 	if state.UpdatedAfter != "" {
-		parsed, err := time.Parse(time.RFC3339Nano, state.UpdatedAfter)
+		parsed, err := parseStateUpdatedAfter(state.UpdatedAfter)
 		if err != nil {
 			return fmt.Errorf("parse managed stream state: %w", err)
 		}
 		updatedAfter = &parsed
+		updatedAfterKey = parsed.UTC().Format(stateTimestampCursorKeyLayout)
 	}
 
 	limit := batchLimit(opts.BatchLimit)
 	for {
 		batch, err := store.LedgerBatch(ctx, sqlite.LedgerExportOptions{
-			UpdatedAfter:   updatedAfter,
-			UpdatedAfterID: state.ActionID,
-			Limit:          limit,
+			UpdatedAfter:    updatedAfter,
+			UpdatedAfterKey: updatedAfterKey,
+			UpdatedAfterID:  state.ActionID,
+			Limit:           limit,
 		})
 		if err != nil {
 			return err
@@ -319,10 +323,31 @@ func advancePastMinimumBatch(statePath string, batch sqlite.LedgerBatch, reason 
 }
 
 func saveCursor(statePath string, batch sqlite.LedgerBatch) error {
+	updatedAfter := batch.Cursor.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	if batch.Cursor.UpdatedAtKey != "" {
+		updatedAfter = batch.Cursor.UpdatedAtKey
+	}
 	return SaveState(statePath, State{
-		UpdatedAfter: batch.Cursor.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAfter: updatedAfter,
 		ActionID:     batch.Cursor.ActionID,
 	})
+}
+
+func parseStateUpdatedAfter(value string) (time.Time, error) {
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, nil
+	}
+	for _, layout := range []string{
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid timestamp %q", value)
 }
 
 func responseBodySummary(body io.Reader) string {

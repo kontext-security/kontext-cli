@@ -442,6 +442,49 @@ func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 	}
 }
 
+func TestParseStateUpdatedAfterAcceptsNaiveTimestamp(t *testing.T) {
+	parsed, err := parseStateUpdatedAfter("2026-06-08T12:20:07.853885")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.UTC().Format(time.RFC3339Nano); got != "2026-06-08T12:20:07.853885Z" {
+		t.Fatalf("parsed = %q", got)
+	}
+	if got := parsed.UTC().Format(stateTimestampCursorKeyLayout); got != "2026-06-08T12:20:07.853885000Z" {
+		t.Fatalf("cursor key = %q", got)
+	}
+
+	parsed, err = parseStateUpdatedAfter("2026-06-08 12:20:07.853885")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.UTC().Format(time.RFC3339Nano); got != "2026-06-08T12:20:07.853885Z" {
+		t.Fatalf("space parsed = %q", got)
+	}
+}
+
+func TestSaveCursorPersistsTimestampCursorKey(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	updatedAt, err := time.Parse(time.RFC3339Nano, "2026-06-08T12:20:07.999999999Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveCursor(statePath, sqlite.LedgerBatch{Cursor: &sqlite.LedgerCursor{
+		UpdatedAt:    updatedAt,
+		UpdatedAtKey: "2026-06-08T12:20:07.999999999Z",
+		ActionID:     "act_1",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := LoadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.UpdatedAfter != "2026-06-08T12:20:07.999999999Z" || state.ActionID != "act_1" {
+		t.Fatalf("state = %+v", state)
+	}
+}
+
 func testStore(t *testing.T) (*sqlite.Store, string) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "guard.db")
