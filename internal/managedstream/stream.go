@@ -126,20 +126,23 @@ func Flush(ctx context.Context, opts Options) error {
 	}
 
 	var updatedAfter *time.Time
+	updatedAfterKey := ""
 	if state.UpdatedAfter != "" {
-		parsed, err := time.Parse(time.RFC3339Nano, state.UpdatedAfter)
+		parsed, normalized, err := parseStateUpdatedAfter(state.UpdatedAfter)
 		if err != nil {
 			return fmt.Errorf("parse managed stream state: %w", err)
 		}
 		updatedAfter = &parsed
+		updatedAfterKey = normalized
 	}
 
 	limit := batchLimit(opts.BatchLimit)
 	for {
 		batch, err := store.LedgerBatch(ctx, sqlite.LedgerExportOptions{
-			UpdatedAfter:   updatedAfter,
-			UpdatedAfterID: state.ActionID,
-			Limit:          limit,
+			UpdatedAfter:    updatedAfter,
+			UpdatedAfterKey: updatedAfterKey,
+			UpdatedAfterID:  state.ActionID,
+			Limit:           limit,
 		})
 		if err != nil {
 			return err
@@ -319,10 +322,32 @@ func advancePastMinimumBatch(statePath string, batch sqlite.LedgerBatch, reason 
 }
 
 func saveCursor(statePath string, batch sqlite.LedgerBatch) error {
+	updatedAfter := batch.Cursor.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	if batch.Cursor.UpdatedAtKey != "" {
+		updatedAfter = batch.Cursor.UpdatedAtKey
+	}
 	return SaveState(statePath, State{
-		UpdatedAfter: batch.Cursor.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAfter: updatedAfter,
 		ActionID:     batch.Cursor.ActionID,
 	})
+}
+
+func parseStateUpdatedAfter(value string) (time.Time, string, error) {
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		normalized := parsed.UTC().Format(time.RFC3339Nano)
+		return parsed, normalized, nil
+	}
+	for _, layout := range []string{
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+	} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			normalized := parsed.UTC().Format(time.RFC3339Nano)
+			return parsed, normalized, nil
+		}
+	}
+	return time.Time{}, "", fmt.Errorf("invalid timestamp %q", value)
 }
 
 func responseBodySummary(body io.Reader) string {

@@ -956,6 +956,94 @@ where id in (?, ?)
 	}
 }
 
+func TestLedgerBatchNormalizesNaiveTimestampsForHostedExport(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	insertLifecycleActions(t, store)
+	naive := "2026-06-08T12:20:07.853885"
+	if _, err := store.db.ExecContext(context.Background(), `
+update authorization_actions
+set proposed_at = case when proposed_at is null then null else ? end,
+    completed_at = case when completed_at is null then null else ? end,
+    created_at = ?,
+    updated_at = ?
+	`, naive, naive, naive, naive); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `update authorization_receipts set created_at = ?`, naive); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `update agent_sessions set closed_at = ?, created_at = ?, updated_at = ?`, naive, naive, naive); err != nil {
+		t.Fatal(err)
+	}
+
+	batch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range append(append([]LedgerRecord{}, batch.Sessions...), append(batch.Actions, batch.Receipts...)...) {
+		assertLedgerTimestampHasOffset(t, record, "created_at")
+		assertLedgerTimestampHasOffset(t, record, "updated_at")
+		assertLedgerTimestampHasOffset(t, record, "closed_at")
+		assertLedgerTimestampHasOffset(t, record, "proposed_at")
+		assertLedgerTimestampHasOffset(t, record, "completed_at")
+		if _, ok := record[ledgerCursorUpdatedAtColumn]; ok {
+			t.Fatalf("record leaked cursor column: %+v", record)
+		}
+	}
+}
+
+func TestLedgerBatchCursorComparesNormalizedTimestampKeys(t *testing.T) {
+	for name, values := range map[string][2]string{
+		"naive":  {"2026-06-08T12:20:07.853885", "2026-06-08T12:20:07.853885"},
+		"offset": {"2026-06-08T14:20:07.853885+02:00", "2026-06-08T12:20:07.853885Z"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, err := OpenStore(t.TempDir() + "/guard.db")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+
+			insertLifecycleActions(t, store)
+			ids := ledgerActionIDs(t, store)
+			if len(ids) != 2 {
+				t.Fatalf("action IDs = %+v, want 2", ids)
+			}
+			if _, err := store.db.ExecContext(context.Background(), `
+update authorization_actions
+set updated_at = case id when ? then ? when ? then ? else updated_at end
+			`, ids[0], values[0], ids[1], values[1]); err != nil {
+				t.Fatal(err)
+			}
+
+			firstBatch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{Limit: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if firstBatch.Cursor == nil || firstBatch.Cursor.ActionID != ids[0] {
+				t.Fatalf("first cursor = %+v, want action %s", firstBatch.Cursor, ids[0])
+			}
+			secondBatch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{
+				UpdatedAfter:    &firstBatch.Cursor.UpdatedAt,
+				UpdatedAfterKey: firstBatch.Cursor.UpdatedAtKey,
+				UpdatedAfterID:  firstBatch.Cursor.ActionID,
+				Limit:           1,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(secondBatch.Actions) != 1 || secondBatch.Actions[0]["id"] != ids[1] {
+				t.Fatalf("second batch actions = %+v, want %s", secondBatch.Actions, ids[1])
+			}
+		})
+	}
+}
+
 func TestLedgerBatchIncludesReceiptChainAnchorForIncrementalExports(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {
@@ -1422,6 +1510,66 @@ func ledgerRecordByField(records []LedgerRecord, field, value string) LedgerReco
 		}
 	}
 	return nil
+}
+
+func insertLifecycleActions(t *testing.T, store *Store) {
+	t.Helper()
+	for _, hookEvent := range []string{"SessionStart", "SessionEnd"} {
+		if _, err := store.SaveDecision(context.Background(), risk.HookEvent{
+			SessionID:     "s1",
+			Agent:         "claude-code",
+			HookEventName: hookEvent,
+			CWD:           "/tmp/project",
+		}, risk.RiskDecision{
+			Decision:   risk.DecisionAllow,
+			Reason:     "async telemetry event recorded",
+			ReasonCode: "async_telemetry",
+			RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
+		}); err != nil {
+			t.Fatalf("SaveDecision(%s) error = %v", hookEvent, err)
+		}
+	}
+}
+
+func ledgerActionIDs(t *testing.T, store *Store) []string {
+	t.Helper()
+	rows, err := store.db.QueryContext(context.Background(), `
+select id
+from authorization_actions
+where session_id = 's1'
+order by id
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
+func assertLedgerTimestampHasOffset(t *testing.T, record LedgerRecord, column string) {
+	t.Helper()
+	value, ok := record[column].(string)
+	if !ok || value == "" {
+		return
+	}
+	if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
+		t.Fatalf("%s = %q does not parse as RFC3339Nano: %v", column, value, err)
+	}
+	if !strings.HasSuffix(value, "Z") {
+		t.Fatalf("%s = %q, want normalized UTC timestamp", column, value)
+	}
 }
 
 func receiptCountForTool(t *testing.T, store *Store, receipts []LedgerRecord, toolUseID string) int {

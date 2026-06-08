@@ -442,6 +442,19 @@ func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 	}
 }
 
+func TestParseStateUpdatedAfterNormalizesNaiveTimestamp(t *testing.T) {
+	parsed, normalized, err := parseStateUpdatedAfter("2026-06-08T12:20:07.853885")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.UTC().Format(time.RFC3339Nano); got != "2026-06-08T12:20:07.853885Z" {
+		t.Fatalf("parsed = %q", got)
+	}
+	if normalized != "2026-06-08T12:20:07.853885Z" {
+		t.Fatalf("normalized = %q", normalized)
+	}
+}
+
 func testStore(t *testing.T) (*sqlite.Store, string) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "guard.db")

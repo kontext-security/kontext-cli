@@ -12,9 +12,10 @@ import (
 type LedgerRecord map[string]any
 
 type LedgerExportOptions struct {
-	UpdatedAfter   *time.Time
-	UpdatedAfterID string
-	Limit          int
+	UpdatedAfter    *time.Time
+	UpdatedAfterKey string
+	UpdatedAfterID  string
+	Limit           int
 }
 
 type LedgerBatch struct {
@@ -30,9 +31,12 @@ type LedgerReceiptChainAnchor struct {
 }
 
 type LedgerCursor struct {
-	UpdatedAt time.Time
-	ActionID  string
+	UpdatedAt    time.Time
+	UpdatedAtKey string
+	ActionID     string
 }
+
+const ledgerCursorUpdatedAtColumn = "__cursor_updated_at"
 
 const authorizationActionsSelect = `
 select id, session_id, turn_id, tool_use_id, trace_id, span_id, parent_span_id,
@@ -117,19 +121,23 @@ order by created_at, id
 }
 
 func (s *Store) AuthorizationActions(ctx context.Context, opts LedgerExportOptions) ([]LedgerRecord, error) {
-	query := authorizationActionsSelect
+	updatedAtExpr := ledgerUpdatedAtCursorSQL("updated_at")
+	query := authorizationActionsSelectWithCursor()
 	args := []any{}
 	if opts.UpdatedAfter != nil {
+		updatedAfter := opts.UpdatedAfter.UTC().Format(time.RFC3339Nano)
+		if opts.UpdatedAfterKey != "" {
+			updatedAfter = opts.UpdatedAfterKey
+		}
 		if opts.UpdatedAfterID != "" {
-			query += "\nwhere updated_at > ? or (updated_at = ? and id > ?)"
-			updatedAfter := opts.UpdatedAfter.Format(time.RFC3339Nano)
+			query += fmt.Sprintf("\nwhere %s > ? or (%s = ? and id > ?)", updatedAtExpr, updatedAtExpr)
 			args = append(args, updatedAfter, updatedAfter, opts.UpdatedAfterID)
 		} else {
-			query += "\nwhere updated_at > ?"
-			args = append(args, opts.UpdatedAfter.Format(time.RFC3339Nano))
+			query += fmt.Sprintf("\nwhere %s > ?", updatedAtExpr)
+			args = append(args, updatedAfter)
 		}
 	}
-	query += "\norder by updated_at, id"
+	query += fmt.Sprintf("\norder by %s, id", updatedAtExpr)
 	if opts.Limit > 0 {
 		query += "\nlimit ?"
 		args = append(args, opts.Limit)
@@ -143,15 +151,19 @@ func ledgerCursor(actions []LedgerRecord) (*LedgerCursor, error) {
 	}
 	last := actions[len(actions)-1]
 	rawUpdatedAt, _ := last["updated_at"].(string)
+	updatedAtKey, _ := last[ledgerCursorUpdatedAtColumn].(string)
+	if updatedAtKey == "" {
+		updatedAtKey = rawUpdatedAt
+	}
 	actionID, _ := last["id"].(string)
-	if rawUpdatedAt == "" || actionID == "" {
+	if updatedAtKey == "" || actionID == "" {
 		return nil, nil
 	}
-	updatedAt, err := time.Parse(time.RFC3339Nano, rawUpdatedAt)
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedAtKey)
 	if err != nil {
 		return nil, err
 	}
-	return &LedgerCursor{UpdatedAt: updatedAt, ActionID: actionID}, nil
+	return &LedgerCursor{UpdatedAt: updatedAt, UpdatedAtKey: updatedAtKey, ActionID: actionID}, nil
 }
 
 func (s *Store) authorizationActionsByIDs(ctx context.Context, ids []string) ([]LedgerRecord, error) {
@@ -164,7 +176,11 @@ func (s *Store) authorizationActionsByIDs(ctx context.Context, ids []string) ([]
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	return queryLedgerRecords(ctx, s.db, fmt.Sprintf("%s\nwhere id in (%s)\norder by updated_at, id", authorizationActionsSelect, placeholders), args...)
+	actions, err := queryLedgerRecords(ctx, s.db, fmt.Sprintf("%s\nwhere id in (%s)\norder by %s, id", authorizationActionsSelectWithCursor(), placeholders, ledgerUpdatedAtCursorSQL("updated_at")), args...)
+	if err != nil {
+		return nil, err
+	}
+	return stripLedgerCursorColumns(actions), nil
 }
 
 func (s *Store) AuthorizationReceipts(ctx context.Context, opts LedgerExportOptions) ([]LedgerRecord, error) {
@@ -258,7 +274,58 @@ func normalizeLedgerString(column, value string) any {
 			return decoded
 		}
 	}
+	if isLedgerTimeColumn(column) {
+		if normalized, ok := normalizeLedgerTimestamp(value); ok {
+			return normalized
+		}
+	}
 	return value
+}
+
+func authorizationActionsSelectWithCursor() string {
+	cursorColumn := fmt.Sprintf(",\n  %s as %s", ledgerUpdatedAtCursorSQL("updated_at"), ledgerCursorUpdatedAtColumn)
+	return strings.Replace(authorizationActionsSelect, "\nfrom authorization_actions", cursorColumn+"\nfrom authorization_actions", 1)
+}
+
+func ledgerUpdatedAtCursorSQL(column string) string {
+	offsetSource := fmt.Sprintf("substr(%s, 1, length(%s) - 6)", column, column)
+	offsetFraction := fmt.Sprintf("case when instr(%s, '.') > 0 then substr(%s, instr(%s, '.')) else '' end", offsetSource, offsetSource, offsetSource)
+	return fmt.Sprintf(`case
+	when %s is null or %s = '' then %s
+	when substr(%s, -1) = 'Z' then %s
+	when %s glob '*[+-][0-9][0-9]:[0-9][0-9]' then strftime('%%Y-%%m-%%dT%%H:%%M:%%S', %s) || %s || 'Z'
+	else %s || 'Z'
+end`, column, column, column, column, column, column, column, offsetFraction, column)
+}
+
+func isLedgerTimeColumn(column string) bool {
+	return strings.HasSuffix(column, "_at")
+}
+
+func normalizeLedgerTimestamp(value string) (string, bool) {
+	if value == "" {
+		return value, false
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed.UTC().Format(time.RFC3339Nano), true
+	}
+	for _, layout := range []string{
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+	} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return parsed.UTC().Format(time.RFC3339Nano), true
+		}
+	}
+	return value, false
+}
+
+func stripLedgerCursorColumns(records []LedgerRecord) []LedgerRecord {
+	for _, record := range records {
+		delete(record, ledgerCursorUpdatedAtColumn)
+	}
+	return records
 }
 
 func sessionIDs(groups ...[]LedgerRecord) []string {
