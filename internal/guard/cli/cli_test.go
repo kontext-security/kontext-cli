@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
 	"github.com/kontext-security/kontext-cli/internal/guard/judgeruntime"
@@ -240,6 +244,46 @@ func TestPrintHookStatusReportsGuardAndHostedConflict(t *testing.T) {
 	}
 }
 
+func TestRunDaemonReturnsWhenContextCanceled(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("local TCP listen unavailable: %v", err)
+	}
+	_ = probe.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dir := t.TempDir()
+	socketPath := filepath.Join("/tmp", fmt.Sprintf("kontext-%d.sock", time.Now().UnixNano()))
+	defer os.Remove(socketPath)
+	out := newNotifyWriter("Kontext Guard local daemon listening")
+	errs := make(chan error, 1)
+	go func() {
+		errs <- runDaemon(ctx, []string{
+			"--skip-hook-install",
+			"--no-open",
+			"--addr", "127.0.0.1:0",
+			"--db", filepath.Join(dir, "guard.db"),
+			"--socket", socketPath,
+		}, out)
+	}()
+	select {
+	case <-out.seen:
+	case err := <-errs:
+		t.Fatalf("runDaemon() returned before startup: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("runDaemon() did not start")
+	}
+	cancel()
+	select {
+	case err := <-errs:
+		if err != nil {
+			t.Fatalf("runDaemon() error = %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runDaemon() did not return after context cancellation")
+	}
+}
+
 func TestValidateLocalJudgeURLRejectsHostedURL(t *testing.T) {
 	if err := validateLocalJudgeURL("https://api.example.com/v1"); err == nil {
 		t.Fatal("validateLocalJudgeURL() error = nil, want hosted URL rejection")
@@ -445,4 +489,31 @@ type fakeJudge struct{}
 
 func (fakeJudge) Decide(context.Context, judge.Input) (judge.Result, error) {
 	return judge.Result{}, nil
+}
+
+type notifyWriter struct {
+	needle string
+	seen   chan struct{}
+	once   sync.Once
+	mu     sync.Mutex
+	buf    bytes.Buffer
+}
+
+func newNotifyWriter(needle string) *notifyWriter {
+	return &notifyWriter{
+		needle: needle,
+		seen:   make(chan struct{}),
+	}
+}
+
+func (w *notifyWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.buf.Write(p)
+	if strings.Contains(w.buf.String(), w.needle) {
+		w.once.Do(func() {
+			close(w.seen)
+		})
+	}
+	return n, err
 }
