@@ -31,6 +31,18 @@ func PathFromEnv() string {
 	return DefaultPath
 }
 
+// UserPath is the self-serve installation identity location (paired with the
+// user-scope managed config), or "" when the home directory cannot be
+// resolved. The system DefaultPath stays the default so enterprise daemons
+// keep creating identity under /Library exactly as before.
+func UserPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, "Library", "Application Support", "Kontext", "installation.json")
+}
+
 func Load() (State, error) {
 	return LoadFile(PathFromEnv())
 }

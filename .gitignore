@@ -7,6 +7,11 @@ dist/
 /kontext
 .DS_Store
 node_modules/
+.playwright-mcp/
+engineering-*.png
+linear-*.png
+engineering-snapshot.md
+$CODEX_HOME/
 web/guard-dashboard/dist/
 web/guard-dashboard/node_modules/
 data/
