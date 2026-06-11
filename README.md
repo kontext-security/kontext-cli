@@ -68,6 +68,22 @@ Agent tool call
   -> local dashboard
 ```
 
+## Connect to your Kontext workspace (self-serve)
+
+Stream Claude Code activity from this Mac into your team's hosted Kontext
+dashboard — no MDM required. Generate an install token on your workspace's
+Deployments page, then:
+
+```bash
+kontext setup
+```
+
+Setup validates the token, stores it in your login keychain, installs the
+Claude Code hooks, and starts a background agent. Sessions appear in your
+dashboard seconds after your next Claude Code activity. Re-running `kontext
+setup` rotates the token; `kontext setup --uninstall` removes everything it
+installed. macOS only.
+
 ## Managed sessions
 
 Use managed sessions when you want hosted identity, short-lived provider credentials, and shared traces on top of the local safety path:

@@ -1,9 +1,11 @@
 package managedobserve
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/installation"
 	"github.com/kontext-security/kontext-cli/internal/managedconfig"
@@ -53,6 +55,38 @@ func TestInstallationPathForScopeEnvOverrideWins(t *testing.T) {
 
 	if got := installationPathForScope(managedconfig.ScopeUser); got != "/custom/installation.json" {
 		t.Fatalf("installationPathForScope(user) = %q, want env override", got)
+	}
+}
+
+func TestRunDaemonParksOnScopeMismatch(t *testing.T) {
+	// A self-serve agent (expected scope "user") must park — not serve, not
+	// crash-loop — when config resolution lands on another scope (an MDM
+	// config appeared after setup).
+	dir := t.TempDir()
+	config := filepath.Join(dir, "managed.json")
+	if err := os.WriteFile(config, []byte(`{
+  "version": "managed-install-v1",
+  "organization_id": "org_x",
+  "cloud_url": "https://api.kontext.dev",
+  "mode": "observe",
+  "agent": "claude",
+  "credentials": {"install_token_ref": "env:KONTEXT_INSTALL_TOKEN"}
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(managedconfig.EnvPath, config) // resolves as scope "env"
+	t.Setenv(EnvExpectedConfigScope, "user")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	if err := RunDaemon(ctx, DaemonOptions{}); err != nil {
+		t.Fatalf("RunDaemon() = %v, want clean park until ctx done", err)
+	}
+	// Parked means it waited for the context, not returned immediately.
+	if time.Since(start) < 250*time.Millisecond {
+		t.Fatal("RunDaemon returned before context cancellation — did not park")
 	}
 }
 

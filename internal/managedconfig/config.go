@@ -268,6 +268,14 @@ func normalizeAndValidate(cfg Config) (Config, error) {
 	return cfg, nil
 }
 
+// ValidateCloudURL enforces the managed.json cloud_url shape (https with
+// host only; loopback http behind EnvAllowHTTP). Exported so `kontext setup`
+// can fail a bad --cloud-url before any state is written, with exactly the
+// rules the daemon's parser will apply later.
+func ValidateCloudURL(value string) error {
+	return validateCloudURL(value)
+}
+
 func validateCloudURL(value string) error {
 	if value == "" {
 		return errors.New("cloud_url is required")
