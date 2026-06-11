@@ -45,6 +45,17 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		}
 		return fmt.Errorf("load managed config: %w", err)
 	}
+	if expected := strings.TrimSpace(os.Getenv(EnvExpectedConfigScope)); expected != "" &&
+		expected != string(loadedConfig.Scope) {
+		// An MDM config appeared after this agent was installed (system scope
+		// outranks user scope). Park instead of serving the wrong config —
+		// exiting would just make launchd KeepAlive restart-loop us.
+		fmt.Fprintf(os.Stderr,
+			"managed config scope is %q but this agent was installed for %q — parking; run `kontext setup --uninstall` to remove this agent\n",
+			loadedConfig.Scope, expected)
+		<-ctx.Done()
+		return nil
+	}
 	installationState, err := installation.EnsureFile(installationPathForScope(loadedConfig.Scope))
 	if err != nil {
 		return fmt.Errorf("ensure installation identity: %w", err)

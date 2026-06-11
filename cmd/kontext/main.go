@@ -45,6 +45,7 @@ func main() {
 	}
 
 	root.AddCommand(startCmd())
+	root.AddCommand(setupCmd())
 	root.AddCommand(loginCmd())
 	root.AddCommand(logoutCmd())
 	root.AddCommand(hookCmd())
