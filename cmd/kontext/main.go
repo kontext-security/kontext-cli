@@ -351,6 +351,9 @@ func managedObserveDaemonCmd() *cobra.Command {
 				DBPath:      dbPath,
 				IdleTimeout: timeout,
 				Diagnostic:  diagnostic.New(cmd.ErrOrStderr(), diagnostic.EnabledFromEnv()),
+				// "cli-" prefix lets the dashboard distinguish self-serve brew
+				// installs (no MDM deployment-version marker) from packages.
+				FallbackDeploymentVersion: "cli-" + version,
 			})
 		},
 	}

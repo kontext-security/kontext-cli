@@ -1,0 +1,13 @@
+[     393ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:20102
+[     507ms] Error: No address provided to ConvexReactClient.
+If trying to deploy to production, make sure to follow all the instructions found at https://docs.convex.dev/production/hosting/
+If running locally, make sure to run `convex dev` and ensure the .env.local file is populated.
+    at new ConvexReactClient (http://localhost:5173/node_modules/.vite/deps/chunk-GQCKE2IT.js?v=53fc6e53:3733:13)
+    at http://localhost:5173/src/main.tsx:9:16
+[     626ms] Error: No address provided to ConvexReactClient.
+If trying to deploy to production, make sure to follow all the instructions found at https://docs.convex.dev/production/hosting/
+If running locally, make sure to run `convex dev` and ensure the .env.local file is populated.
+    at new ConvexReactClient (http://localhost:5173/node_modules/.vite/deps/chunk-GQCKE2IT.js?v=53fc6e53:3733:13)
+    at http://localhost:5173/src/main.tsx:9:16
+[   73106ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:864
+[   97305ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:20102

@@ -1,0 +1,215 @@
+- generic [ref=e4]:
+  - banner [ref=e5]:
+    - generic [ref=e6]:
+      - paragraph [ref=e7]: Kontext OS
+      - heading "Work backwards from the demo dashboard." [level=1] [ref=e8]
+      - paragraph [ref=e9]: "The product direction is the full runtime control dashboard. Katana is how we ship the first valuable slice: Access Control for real agent activity."
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - generic [ref=e12]: Read this page as
+        - img [ref=e13]
+      - generic [ref=e18]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: "01"
+          - paragraph [ref=e21]: End-state dashboard
+        - generic [ref=e22]:
+          - generic [ref=e23]: "02"
+          - paragraph [ref=e24]: Current Katana slice
+        - generic [ref=e25]:
+          - generic [ref=e26]: "03"
+          - paragraph [ref=e27]: Timeline to access control
+  - generic [ref=e28]:
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - img [ref=e32]
+        - heading "1. End-state dashboard" [level=2] [ref=e37]
+      - paragraph [ref=e38]: Start here. This is where we are going, independent of this week's tickets.
+    - generic [ref=e40]:
+      - generic [ref=e41]:
+        - paragraph [ref=e42]: End-state product
+        - heading "The customer demo dashboard is the destination. Katana is the first proof path." [level=3] [ref=e43]
+        - paragraph [ref=e44]: "The demo shows a broader control plane: agents, access, traces, providers, and runtime decisions. Katana starts with one vertical slice of that dashboard: Claude Code activity into Access Control."
+      - generic [ref=e45]:
+        - paragraph [ref=e46]: Current question
+        - paragraph [ref=e47]: Can we show Katana who did what, with which agent, against which resource, and what policy would decide?
+      - generic [ref=e49]:
+        - generic [ref=e50]:
+          - heading "Access Control" [level=3] [ref=e52]
+          - paragraph [ref=e54]: The first Katana value surface. Policies answer whether an agent should touch GitHub, Databricks, HubSpot, or another resource.
+          - generic [ref=e56]: Now
+        - generic [ref=e57]:
+          - heading "Traces" [level=3] [ref=e59]
+          - paragraph [ref=e61]: "Every session and tool call becomes explainable: what happened, who initiated it, which endpoint saw it, and what policy said."
+          - generic [ref=e63]: Now
+        - generic [ref=e64]:
+          - heading "Agent Registry" [level=3] [ref=e66]
+          - paragraph [ref=e68]: Inventory of Claude Code, Codex, OpenClaw, and future agents, tied to owners, providers, and permissions.
+          - generic [ref=e70]: Next
+        - generic [ref=e71]:
+          - heading "Deployments" [level=3] [ref=e73]
+          - paragraph [ref=e75]: "Katana rollout control: package versions, Addigy condition script, endpoint count, last seen, rollback path."
+          - generic [ref=e77]: Now
+        - generic [ref=e78]:
+          - heading "Runtime Intelligence" [level=3] [ref=e80]
+          - paragraph [ref=e82]: Probabilistic judgement appears inside traces after deterministic policy, as an explanation layer before it becomes enforcement.
+          - generic [ref=e84]: Parallel
+  - generic [ref=e85]:
+    - generic [ref=e87]:
+      - generic [ref=e88]:
+        - img [ref=e89]
+        - heading "2. Product architecture" [level=2] [ref=e93]
+      - paragraph [ref=e94]: "The technical direction is simple: capture activity, normalize it, decide on it, then show it in the admin dashboard."
+    - generic [ref=e95]:
+      - generic [ref=e96]:
+        - paragraph [ref=e98]: Architecture direction
+        - generic [ref=e99]: customer agent activity │ ▼ ┌────────────────────┐ ┌────────────────────┐ ┌────────────────────┐ │ managed runtime │──▶│ normalized ledger │──▶│ decision plane │ │ hooks, daemon, pkg │ │ hooks + OTEL model │ │ deterministic first│ └────────────────────┘ └────────────────────┘ └─────────┬──────────┘ │ ▼ ┌──────────────────────────────────┐ │ admin dashboard │ │ access control, traces, agents │ └──────────────────────────────────┘ probabilistic judgement plugs into the decision plane after deterministic policy
+      - generic [ref=e100]:
+        - generic [ref=e101]:
+          - img [ref=e102]
+          - heading "First product bet" [level=3] [ref=e106]
+        - paragraph [ref=e107]: "Access Control is the first visible product because it connects the deployment work to Katana's stated goal: control Claude Code activity against GitHub, Databricks, and HubSpot."
+        - generic [ref=e108]:
+          - paragraph [ref=e109]: What this avoids
+          - paragraph [ref=e110]: Random dashboard widgets. Every panel should answer a control-plane question.
+  - generic [ref=e111]:
+    - generic [ref=e113]:
+      - generic [ref=e114]:
+        - img [ref=e115]
+        - heading "3. Execution timeline" [level=2] [ref=e122]
+      - paragraph [ref=e123]: This is the progression Michel can explain to Jens, Katana, or the engineering team.
+    - generic [ref=e126]:
+      - generic [ref=e127]:
+        - img [ref=e130]
+        - generic [ref=e133]:
+          - paragraph [ref=e134]: Week 1
+          - heading "First endpoint" [level=3] [ref=e135]
+          - paragraph [ref=e136]: Addigy installed the package, Claude kept using plain claude, and events reached the hosted dashboard.
+      - generic [ref=e141]:
+        - paragraph [ref=e142]: Week 2
+        - heading "Make the pilot legible" [level=3] [ref=e143]
+        - paragraph [ref=e144]: Fix log semantics, validate updates, stabilize deployment, and make the Access Control direction obvious.
+      - generic [ref=e149]:
+        - paragraph [ref=e150]: Week 3
+        - heading "Access model" [level=3] [ref=e151]
+        - paragraph [ref=e152]: Define one data model for hooks, OTEL, endpoints, users, agents, resources, decisions, and policy.
+      - generic [ref=e157]:
+        - paragraph [ref=e158]: Week 4
+        - heading "GitHub dry-run" [level=3] [ref=e159]
+        - paragraph [ref=e160]: Show the first deterministic GitHub policy path in Katana without blocking engineers yet.
+      - generic [ref=e164]:
+        - paragraph [ref=e165]: Month 2
+        - heading "Full dashboard expansion" [level=3] [ref=e166]
+        - paragraph [ref=e167]: Expand beyond Access Control into registry, providers, deployments, and probabilistic trace intelligence.
+  - generic [ref=e168]:
+    - generic [ref=e170]:
+      - generic [ref=e171]:
+        - img [ref=e172]
+        - heading "4. Runtime motion" [level=2] [ref=e178]
+      - paragraph [ref=e179]: This is the system path. Probabilistic judgement plugs in after deterministic policy, not before the data model is clear.
+    - generic [ref=e182]:
+      - generic [ref=e183]:
+        - generic [ref=e184]:
+          - generic [ref=e185]: "01"
+          - img [ref=e186]
+        - heading "Observe" [level=3] [ref=e188]
+        - paragraph [ref=e189]: Capture endpoint, session, tool, and hook events.
+      - generic [ref=e190]:
+        - generic [ref=e191]:
+          - generic [ref=e192]: "02"
+          - img [ref=e193]
+        - heading "Normalize" [level=3] [ref=e195]
+        - paragraph [ref=e196]: Create one activity model across Claude hooks and OTEL.
+      - generic [ref=e197]:
+        - generic [ref=e198]:
+          - generic [ref=e199]: "03"
+          - img [ref=e200]
+        - heading "Decide" [level=3] [ref=e202]
+        - paragraph [ref=e203]: Run deterministic policy before probabilistic judgement.
+      - generic [ref=e204]:
+        - generic [ref=e205]:
+          - generic [ref=e206]: "04"
+          - img [ref=e207]
+        - heading "Explain" [level=3] [ref=e209]
+        - paragraph [ref=e210]: Show why the system allowed, denied, or flagged the action.
+      - generic [ref=e211]:
+        - generic [ref=e213]: "05"
+        - heading "Enforce" [level=3] [ref=e214]
+        - paragraph [ref=e215]: Turn on blocking only after dry-run trust is established.
+  - generic [ref=e216]:
+    - generic [ref=e218]:
+      - generic [ref=e219]:
+        - img [ref=e220]
+        - heading "5. Linear projects" [level=2] [ref=e224]
+      - paragraph [ref=e225]: These are execution containers. They should stay tactical.
+    - generic [ref=e226]:
+      - generic [ref=e227]:
+        - generic [ref=e228]:
+          - generic [ref=e229]:
+            - img [ref=e231]
+            - generic [ref=e234]:
+              - heading "Katana Week 2" [level=3] [ref=e235]
+              - paragraph [ref=e236]: "Owner: Michel"
+          - generic [ref=e237]: Now
+        - paragraph [ref=e238]: One repeatable Addigy rollout path and a dashboard that clearly shows access-control value.
+        - generic [ref=e239]:
+          - generic [ref=e240]:
+            - paragraph [ref=e241]: Now
+            - paragraph [ref=e242]: Deployment hardening, trace/log cleanup, update flow.
+          - generic [ref=e243]:
+            - paragraph [ref=e244]: Next
+            - paragraph [ref=e245]: Schema and deterministic dry-run feeding GitHub access control.
+      - generic [ref=e246]:
+        - generic [ref=e247]:
+          - generic [ref=e248]:
+            - img [ref=e250]
+            - generic [ref=e254]:
+              - heading "Kontext CLI" [level=3] [ref=e255]
+              - paragraph [ref=e256]: "Owner: Open"
+          - generic [ref=e257]: Next
+        - paragraph [ref=e258]: Broader open-source runtime coverage beyond Claude Code.
+        - generic [ref=e259]:
+          - generic [ref=e260]:
+            - paragraph [ref=e261]: Now
+            - paragraph [ref=e262]: Claude managed observe is working.
+          - generic [ref=e263]:
+            - paragraph [ref=e264]: Next
+            - paragraph [ref=e265]: Codex hooks, Goose, provider expansion, README path.
+      - generic [ref=e266]:
+        - generic [ref=e267]:
+          - generic [ref=e268]:
+            - img [ref=e270]
+            - generic [ref=e278]:
+              - heading "Probabilistic Risk" [level=3] [ref=e279]
+              - paragraph [ref=e280]: "Owner: TBD"
+          - generic [ref=e281]: Parallel
+        - paragraph [ref=e282]: Model-backed judgement that explains suspicious actions after deterministic policy runs.
+        - generic [ref=e283]:
+          - generic [ref=e284]:
+            - paragraph [ref=e285]: Now
+            - paragraph [ref=e286]: Benchmarking and evaluator work happens separately.
+          - generic [ref=e287]:
+            - paragraph [ref=e288]: Next
+            - paragraph [ref=e289]: Expose useful risk signals in traces, not as the Week 2 blocker.
+  - generic [ref=e290]:
+    - generic [ref=e291]:
+      - generic [ref=e292]:
+        - img [ref=e293]
+        - heading "Current schema pressure" [level=2] [ref=e297]
+      - paragraph [ref=e298]: The broken log feeling comes from unclear semantics. Week 2 and Week 3 need one model for sessions, observations, decisions, resources, users, agents, endpoints, and policy evaluation. If this is right, Access Control ships without another reset.
+    - generic [ref=e299]:
+      - generic [ref=e300]:
+        - img [ref=e301]
+        - heading "Decisions" [level=2] [ref=e304]
+      - generic [ref=e305]:
+        - generic [ref=e306]:
+          - img [ref=e307]
+          - paragraph [ref=e309]: We work backwards from the customer demo dashboard.
+        - generic [ref=e310]:
+          - img [ref=e311]
+          - paragraph [ref=e313]: Katana starts with Access Control because that is the design-partnership value.
+        - generic [ref=e314]:
+          - img [ref=e315]
+          - paragraph [ref=e317]: Week 2 is infrastructure clarity, not probabilistic enforcement.
+        - generic [ref=e318]:
+          - img [ref=e319]
+          - paragraph [ref=e321]: Linear contains execution tickets. This page explains why those tickets matter.

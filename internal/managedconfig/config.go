@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -35,6 +36,51 @@ const (
 var ErrNotManaged = errors.New("managed config not found")
 
 var envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// Scope identifies which managed config a process resolved: an explicit env
+// override, the system-wide MDM install under /Library, or a per-user
+// self-serve install written by `kontext setup`.
+type Scope string
+
+const (
+	ScopeEnv    Scope = "env"
+	ScopeSystem Scope = "system"
+	ScopeUser   Scope = "user"
+)
+
+// Test seam: ResolvePath stats this instead of the /Library literal so tests
+// can simulate the presence/absence of an MDM install.
+var systemPath = DefaultPath
+
+// UserPath is the self-serve managed config location, or "" when the home
+// directory cannot be resolved.
+func UserPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, "Library", "Application Support", "Kontext", "managed.json")
+}
+
+// ResolvePath picks the managed config path for this process. Precedence is
+// security-relevant: an existing SYSTEM (MDM) config always wins over the
+// user-level one, so an org-managed Mac cannot be re-pointed by a self-serve
+// setup. The system path is selected whenever it exists OR whenever its
+// existence cannot be determined (any stat error other than not-exist), so a
+// broken/unreadable MDM config surfaces as an error instead of silently
+// falling through to user config.
+func ResolvePath() (string, Scope) {
+	if path := strings.TrimSpace(os.Getenv(EnvPath)); path != "" {
+		return path, ScopeEnv
+	}
+	if _, err := os.Lstat(systemPath); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return systemPath, ScopeSystem
+	}
+	if user := UserPath(); user != "" {
+		return user, ScopeUser
+	}
+	return systemPath, ScopeSystem
+}
 
 type Config struct {
 	Version        string      `json:"version"`
@@ -63,6 +109,9 @@ type LoadedConfig struct {
 	Config   Config
 	Path     string
 	Checksum string
+	// Scope reflects how the path was resolved (env/system/user). LoadFile
+	// callers that bypass ResolvePath get an empty Scope.
+	Scope Scope
 }
 
 func PathFromEnv() string {
@@ -87,7 +136,13 @@ func DeploymentVersion() string {
 }
 
 func Load() (LoadedConfig, error) {
-	return LoadFile(PathFromEnv())
+	path, scope := ResolvePath()
+	loaded, err := LoadFile(path)
+	if err != nil {
+		return LoadedConfig{}, err
+	}
+	loaded.Scope = scope
+	return loaded, nil
 }
 
 func LoadFile(path string) (LoadedConfig, error) {

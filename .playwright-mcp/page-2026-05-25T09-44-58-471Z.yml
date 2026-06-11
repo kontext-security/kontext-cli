@@ -1,0 +1,12 @@
+- generic [ref=e4]:
+  - generic [ref=e5]:
+    - img "Kontext" [ref=e7]
+    - heading "Sign in to Kontext OS" [level=1] [ref=e8]
+    - paragraph [ref=e9]: Enter your email to get started
+  - generic [ref=e10]:
+    - textbox "you@company.com" [ref=e11]
+    - button "Sign in with Email" [ref=e12]
+  - generic [ref=e17]: or
+  - button "Continue with Google" [ref=e18]:
+    - img [ref=e19]
+    - text: Continue with Google

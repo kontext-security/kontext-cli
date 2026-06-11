@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
@@ -24,6 +26,9 @@ type DaemonOptions struct {
 	StreamInterval   time.Duration
 	StreamHTTPClient *http.Client
 	Diagnostic       diagnostic.Logger
+	// FallbackDeploymentVersion is reported to the ledger when no MDM
+	// deployment-version marker exists (self-serve brew installs).
+	FallbackDeploymentVersion string
 }
 
 func RunDaemon(ctx context.Context, opts DaemonOptions) error {
@@ -34,7 +39,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		}
 		return fmt.Errorf("load managed config: %w", err)
 	}
-	installationState, err := installation.Ensure()
+	installationState, err := installation.EnsureFile(installationPathForScope(loadedConfig.Scope))
 	if err != nil {
 		return fmt.Errorf("ensure installation identity: %w", err)
 	}
@@ -84,7 +89,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			InstallationID:    installationState.InstallationID,
 			InstallToken:      installToken,
 			DeviceLabel:       loadedConfig.Config.Device.Label,
-			DeploymentVersion: managedconfig.DeploymentVersion,
+			DeploymentVersion: deploymentVersionWithFallback(opts.FallbackDeploymentVersion),
 			Interval:          opts.StreamInterval,
 			HTTPClient:        opts.StreamHTTPClient,
 			Diagnostic:        opts.Diagnostic,
@@ -114,6 +119,35 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			}
 		}
 	}
+}
+
+// deploymentVersionWithFallback resolves the version reported with each
+// ledger batch: the MDM package marker wins; brew installs have none and
+// report the CLI's own version instead. Evaluated per flush so a package
+// update under a running daemon is picked up.
+func deploymentVersionWithFallback(fallback string) func() string {
+	return func() string {
+		if v := managedconfig.DeploymentVersion(); v != "" {
+			return v
+		}
+		return fallback
+	}
+}
+
+// installationPathForScope ties identity scope to config scope: a system
+// (MDM) config never reads a user identity and vice versa. The env override
+// (KONTEXT_INSTALLATION_STATE, honored by PathFromEnv) always wins, and the
+// enterprise default is byte-identical to the pre-self-serve behavior.
+func installationPathForScope(scope managedconfig.Scope) string {
+	if strings.TrimSpace(os.Getenv(installation.EnvPath)) != "" {
+		return installation.PathFromEnv()
+	}
+	if scope == managedconfig.ScopeUser {
+		if path := installation.UserPath(); path != "" {
+			return path
+		}
+	}
+	return installation.PathFromEnv()
 }
 
 func idleTimeoutOrDefault(idleTimeout time.Duration) time.Duration {

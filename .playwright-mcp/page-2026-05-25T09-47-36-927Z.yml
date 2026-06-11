@@ -1,0 +1,210 @@
+- generic [ref=e4]:
+  - banner [ref=e5]:
+    - generic [ref=e6]:
+      - paragraph [ref=e7]: Kontext OS
+      - heading "Engineering map for the runtime control plane." [level=1] [ref=e8]
+      - paragraph [ref=e9]: One place to explain what we are building, why the current tickets matter, and how Katana turns from first deployment into access control.
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - generic [ref=e12]: Current operating rule
+        - img [ref=e13]
+      - paragraph [ref=e16]: Observe, then normalize, then decide.
+      - paragraph [ref=e17]: No enforcement until deployment, data model, and dry-run explanations are trusted.
+  - generic [ref=e18]:
+    - generic [ref=e19]:
+      - paragraph [ref=e20]: Active Linear projects
+      - paragraph [ref=e21]: "3"
+    - generic [ref=e22]:
+      - paragraph [ref=e23]: Katana phase
+      - paragraph [ref=e24]: Week 2
+    - generic [ref=e25]:
+      - paragraph [ref=e26]: Primary product path
+      - paragraph [ref=e27]: Access control
+    - generic [ref=e28]:
+      - paragraph [ref=e29]: Dashboard role
+      - paragraph [ref=e30]: Architecture map
+  - generic [ref=e31]:
+    - generic [ref=e32]:
+      - generic [ref=e33]:
+        - generic [ref=e34]:
+          - heading "Current projects" [level=2] [ref=e35]
+          - paragraph [ref=e36]: Linear should contain these tactical streams, not the whole product story.
+        - img [ref=e37]
+      - generic [ref=e41]:
+        - generic [ref=e43]:
+          - generic [ref=e44]:
+            - generic [ref=e46]: active
+            - heading "Katana Week 2" [level=3] [ref=e47]
+            - paragraph [ref=e48]: May 25-29
+          - generic [ref=e49]:
+            - paragraph [ref=e50]: Turn the first endpoint pilot into a repeatable deployment path and start policy dry-run value.
+            - generic [ref=e51]:
+              - paragraph [ref=e53]: Addigy update and reinstall behavior
+              - paragraph [ref=e55]: Hosted dashboard log semantics
+              - paragraph [ref=e57]: Deterministic access-control readiness
+          - generic [ref=e58]:
+            - paragraph [ref=e59]: Owner
+            - paragraph [ref=e60]: Michel
+        - generic [ref=e62]:
+          - generic [ref=e63]:
+            - generic [ref=e65]: planned
+            - heading "Kontext CLI" [level=3] [ref=e66]
+            - paragraph [ref=e67]: 2 weeks
+          - generic [ref=e68]:
+            - paragraph [ref=e69]: Extend the open-source runtime beyond Claude Code so Kontext can claim broader agent coverage.
+            - generic [ref=e70]:
+              - paragraph [ref=e72]: Codex hooks
+              - paragraph [ref=e74]: Goose / additional providers
+              - paragraph [ref=e76]: README and setup flow
+          - generic [ref=e77]:
+            - paragraph [ref=e78]: Owner
+            - paragraph [ref=e79]: Open
+        - generic [ref=e81]:
+          - generic [ref=e82]:
+            - generic [ref=e84]: owned
+            - heading "Probabilistic Risk" [level=3] [ref=e85]
+            - paragraph [ref=e86]: Parallel
+          - generic [ref=e87]:
+            - paragraph [ref=e88]: Improve the model-backed judge independently so it can plug in after deterministic policy.
+            - generic [ref=e89]:
+              - paragraph [ref=e91]: Benchmarks
+              - paragraph [ref=e93]: Evaluation harness
+              - paragraph [ref=e95]: Trace-facing explanation quality
+          - generic [ref=e96]:
+            - paragraph [ref=e97]: Owner
+            - paragraph [ref=e98]: TBD
+    - complementary [ref=e99]:
+      - generic [ref=e100]:
+        - img [ref=e101]
+        - heading "Source of truth split" [level=2] [ref=e105]
+      - generic [ref=e106]:
+        - generic [ref=e107]:
+          - paragraph [ref=e108]: Linear
+          - paragraph [ref=e109]: Tickets, owners, active execution.
+        - generic [ref=e110]:
+          - paragraph [ref=e111]: OS dashboard
+          - paragraph [ref=e112]: Architecture, roadmap, product direction.
+        - generic [ref=e113]:
+          - paragraph [ref=e114]: Docs / Notion
+          - paragraph [ref=e115]: Long-form specs, benchmark reports, call notes.
+  - generic [ref=e116]:
+    - generic [ref=e117]:
+      - generic [ref=e118]:
+        - img [ref=e119]
+        - heading "Control-plane motion" [level=2] [ref=e126]
+      - paragraph [ref=e127]: This is the product story underneath the Katana work. The dashboard should make this obvious without turning Linear into a strategy document.
+      - generic [ref=e129]:
+        - generic [ref=e130]:
+          - generic [ref=e131]: "01"
+          - generic [ref=e134]:
+            - heading "Observe" [level=3] [ref=e135]
+            - paragraph [ref=e136]: Collect Claude Code hook events and endpoint identity.
+        - generic [ref=e137]:
+          - generic [ref=e138]: "02"
+          - generic [ref=e141]:
+            - heading "Normalize" [level=3] [ref=e142]
+            - paragraph [ref=e143]: Shape hooks and OTEL into one durable activity model.
+        - generic [ref=e144]:
+          - generic [ref=e145]: "03"
+          - generic [ref=e148]:
+            - heading "Decide" [level=3] [ref=e149]
+            - paragraph [ref=e150]: Run deterministic access-control rules in dry-run first.
+        - generic [ref=e151]:
+          - generic [ref=e152]: "04"
+          - generic [ref=e155]:
+            - heading "Explain" [level=3] [ref=e156]
+            - paragraph [ref=e157]: Show why an action was allowed, denied, or risky.
+        - generic [ref=e158]:
+          - generic [ref=e159]: "05"
+          - generic [ref=e162]:
+            - heading "Enforce" [level=3] [ref=e163]
+            - paragraph [ref=e164]: Block only after the policy model and rollout path are trusted.
+    - generic [ref=e165]:
+      - generic [ref=e166]:
+        - img [ref=e167]
+        - heading "Product lanes" [level=2] [ref=e171]
+      - generic [ref=e172]:
+        - generic [ref=e173]:
+          - img [ref=e174]
+          - generic [ref=e180]:
+            - heading "Managed Runtime" [level=3] [ref=e181]
+            - paragraph [ref=e182]: Managed hooks, local observe daemon, package deployment, endpoint identity.
+            - paragraph [ref=e183]: Katana endpoint events arrive without changing the developer workflow.
+          - generic [ref=e184]: Live pilot
+        - generic [ref=e185]:
+          - img [ref=e186]
+          - generic [ref=e190]:
+            - heading "Access Control" [level=3] [ref=e191]
+            - paragraph [ref=e192]: Deterministic policies, resource model, GitHub and Databricks decisions.
+            - paragraph [ref=e193]: First GitHub policy dry-run shows what would be allowed or denied.
+          - generic [ref=e194]: Next
+        - generic [ref=e195]:
+          - img [ref=e196]
+          - generic [ref=e204]:
+            - heading "Runtime Intelligence" [level=3] [ref=e205]
+            - paragraph [ref=e206]: Probabilistic judgement, Markov/model evaluation, risk explanations.
+            - paragraph [ref=e207]: Model judgement appears as explainable risk on traces, not as enforcement first.
+          - generic [ref=e208]: Parallel
+        - generic [ref=e209]:
+          - img [ref=e210]
+          - generic [ref=e220]:
+            - heading "Agent Registry" [level=3] [ref=e221]
+            - paragraph [ref=e222]: Agents, users, integrations, credentials, and ownership in one inventory.
+            - paragraph [ref=e223]: Admin can answer which agents exist, who owns them, and what they can touch.
+          - generic [ref=e224]: Later
+        - generic [ref=e225]:
+          - img [ref=e226]
+          - generic [ref=e231]:
+            - heading "Admin Dashboard" [level=3] [ref=e232]
+            - paragraph [ref=e233]: Endpoints, sessions, traces, policy, deployment packages, and rollout state.
+            - paragraph [ref=e234]: Dashboard becomes the first place to understand engineering progress.
+          - generic [ref=e235]: Ongoing
+  - generic [ref=e236]:
+    - generic [ref=e237]:
+      - generic [ref=e238]:
+        - img [ref=e239]
+        - heading "Next four weeks" [level=2] [ref=e241]
+      - generic [ref=e243]:
+        - generic [ref=e244]:
+          - generic [ref=e245]: Week 1
+          - generic [ref=e248]:
+            - heading "First endpoint" [level=3] [ref=e249]
+            - paragraph [ref=e250]: Katana installed the package through Addigy and traces reached the dashboard.
+        - generic [ref=e251]:
+          - generic [ref=e252]: Week 2
+          - generic [ref=e255]:
+            - heading "Deployment hardening" [level=3] [ref=e256]
+            - paragraph [ref=e257]: Fix log semantics, validate update flow, and prepare deterministic policy dry-run.
+        - generic [ref=e258]:
+          - generic [ref=e259]: Week 3
+          - generic [ref=e262]:
+            - heading "Access model" [level=3] [ref=e263]
+            - paragraph [ref=e264]: Define the schema across hooks, OTEL, endpoints, users, resources, and policy.
+        - generic [ref=e265]:
+          - generic [ref=e266]: Week 4
+          - generic [ref=e269]:
+            - heading "GitHub dry-run" [level=3] [ref=e270]
+            - paragraph [ref=e271]: Release the first visible access-control path for GitHub actions.
+        - generic [ref=e272]:
+          - generic [ref=e273]: Month 2
+          - generic [ref=e276]:
+            - heading "Broader control plane" [level=3] [ref=e277]
+            - paragraph [ref=e278]: Extend from one integration into the full agent runtime dashboard.
+    - complementary [ref=e279]:
+      - generic [ref=e280]:
+        - generic [ref=e281]:
+          - img [ref=e282]
+          - heading "Decisions" [level=2] [ref=e285]
+        - generic [ref=e286]:
+          - generic [ref=e287]:
+            - img [ref=e288]
+            - paragraph [ref=e290]: "Linear stays tactical: active projects and tickets only."
+          - generic [ref=e291]:
+            - img [ref=e292]
+            - paragraph [ref=e294]: The OS dashboard carries the product architecture and engineering map.
+          - generic [ref=e295]:
+            - img [ref=e296]
+            - paragraph [ref=e298]: Katana Week 2 removes rollout risk and prepares access control.
+          - generic [ref=e299]:
+            - img [ref=e300]
+            - paragraph [ref=e302]: Probabilistic judgement stays parallel until the deterministic path is legible.

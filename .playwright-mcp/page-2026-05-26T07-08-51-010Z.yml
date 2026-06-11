@@ -1,0 +1,46 @@
+- generic [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e5]:
+      - link "Slack" [ref=e8] [cursor=pointer]:
+        - /url: https://slack.com
+        - img "Slack" [ref=e9]
+      - generic [ref=e10]:
+        - heading "Sign in to your workspace" [level=1] [ref=e11]
+        - generic [ref=e12]: Enter your workspace’s Slack URL
+        - generic [ref=e14]:
+          - generic [ref=e15]:
+            - generic [ref=e17] [cursor=pointer]: Enter your workspace’s Slack URL
+            - generic [ref=e19]:
+              - generic: your-workspace .slack.com
+              - textbox "Enter your workspace’s Slack URL" [active] [ref=e20]:
+                - /placeholder: your-workspace
+          - button "Continue" [ref=e21] [cursor=pointer]:
+            - generic [ref=e22]: Continue
+          - paragraph [ref=e23]:
+            - text: Don’t know your workspace URL?
+            - link "Find your workspaces" [ref=e24] [cursor=pointer]:
+              - /url: /get-started?redir=%2Fgantry%2Fauth%3Fapp%3Dclient%26lc%3D1779779329%26return_to%3D%252Fclient%26teams%3D#/find
+              - strong [ref=e25]: Find your workspaces
+          - paragraph [ref=e26]:
+            - text: Trying to sign in to a
+            - link "GovSlack workspace?" [ref=e27] [cursor=pointer]:
+              - /url: https://slack-gov.com/workspace-signin
+              - strong [ref=e28]: GovSlack workspace?
+          - paragraph [ref=e29]:
+            - text: Looking to create a workspace instead?
+            - link "Create a new workspace" [ref=e30] [cursor=pointer]:
+              - /url: /get-started?redir=%2Fgantry%2Fauth%3Fapp%3Dclient%26lc%3D1779779329%26return_to%3D%252Fclient%26teams%3D#/create
+              - strong [ref=e31]: Create a new workspace
+      - generic [ref=e34]:
+        - link "Privacy & terms" [ref=e35] [cursor=pointer]:
+          - /url: /intl/en-gb/legal
+        - link "Contact us" [ref=e36] [cursor=pointer]:
+          - /url: /intl/en-gb/help/requests/new
+        - link "Change region" [ref=e38] [cursor=pointer]:
+          - /url: "#"
+          - generic [ref=e39]: 
+          - text: Change region
+          - generic [ref=e40]: 
+  - generic [ref=e41]:
+    - alert [ref=e42]
+    - log [ref=e43]

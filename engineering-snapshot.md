@@ -1,0 +1,135 @@
+- generic [ref=e4] [box=130,0,1180,2639]:
+  - banner [ref=e5] [box=130,0,1180,180]:
+    - generic [ref=e6] [box=130,0,788,151]:
+      - paragraph [ref=e7] [box=130,0,788,18]: Kontext OS
+      - heading "Work backwards from the demo dashboard." [level=1] [ref=e8] [box=130,30,768,30]
+      - paragraph [ref=e9] [box=130,76,672,48]: "The product direction is the full runtime control dashboard. Katana is how we ship the first valuable slice: Access Control for real agent activity."
+    - generic [ref=e10] [box=950,0,360,151]:
+      - generic [ref=e11] [box=967,17,326,18]:
+        - generic [ref=e12] [box=967,17,102,18]: Read this page as
+        - img [ref=e13] [box=1277,18,16,16]
+      - generic [ref=e18] [box=967,51,326,83]:
+        - generic [ref=e19] [box=967,51,326,20]
+        - generic [ref=e22] [box=967,83,326,20]
+        - generic [ref=e25] [box=967,114,326,20]
+  - generic [ref=e28] [box=130,212,1180,494]:
+    - generic [ref=e30] [box=130,212,454,55]:
+      - generic [ref=e31] [box=130,212,454,27]:
+        - img [ref=e32] [box=130,217,16,16]
+        - heading "1. End-state dashboard" [level=2] [ref=e37] [box=154,212,198,27]
+      - paragraph [ref=e38] [box=130,247,454,20]: Start here. This is where we are going, independent of this week's tickets.
+    - generic [ref=e40] [box=130,300,1180,406]:
+      - generic [ref=e41] [box=130,300,701,182]:
+        - paragraph [ref=e42] [box=151,321,659,18]: End-state product
+        - heading "The customer demo dashboard is the destination. Katana is the first proof path." [level=3] [ref=e43] [box=151,351,576,50]
+        - paragraph [ref=e44] [box=151,412,659,48]: "The demo shows a broader control plane: agents, access, traces, providers, and runtime decisions. Katana starts with one vertical slice of that dashboard: Claude Code activity into Access Control."
+      - generic [ref=e45] [box=843,300,467,182]:
+        - paragraph [ref=e46] [box=864,321,425,18]: Current question
+        - paragraph [ref=e47] [box=864,351,425,74]: Can we show Katana who did what, with which agent, against which resource, and what policy would decide?
+      - generic [ref=e49] [box=130,493,1180,213]:
+        - generic [ref=e50] [box=130,493,226,213]
+        - generic [ref=e57] [box=368,493,226,213]
+        - generic [ref=e64] [box=607,493,226,213]
+        - generic [ref=e71] [box=845,493,226,213]
+        - generic [ref=e78] [box=1084,493,226,213]
+  - generic [ref=e85] [box=130,738,1180,553]:
+    - generic [ref=e87] [box=130,738,672,75]:
+      - generic [ref=e88] [box=130,738,672,27]:
+        - img [ref=e89] [box=130,743,16,16]
+        - heading "2. Product architecture" [level=2] [ref=e93] [box=154,738,197,27]
+      - paragraph [ref=e94] [box=130,773,672,40]: "The technical direction is simple: capture activity, normalize it, decide on it, then show it in the admin dashboard."
+    - generic [ref=e95] [box=130,846,1180,445]:
+      - generic [ref=e96] [box=130,846,800,445]:
+        - paragraph [ref=e98] [box=147,859,766,18]: Architecture direction
+        - generic [ref=e99] [box=131,890,798,400]: customer agent activity │ ▼ ┌────────────────────┐ ┌────────────────────┐ ┌────────────────────┐ │ managed runtime │──▶│ normalized ledger │──▶│ decision plane │ │ hooks, daemon, pkg │ │ hooks + OTEL model │ │ deterministic first│ └────────────────────┘ └────────────────────┘ └─────────┬──────────┘ │ ▼ ┌──────────────────────────────────┐ │ admin dashboard │ │ access control, traces, agents │ └──────────────────────────────────┘ probabilistic judgement plugs into the decision plane after deterministic policy
+      - generic [ref=e100] [box=950,846,360,445]:
+        - generic [ref=e101] [box=971,867,318,24]
+        - paragraph [ref=e107] [box=971,907,318,96]: "Access Control is the first visible product because it connects the deployment work to Katana's stated goal: control Claude Code activity against GitHub, Databricks, and HubSpot."
+        - generic [ref=e108] [box=971,1023,318,83]
+  - generic [ref=e111] [box=130,1323,1180,293]:
+    - generic [ref=e113] [box=130,1323,514,55]:
+      - generic [ref=e114] [box=130,1323,514,27]:
+        - img [ref=e115] [box=130,1328,16,16]
+        - heading "3. Execution timeline" [level=2] [ref=e122] [box=154,1323,178,27]
+      - paragraph [ref=e123] [box=130,1358,514,20]: This is the progression Michel can explain to Jens, Katana, or the engineering team.
+    - generic [ref=e126] [box=151,1432,1138,163]:
+      - generic [ref=e127] [box=151,1432,218,163]:
+        - img [ref=e130] [box=161,1442,16,16]
+        - generic [ref=e133] [box=151,1484,218,111]
+      - generic [ref=e141] [box=381,1484,218,111]:
+        - paragraph [ref=e142] [box=381,1484,218,18]: Week 2
+        - heading "Make the pilot legible" [level=3] [ref=e143] [box=381,1506,218,21]
+        - paragraph [ref=e144] [box=381,1535,218,60]: Fix log semantics, validate updates, stabilize deployment, and make the Access Control direction obvious.
+      - generic [ref=e149] [box=611,1484,218,111]:
+        - paragraph [ref=e150] [box=611,1484,218,18]: Week 3
+        - heading "Access model" [level=3] [ref=e151] [box=611,1506,218,21]
+        - paragraph [ref=e152] [box=611,1535,218,60]: Define one data model for hooks, OTEL, endpoints, users, agents, resources, decisions, and policy.
+      - generic [ref=e157] [box=841,1484,218,111]:
+        - paragraph [ref=e158] [box=841,1484,218,18]: Week 4
+        - heading "GitHub dry-run" [level=3] [ref=e159] [box=841,1506,218,21]
+        - paragraph [ref=e160] [box=841,1535,218,60]: Show the first deterministic GitHub policy path in Katana without blocking engineers yet.
+      - generic [ref=e164] [box=1071,1484,218,111]:
+        - paragraph [ref=e165] [box=1071,1484,218,18]: Month 2
+        - heading "Full dashboard expansion" [level=3] [ref=e166] [box=1071,1506,218,21]
+        - paragraph [ref=e167] [box=1071,1535,218,60]: Expand beyond Access Control into registry, providers, deployments, and probabilistic trace intelligence.
+  - generic [ref=e168] [box=130,1648,1180,285]:
+    - generic [ref=e170] [box=130,1648,672,75]:
+      - generic [ref=e171] [box=130,1648,672,27]:
+        - img [ref=e172] [box=130,1653,16,16]
+        - heading "4. Runtime motion" [level=2] [ref=e178] [box=154,1648,156,27]
+      - paragraph [ref=e179] [box=130,1683,672,40]: This is the system path. Probabilistic judgement plugs in after deterministic policy, not before the data model is clear.
+    - generic [ref=e182] [box=151,1777,1138,135]:
+      - generic [ref=e183] [box=151,1777,221,135]:
+        - generic [ref=e184] [box=167,1793,189,18]
+        - heading "Observe" [level=3] [ref=e188] [box=167,1827,189,21]
+        - paragraph [ref=e189] [box=167,1856,189,40]: Capture endpoint, session, tool, and hook events.
+      - generic [ref=e190] [box=380,1777,221,135]:
+        - generic [ref=e191] [box=396,1793,189,18]
+        - heading "Normalize" [level=3] [ref=e195] [box=396,1827,189,21]
+        - paragraph [ref=e196] [box=396,1856,189,40]: Create one activity model across Claude hooks and OTEL.
+      - generic [ref=e197] [box=609,1777,221,135]:
+        - generic [ref=e198] [box=625,1793,189,18]
+        - heading "Decide" [level=3] [ref=e202] [box=625,1827,189,21]
+        - paragraph [ref=e203] [box=625,1856,189,40]: Run deterministic policy before probabilistic judgement.
+      - generic [ref=e204] [box=839,1777,221,135]:
+        - generic [ref=e205] [box=855,1793,189,18]
+        - heading "Explain" [level=3] [ref=e209] [box=855,1827,189,21]
+        - paragraph [ref=e210] [box=855,1856,189,40]: Show why the system allowed, denied, or flagged the action.
+      - generic [ref=e211] [box=1068,1777,221,135]:
+        - generic [ref=e213] [box=1084,1793,14,18]: "05"
+        - heading "Enforce" [level=3] [ref=e214] [box=1084,1827,189,21]
+        - paragraph [ref=e215] [box=1084,1856,189,40]: Turn on blocking only after dry-run trust is established.
+  - generic [ref=e216] [box=130,1965,1180,360]:
+    - generic [ref=e218] [box=130,1965,357,55]:
+      - generic [ref=e219] [box=130,1965,357,27]:
+        - img [ref=e220] [box=130,1970,16,16]
+        - heading "5. Linear projects" [level=2] [ref=e224] [box=154,1965,149,27]
+      - paragraph [ref=e225] [box=130,2000,357,20]: These are execution containers. They should stay tactical.
+    - generic [ref=e226] [box=130,2053,1180,272]:
+      - generic [ref=e227] [box=130,2053,385,272]:
+        - generic [ref=e228] [box=151,2074,343,43]
+        - paragraph [ref=e238] [box=151,2137,343,48]: One repeatable Addigy rollout path and a dashboard that clearly shows access-control value.
+        - generic [ref=e239] [box=151,2205,343,99]
+      - generic [ref=e246] [box=527,2053,385,272]:
+        - generic [ref=e247] [box=548,2074,343,43]
+        - paragraph [ref=e258] [box=548,2137,343,48]: Broader open-source runtime coverage beyond Claude Code.
+        - generic [ref=e259] [box=548,2205,343,99]
+      - generic [ref=e266] [box=925,2053,385,272]:
+        - generic [ref=e267] [box=946,2074,343,43]
+        - paragraph [ref=e282] [box=946,2137,343,48]: Model-backed judgement that explains suspicious actions after deterministic policy runs.
+        - generic [ref=e283] [box=946,2205,343,99]
+  - generic [ref=e290] [box=130,2357,1180,282]:
+    - generic [ref=e291] [box=130,2357,800,282]:
+      - generic [ref=e292] [box=151,2378,758,27]:
+        - img [ref=e293] [box=151,2383,16,16]
+        - heading "Current schema pressure" [level=2] [ref=e297] [box=175,2378,218,27]
+      - paragraph [ref=e298] [box=151,2421,758,72]: The broken log feeling comes from unclear semantics. Week 2 and Week 3 need one model for sessions, observations, decisions, resources, users, agents, endpoints, and policy evaluation. If this is right, Access Control ships without another reset.
+    - generic [ref=e299] [box=950,2357,360,282]:
+      - generic [ref=e300] [box=971,2378,318,24]:
+        - img [ref=e301] [box=971,2382,16,16]
+        - heading "Decisions" [level=2] [ref=e304] [box=995,2378,75,24]
+      - generic [ref=e305] [box=971,2422,318,196]:
+        - generic [ref=e306] [box=971,2422,318,40]
+        - generic [ref=e310] [box=971,2474,318,40]
+        - generic [ref=e314] [box=971,2526,318,40]
+        - generic [ref=e318] [box=971,2578,318,40]

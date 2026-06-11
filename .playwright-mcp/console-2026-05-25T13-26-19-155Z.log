@@ -1,0 +1,29 @@
+[     425ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:20102
+[  601609ms] [ERROR] [vite] ReferenceError: ListChecks is not defined
+    at http://localhost:5173/src/pages/engineering.tsx?t=1779716180231:206:11 @ http://localhost:5173/@vite/client:808
+[  601619ms] [ERROR] [vite] Failed to reload /src/pages/engineering.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:808
+[ 1387097ms] ReferenceError: katanaPartnershipHalfway is not defined
+    at PartnershipAxisMarkers (http://localhost:5173/src/pages/engineering.tsx?t=1779716965504:324:28)
+    at Object.react_stack_bottom_frame (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:18509:20)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:5654:24)
+    at updateFunctionComponent (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:7475:21)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:8525:20)
+    at runWithFiberInDEV (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:997:72)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:12561:98)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:12424:43)
+    at renderRootSync (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:12408:13)
+    at performWorkOnRoot (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:11827:37)
+[ 1387084ms] [WARNING] %s
+
+%s
+ An error occurred in the <PartnershipAxisMarkers> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:6965
+[ 8355778ms] [ERROR] You are calling ReactDOMClient.createRoot() on a container that has already been passed to createRoot() before. Instead, call root.render() on the existing root instead if you want to update it. @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:17253
+[14171818ms] [LOG] WebSocket closed with code 1006 @ http://localhost:5173/node_modules/.vite/deps/chunk-GQCKE2IT.js?v=53fc6e53:93
+[14171823ms] [LOG] Attempting reconnect in 1008ms @ http://localhost:5173/node_modules/.vite/deps/chunk-GQCKE2IT.js?v=53fc6e53:93
+[14171834ms] [LOG] WebSocket closed with code 1006 @ http://localhost:5173/node_modules/.vite/deps/chunk-GQCKE2IT.js?v=53fc6e53:93
+[14171835ms] [LOG] Attempting reconnect in 1119ms @ http://localhost:5173/node_modules/.vite/deps/chunk-GQCKE2IT.js?v=53fc6e53:93
+[14171853ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:864
+[14173090ms] [LOG] WebSocket reconnected at t=14172.8s after disconnect due to closed with code 1006 @ http://localhost:5173/node_modules/.vite/deps/chunk-GQCKE2IT.js?v=53fc6e53:93
+[14173228ms] [LOG] WebSocket reconnected at t=14173s after disconnect due to closed with code 1006 @ http://localhost:5173/node_modules/.vite/deps/chunk-GQCKE2IT.js?v=53fc6e53:93
+[14174801ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:20102
