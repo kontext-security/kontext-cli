@@ -296,7 +296,10 @@ func PrintHookStatus(out io.Writer) {
 			case isGuardHookCommand(command):
 				guard = true
 				fmt.Fprintf(out, "Claude Code Guard hook: %s\n", command)
-			case strings.Contains(command, "kontext hook"):
+			// Managed-observe hooks are quoted ('<bin>' hook '<alias>'); use the
+			// shared predicate so wrapper commands containing "kontext" are not
+			// misclassified as hosted hooks.
+			case claudemanaged.IsManagedHookCommand(command):
 				hosted = true
 				fmt.Fprintf(out, "Claude Code hosted hook: %s\n", command)
 			}

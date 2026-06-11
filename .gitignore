@@ -20,3 +20,10 @@ data/
 *.sqlite
 *.sqlite3
 models/generated/
+
+# Local agent/browser artifacts — never commit
+.playwright-mcp/
+$CODEX_HOME/
+engineering-*.png
+engineering-snapshot.md
+linear-*.png

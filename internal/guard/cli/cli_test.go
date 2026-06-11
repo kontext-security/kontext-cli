@@ -215,7 +215,8 @@ func TestPrintHookStatusReportsGuardAndHostedConflict(t *testing.T) {
     "PostToolUse": [
       {
         "hooks": [
-          {"type": "command", "command": "/usr/local/bin/kontext hook --agent claude"}
+          {"type": "command", "command": "'/usr/local/bin/kontext' hook 'post-tool-use'"},
+          {"type": "command", "command": "/usr/local/bin/not-kontext hook post-tool-use"}
         ]
       }
     ]
@@ -232,8 +233,11 @@ func TestPrintHookStatusReportsGuardAndHostedConflict(t *testing.T) {
 	if !strings.Contains(got, "Claude Code Guard hook: /usr/local/bin/kontext hook --agent claude --mode observe") {
 		t.Fatalf("PrintHookStatus() = %q, want guard hook line", got)
 	}
-	if !strings.Contains(got, "Claude Code hosted hook: /usr/local/bin/kontext hook --agent claude") {
+	if !strings.Contains(got, "Claude Code hosted hook: '/usr/local/bin/kontext' hook 'post-tool-use'") {
 		t.Fatalf("PrintHookStatus() = %q, want hosted hook line", got)
+	}
+	if strings.Contains(got, "not-kontext") {
+		t.Fatalf("PrintHookStatus() = %q, want foreign hook ignored", got)
 	}
 	if !strings.Contains(got, "Claude Code hook mode: conflict (hosted and Guard hooks are both installed)") {
 		t.Fatalf("PrintHookStatus() = %q, want conflict mode", got)
