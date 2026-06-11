@@ -733,6 +733,9 @@ on conflict(id) do update set
 		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventRequestDecided, "decision", now.Add(time.Millisecond)); err != nil {
 			return DecisionRecord{}, err
 		}
+		if err := s.insertGithubDryRunActions(ctx, tx, sessionID, event, decision, now.Add(2*time.Millisecond)); err != nil {
+			return DecisionRecord{}, err
+		}
 	} else {
 		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventType(event.HookEventName), "outcome", now); err != nil {
 			return DecisionRecord{}, err
@@ -765,6 +768,10 @@ func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionI
 	if err != nil {
 		return err
 	}
+	return s.insertActionRecord(ctx, tx, action, receiptType, now)
+}
+
+func (s *Store) insertActionRecord(ctx context.Context, tx *sql.Tx, action map[string]any, receiptType string, now time.Time) error {
 	columns := []string{
 		"id", "session_id", "tool_use_id", "canonical_event_type", "adapter_event_name", "correlation_key",
 		"tool_name", "provider", "operation", "operation_class", "resource_class", "resource_id", "parameters_redacted_json", "parameters_hash",
