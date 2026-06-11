@@ -45,7 +45,6 @@ type Options struct {
 	DBPath            string
 	StatePath         string
 	CloudURL          string
-	OrganizationID    string
 	InstallationID    string
 	InstallToken      string
 	DeviceLabel       string
@@ -54,11 +53,33 @@ type Options struct {
 	BatchLimit        int
 	HTTPClient        *http.Client
 	Diagnostic        diagnostic.Logger
+	// OnAuthFailure fires (nil-safe) after several consecutive 401/403
+	// rejections — the signature of a revoked or rotated install token,
+	// which would otherwise spin silently under launchd. Re-fires
+	// periodically so a long-running daemon keeps surfacing it without
+	// spamming every flush.
+	OnAuthFailure func(status int)
+	// OnFlushSuccess fires (nil-safe) after every ACCEPTED hosted post, so
+	// callers can clear "token rejected" breadcrumbs. It deliberately does
+	// not depend on this process's failure counter (a breadcrumb can outlive
+	// a daemon restart) and deliberately does NOT fire on empty flushes that
+	// never contacted the server — an idle machine with a revoked token must
+	// keep its breadcrumb.
+	OnFlushSuccess func()
 }
+
+const (
+	// authFailureThreshold avoids alerting on a transient 401 during a
+	// server-side deploy; three consecutive rejections (~30s at the default
+	// interval) means the credential itself is the problem.
+	authFailureThreshold = 3
+	// authFailureRefire re-surfaces the condition roughly every 8 minutes at
+	// the default interval.
+	authFailureRefire = 50
+)
 
 type Payload struct {
 	SchemaVersion      string                           `json:"schema_version"`
-	OrganizationID     string                           `json:"organization_id"`
 	InstallationID     string                           `json:"installation_id"`
 	BatchID            string                           `json:"batch_id"`
 	SentAt             string                           `json:"sent_at"`
@@ -88,10 +109,31 @@ func Run(ctx context.Context, opts Options) error {
 		interval = DefaultIntervalFromEnv()
 	}
 
-	if err := Flush(ctx, opts); err != nil {
+	var consecutiveAuthFailures int
+	flush := func() {
+		// OnFlushSuccess is invoked inside Flush (only after an accepted
+		// post); here we only track consecutive auth rejections.
+		err := Flush(ctx, opts)
+		if err == nil {
+			consecutiveAuthFailures = 0
+			return
+		}
 		opts.Diagnostic.Printf("managed stream flush: %v\n", err)
+
+		var hostedErr *hostedIngestError
+		if !errors.As(err, &hostedErr) || !isAuthStatus(hostedErr.StatusCode) {
+			consecutiveAuthFailures = 0
+			return
+		}
+		consecutiveAuthFailures++
+		if opts.OnAuthFailure != nil &&
+			(consecutiveAuthFailures == authFailureThreshold ||
+				consecutiveAuthFailures%authFailureRefire == 0) {
+			opts.OnAuthFailure(hostedErr.StatusCode)
+		}
 	}
 
+	flush()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -99,11 +141,13 @@ func Run(ctx context.Context, opts Options) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := Flush(ctx, opts); err != nil {
-				opts.Diagnostic.Printf("managed stream flush: %v\n", err)
-			}
+			flush()
 		}
 	}
+}
+
+func isAuthStatus(status int) bool {
+	return status == http.StatusUnauthorized || status == http.StatusForbidden
 }
 
 func Flush(ctx context.Context, opts Options) error {
@@ -150,7 +194,6 @@ func Flush(ctx context.Context, opts Options) error {
 
 		payload := Payload{
 			SchemaVersion:      SchemaVersion,
-			OrganizationID:     opts.OrganizationID,
 			InstallationID:     opts.InstallationID,
 			BatchID:            "batch_" + uuid.NewString(),
 			SentAt:             time.Now().UTC().Format(time.RFC3339Nano),
@@ -206,6 +249,12 @@ func Flush(ctx context.Context, opts Options) error {
 				continue
 			}
 			return err
+		}
+
+		// The hosted ledger accepted a post with this token — proof the
+		// credential works, which is what breadcrumb-clearing needs.
+		if opts.OnFlushSuccess != nil {
+			opts.OnFlushSuccess()
 		}
 
 		if batch.Cursor != nil {
@@ -459,9 +508,6 @@ func validateOptions(opts Options) error {
 	}
 	if strings.TrimSpace(opts.CloudURL) == "" {
 		return errors.New("managed stream requires cloud url")
-	}
-	if strings.TrimSpace(opts.OrganizationID) == "" {
-		return errors.New("managed stream requires organization id")
 	}
 	if strings.TrimSpace(opts.InstallationID) == "" {
 		return errors.New("managed stream requires installation id")

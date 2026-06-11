@@ -65,6 +65,7 @@ func doctorCmd() *cobra.Command {
 		Short: "Inspect local Kontext CLI setup",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			guardcli.PrintHookStatus(cmd.OutOrStdout())
+			managedobserve.PrintStatus(cmd.OutOrStdout())
 			return nil
 		},
 	}
