@@ -79,3 +79,32 @@ func TestHookNameCanBlock(t *testing.T) {
 		t.Fatalf("HookUserPromptSubmit.CanBlock() = true, want false")
 	}
 }
+
+func TestHookNameIsKnown(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name HookName
+		want bool
+	}{
+		{name: HookSessionStart, want: true},
+		{name: HookPreToolUse, want: true},
+		{name: HookPostToolUse, want: true},
+		{name: HookPostToolUseFailed, want: true},
+		{name: HookSessionEnd, want: true},
+		{name: HookUserPromptSubmit, want: true},
+		{name: HookName("pretooluse"), want: false},
+		{name: HookName(""), want: false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name.String(), func(t *testing.T) {
+			t.Parallel()
+
+			if got := tt.name.IsKnown(); got != tt.want {
+				t.Fatalf("HookName(%q).IsKnown() = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}

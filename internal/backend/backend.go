@@ -60,12 +60,6 @@ func NewClient(baseURL string, ts TokenSource) *Client {
 	}
 }
 
-// StaticToken returns a TokenSource that always returns the same token.
-// Useful for tests or short-lived commands.
-func StaticToken(token string) TokenSource {
-	return func(_ bool) (string, error) { return token, nil }
-}
-
 // BaseURL returns the API base URL from env or default.
 func BaseURL() string {
 	if v := os.Getenv("KONTEXT_API_URL"); v != "" {
