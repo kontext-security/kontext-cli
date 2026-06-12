@@ -163,23 +163,67 @@ func Run(ctx context.Context, opts Options) {
 	opts.Diagnostic.Printf("cowork observe: watching %s\n", opts.SessionsRoot)
 
 	c := newCollector(opts.StatePath)
+	h := newHealth()
 	ticker := time.NewTicker(opts.PollInterval)
 	defer ticker.Stop()
+	heartbeat := time.NewTicker(heartbeatInterval)
+	defer heartbeat.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			inject(opts)
-			c.collect(opts)
+			inject(opts, h)
+			c.collect(opts, h)
 			c.saveOffsets(opts)
+		case <-heartbeat.C:
+			h.logHeartbeat(opts)
 		}
+	}
+}
+
+const heartbeatInterval = 5 * time.Minute
+
+// health tracks whether observation is actually working. The whole mechanism
+// depends on undocumented Cowork internals (session dir layout, host mount,
+// settings tier), so a Cowork update can break it without any error surfacing.
+// The heartbeat makes "no Cowork activity" distinguishable from "observation
+// broken" in the daemon diagnostics.
+type health struct {
+	sessionsSeen   map[string]bool // recent .claude dirs discovered by the injector
+	hooked         map[string]bool // .claude dirs carrying our hook
+	spooled        map[string]bool // session dirs that produced a spool file
+	eventsReplayed int64
+	linesDropped   int64
+}
+
+func newHealth() *health {
+	return &health{
+		sessionsSeen: map[string]bool{},
+		hooked:       map[string]bool{},
+		spooled:      map[string]bool{},
+	}
+}
+
+func (h *health) logHeartbeat(opts Options) {
+	opts.Diagnostic.Printf(
+		"cowork observe: health: sessions seen=%d hooked=%d spooling=%d events replayed=%d malformed dropped=%d\n",
+		len(h.sessionsSeen), len(h.hooked), len(h.spooled), h.eventsReplayed, h.linesDropped,
+	)
+	if len(h.sessionsSeen) > len(h.hooked) {
+		opts.Diagnostic.Printf(
+			"cowork observe: warning: %d session(s) never received the hook (injection raced CLI startup, or the daemon started after the session)\n",
+			len(h.sessionsSeen)-len(h.hooked),
+		)
+	}
+	if len(h.hooked) > 0 && len(h.spooled) == 0 {
+		opts.Diagnostic.Printf("cowork observe: warning: hook injected but no spool has appeared; the Cowork session layout or mount may have changed\n")
 	}
 }
 
 // inject merges the spool hook into settings.json in any recent per-session
 // .claude dir that does not yet carry it.
-func inject(opts Options) {
+func inject(opts Options, h *health) {
 	claudeDirs, _ := filepath.Glob(filepath.Join(opts.SessionsRoot, "*", "*", "local_*", ".claude"))
 	cutoff := time.Now().Add(-3 * time.Minute)
 	for _, dir := range claudeDirs {
@@ -187,6 +231,7 @@ func inject(opts Options) {
 		if err != nil || info.ModTime().Before(cutoff) {
 			continue
 		}
+		h.sessionsSeen[dir] = true
 		settingsPath := filepath.Join(dir, "settings.json")
 		existing, err := os.ReadFile(settingsPath)
 		if err != nil && !os.IsNotExist(err) {
@@ -194,12 +239,14 @@ func inject(opts Options) {
 		}
 		merged, needed := mergeSettings(existing)
 		if !needed {
+			h.hooked[dir] = true
 			continue // already ours
 		}
 		if err := writeFileAtomic(settingsPath, merged, 0o644); err != nil {
 			opts.Diagnostic.Printf("cowork observe: inject %s: %v\n", settingsPath, err)
 			continue
 		}
+		h.hooked[dir] = true
 		opts.Diagnostic.Printf("cowork observe: injected hook into %s\n", settingsPath)
 	}
 }
@@ -259,10 +306,11 @@ func (c *collector) saveOffsets(opts Options) {
 	c.dirty = false
 }
 
-func (c *collector) collect(opts Options) {
+func (c *collector) collect(opts Options, h *health) {
 	spools, _ := filepath.Glob(filepath.Join(opts.SessionsRoot, "*", "*", "local_*", spoolName))
 	for _, spool := range spools {
-		c.drain(opts, spool)
+		h.spooled[filepath.Dir(spool)] = true
+		c.drain(opts, h, spool)
 	}
 }
 
@@ -276,7 +324,7 @@ var errMalformed = errors.New("malformed spool line")
 // drain replays complete lines appended since the last tick. The in-VM hook
 // may be mid-append while we read, so a trailing chunk without a newline is
 // left in place — the offset only ever advances past complete, handled lines.
-func (c *collector) drain(opts Options, spool string) {
+func (c *collector) drain(opts Options, h *health, spool string) {
 	f, err := os.Open(spool)
 	if err != nil {
 		return
@@ -313,7 +361,10 @@ func (c *collector) drain(opts Options, spool string) {
 					opts.Diagnostic.Printf("cowork observe: replay: %v\n", err)
 					break
 				}
+				h.linesDropped++
 				opts.Diagnostic.Printf("cowork observe: %v\n", err)
+			} else {
+				h.eventsReplayed++
 			}
 		}
 		consumed += idx + 1

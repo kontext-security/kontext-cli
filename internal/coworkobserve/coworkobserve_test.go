@@ -140,6 +140,39 @@ func TestMergeSettingsFromEmptyAndInvalid(t *testing.T) {
 	}
 }
 
+func TestInjectAndHealthTracking(t *testing.T) {
+	daemon, socketPath := startFakeDaemon(t)
+	opts := testOptions(t, socketPath)
+	sessionDir := filepath.Join(opts.SessionsRoot, "acct", "ws", "local_abc")
+	claudeDir := filepath.Join(sessionDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newHealth()
+	inject(opts, h)
+	if len(h.sessionsSeen) != 1 || len(h.hooked) != 1 {
+		t.Fatalf("seen=%d hooked=%d, want 1/1", len(h.sessionsSeen), len(h.hooked))
+	}
+	settings, err := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("settings.json not written: %v", err)
+	}
+	if !bytes.Contains(settings, []byte(settingsMark)) {
+		t.Fatalf("settings.json missing spool hook: %s", settings)
+	}
+
+	writeSpool(t, filepath.Join(sessionDir, spoolName), eventLine("Bash")+"\n")
+	c := &collector{offsets: map[string]int64{}}
+	c.collect(opts, h)
+	if len(h.spooled) != 1 || h.eventsReplayed != 1 {
+		t.Fatalf("spooled=%d replayed=%d, want 1/1", len(h.spooled), h.eventsReplayed)
+	}
+	if got := daemon.toolNames(); len(got) != 1 || got[0] != "Bash" {
+		t.Fatalf("replayed tools = %v, want [Bash]", got)
+	}
+}
+
 func TestDrainLeavesPartialTrailingLine(t *testing.T) {
 	daemon, socketPath := startFakeDaemon(t)
 	opts := testOptions(t, socketPath)
@@ -147,7 +180,7 @@ func TestDrainLeavesPartialTrailingLine(t *testing.T) {
 
 	writeSpool(t, spool, eventLine("Bash")+"\n"+`{"session_id":"s1","hook_event`)
 	c := &collector{offsets: map[string]int64{}}
-	c.drain(opts, spool)
+	c.drain(opts, newHealth(), spool)
 
 	if got := daemon.toolNames(); len(got) != 1 || got[0] != "Bash" {
 		t.Fatalf("replayed tools = %v, want [Bash]", got)
@@ -159,7 +192,7 @@ func TestDrainLeavesPartialTrailingLine(t *testing.T) {
 
 	// Completing the partial line replays it on the next tick.
 	writeSpool(t, spool, `_name":"PreToolUse","tool_name":"Read","tool_use_id":"tu-2"}`+"\n")
-	c.drain(opts, spool)
+	c.drain(opts, newHealth(), spool)
 	if got := daemon.toolNames(); len(got) != 2 || got[1] != "Read" {
 		t.Fatalf("replayed tools = %v, want [Bash Read]", got)
 	}
@@ -177,7 +210,7 @@ func TestDrainHaltsOnTransportErrorAndRetries(t *testing.T) {
 	writeSpool(t, spool, eventLine("Bash")+"\n"+eventLine("Read")+"\n")
 
 	c := &collector{offsets: map[string]int64{}}
-	c.drain(opts, spool)
+	c.drain(opts, newHealth(), spool)
 	if c.offsets[spool] != 0 {
 		t.Fatalf("offset advanced to %d past undelivered events", c.offsets[spool])
 	}
@@ -185,7 +218,7 @@ func TestDrainHaltsOnTransportErrorAndRetries(t *testing.T) {
 	// Daemon comes back; both events are delivered in order.
 	daemon, socketPath := startFakeDaemon(t)
 	opts.SocketPath = socketPath
-	c.drain(opts, spool)
+	c.drain(opts, newHealth(), spool)
 	if got := daemon.toolNames(); len(got) != 2 || got[0] != "Bash" || got[1] != "Read" {
 		t.Fatalf("replayed tools = %v, want [Bash Read]", got)
 	}
@@ -198,11 +231,11 @@ func TestDrainSkipsMalformedLines(t *testing.T) {
 	writeSpool(t, spool, "{not json\n"+eventLine("Bash")+"\n")
 
 	c := &collector{offsets: map[string]int64{}}
-	c.drain(opts, spool)
+	c.drain(opts, newHealth(), spool)
 	if got := daemon.toolNames(); len(got) != 1 || got[0] != "Bash" {
 		t.Fatalf("replayed tools = %v, want [Bash]", got)
 	}
-	c.drain(opts, spool)
+	c.drain(opts, newHealth(), spool)
 	if got := daemon.toolNames(); len(got) != 1 {
 		t.Fatalf("malformed line was retried: %v", got)
 	}
@@ -216,19 +249,19 @@ func TestOffsetsPersistAcrossRestarts(t *testing.T) {
 	writeSpool(t, spool, eventLine("Bash")+"\n")
 
 	c := newCollector(statePath)
-	c.drain(opts, spool)
+	c.drain(opts, newHealth(), spool)
 	c.saveOffsets(opts)
 
 	// A restarted collector must not re-replay the already-ingested event.
 	restarted := newCollector(statePath)
-	restarted.drain(opts, spool)
+	restarted.drain(opts, newHealth(), spool)
 	if got := daemon.toolNames(); len(got) != 1 {
 		t.Fatalf("replayed tools after restart = %v, want exactly one Bash", got)
 	}
 
 	// New events appended after the restart still flow.
 	writeSpool(t, spool, eventLine("Grep")+"\n")
-	restarted.drain(opts, spool)
+	restarted.drain(opts, newHealth(), spool)
 	if got := daemon.toolNames(); len(got) != 2 || got[1] != "Grep" {
 		t.Fatalf("replayed tools = %v, want [Bash Grep]", got)
 	}
@@ -241,7 +274,7 @@ func TestReplayDecodesCamelCaseAndPermissionMode(t *testing.T) {
 	writeSpool(t, spool, `{"sessionId":"s9","hookEventName":"PreToolUse","toolName":"Bash","toolInput":{"command":"ls"},"toolUseId":"tu-9","cwd":"/w","permission_mode":"acceptEdits"}`+"\n")
 
 	c := &collector{offsets: map[string]int64{}}
-	c.drain(opts, spool)
+	c.drain(opts, newHealth(), spool)
 
 	daemon.mu.Lock()
 	defer daemon.mu.Unlock()
@@ -270,7 +303,7 @@ func TestDrainResetsOffsetWhenSpoolShrinks(t *testing.T) {
 	writeSpool(t, spool, eventLine("Bash")+"\n")
 
 	c := &collector{offsets: map[string]int64{}}
-	c.drain(opts, spool)
+	c.drain(opts, newHealth(), spool)
 
 	// Spool recreated (e.g. cleaned up and the hook started a fresh one). The
 	// fresh file is smaller than the old offset, which signals the reset.
@@ -278,7 +311,7 @@ func TestDrainResetsOffsetWhenSpoolShrinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeSpool(t, spool, `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Read","tool_use_id":"t"}`+"\n")
-	c.drain(opts, spool)
+	c.drain(opts, newHealth(), spool)
 	if got := daemon.toolNames(); len(got) != 2 || got[1] != "Read" {
 		t.Fatalf("replayed tools = %v, want [Bash Read]", got)
 	}
