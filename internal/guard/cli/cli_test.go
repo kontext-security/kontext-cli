@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -238,6 +239,45 @@ func TestPrintHookStatusReportsGuardAndHostedConflict(t *testing.T) {
 	if !strings.Contains(got, "Claude Code hook mode: conflict (hosted and Guard hooks are both installed)") {
 		t.Fatalf("PrintHookStatus() = %q, want conflict mode", got)
 	}
+}
+
+func TestRunDaemonDoesNotInstallHooksWhenListenFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", fakeClaudePath(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+
+	var stdout bytes.Buffer
+	err = runDaemon(context.Background(), []string{
+		"--addr", busy.Addr().String(),
+		"--db", filepath.Join(t.TempDir(), "guard.sqlite"),
+		"--socket", filepath.Join(t.TempDir(), "guard.sock"),
+		"--no-open",
+	}, &stdout)
+	if err == nil {
+		t.Fatal("runDaemon() error = nil, want listen failure")
+	}
+
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if _, statErr := os.Stat(settingsPath); !os.IsNotExist(statErr) {
+		t.Fatalf("settings.json should not be created on listen failure, stat err = %v", statErr)
+	}
+}
+
+func fakeClaudePath(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func TestValidateLocalJudgeURLRejectsHostedURL(t *testing.T) {
