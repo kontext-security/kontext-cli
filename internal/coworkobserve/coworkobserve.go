@@ -18,6 +18,28 @@
 //   - collector: tails those spool files and replays each event into the
 //     daemon's existing localruntime socket as agent "cowork", reusing the same
 //     classify -> store -> managedstream -> ledger path Claude Code uses.
+//
+// # Caveats
+//
+// Integrity: the spool is written by code running inside the VM, so anything
+// in the VM (including a prompt-injected agent) can append forged events or
+// withhold real ones. Cowork-tagged ledger entries are self-reported
+// telemetry, not attested records, and this package is observe-only —
+// it must not be treated as enforcement.
+//
+// Delivery: events are replayed at-least-once. A replay that fails after a
+// partial send is retried, so the ledger may very occasionally see a
+// duplicate; it never silently drops a complete spool line.
+//
+// Coupling: the session-dir layout, the host mount, and the user-tier
+// settings load are undocumented Cowork internals; an update can break
+// observation without an error. The health heartbeat (sessions seen vs
+// hooked vs spooling) exists so that breakage is visible in diagnostics.
+//
+// Deployment: run the daemon in the session user's context (LaunchAgent,
+// not a root LaunchDaemon) — the injector writes settings.json into the
+// user's ~/Library and root-owned files there may confuse Cowork or the
+// VM mount's UID mapping.
 package coworkobserve
 
 import (
