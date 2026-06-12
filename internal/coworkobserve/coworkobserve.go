@@ -56,6 +56,7 @@ import (
 	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
+	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/hook"
 	"github.com/kontext-security/kontext-cli/internal/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
@@ -94,6 +95,10 @@ type Options struct {
 	// restart does not re-replay already-ingested events as duplicate ledger
 	// entries. Empty means offsets are kept in memory only.
 	StatePath string
+	// Mode selects the injected hook: observe installs the fire-and-forget
+	// spool append, enforce installs the decision round-trip that blocks the
+	// tool until the daemon's verdict lands. Defaults to observe.
+	Mode guardhookruntime.Mode
 	// PollInterval controls how often the loops scan; defaults to 250ms.
 	PollInterval time.Duration
 	Diagnostic   diagnostic.Logger
