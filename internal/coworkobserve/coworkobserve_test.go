@@ -1,6 +1,8 @@
 package coworkobserve
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"net"
 	"os"
@@ -89,6 +91,53 @@ func writeSpool(t *testing.T, path, content string) {
 
 func eventLine(tool string) string {
 	return `{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"` + tool + `","tool_input":{"command":"x"},"tool_use_id":"tu-` + tool + `","cwd":"/w"}`
+}
+
+func TestMergeSettingsPreservesExistingContent(t *testing.T) {
+	existing := []byte(`{"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo hi"}]}],"Stop":[{"hooks":[{"type":"command","command":"echo bye"}]}]}}`)
+	merged, needed := mergeSettings(existing)
+	if !needed {
+		t.Fatal("mergeSettings reported no write needed for foreign settings")
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(merged, &settings); err != nil {
+		t.Fatalf("merged settings are not valid JSON: %v", err)
+	}
+	if settings["model"] != "opus" {
+		t.Fatalf("model dropped: %v", settings["model"])
+	}
+	hooks := settings["hooks"].(map[string]any)
+	if _, ok := hooks["Stop"]; !ok {
+		t.Fatal("Stop hooks dropped")
+	}
+	pre := hooks["PreToolUse"].([]any)
+	if len(pre) != 2 {
+		t.Fatalf("PreToolUse entries = %d, want existing + ours", len(pre))
+	}
+	if !bytes.Contains(merged, []byte("echo hi")) || !bytes.Contains(merged, []byte(settingsMark)) {
+		t.Fatal("merged settings missing existing hook or our spool hook")
+	}
+
+	// A second merge is a no-op.
+	if _, needed := mergeSettings(merged); needed {
+		t.Fatal("mergeSettings wants to rewrite settings that already carry the hook")
+	}
+}
+
+func TestMergeSettingsFromEmptyAndInvalid(t *testing.T) {
+	for _, existing := range [][]byte{nil, []byte("  "), []byte("{broken")} {
+		merged, needed := mergeSettings(existing)
+		if !needed {
+			t.Fatalf("mergeSettings(%q) reported no write needed", existing)
+		}
+		var settings map[string]any
+		if err := json.Unmarshal(merged, &settings); err != nil {
+			t.Fatalf("merged settings are not valid JSON: %v", err)
+		}
+		if !bytes.Contains(merged, []byte(settingsMark)) {
+			t.Fatal("merged settings missing spool hook")
+		}
+	}
 }
 
 func TestDrainLeavesPartialTrailingLine(t *testing.T) {

@@ -91,21 +91,56 @@ func DefaultSessionsRoot() string {
 // then exits 0 so the tool is never blocked.
 const hookCommand = `p=$(cat); printf '%s\n' "$p" >> ../` + spoolName + ` 2>/dev/null; true`
 
-func settingsJSON() []byte {
-	settings := map[string]any{
-		"hooks": map[string]any{
-			"PreToolUse": []any{
-				map[string]any{
-					"matcher": "*",
-					"hooks": []any{
-						map[string]any{"type": "command", "command": hookCommand, "timeout": 12},
-					},
-				},
-			},
+func hookEntry() map[string]any {
+	return map[string]any{
+		"matcher": "*",
+		"hooks": []any{
+			map[string]any{"type": "command", "command": hookCommand, "timeout": 12},
 		},
 	}
-	data, _ := json.Marshal(settings)
-	return data
+}
+
+// mergeSettings adds the spool hook to existing settings.json content,
+// preserving every other setting and any hooks Cowork or the user put there.
+// Existing content that is not valid JSON is replaced — the in-VM CLI could
+// not have parsed it either. The second return reports whether a write is
+// needed (false when the hook is already present).
+func mergeSettings(existing []byte) ([]byte, bool) {
+	settings := map[string]any{}
+	if len(bytes.TrimSpace(existing)) > 0 {
+		if bytes.Contains(existing, []byte(settingsMark)) {
+			return nil, false
+		}
+		if err := json.Unmarshal(existing, &settings); err != nil {
+			settings = map[string]any{}
+		}
+	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	pre, _ := hooks["PreToolUse"].([]any)
+	hooks["PreToolUse"] = append(pre, hookEntry())
+	settings["hooks"] = hooks
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
+// writeFileAtomic writes via temp file + rename so the in-VM CLI can never
+// observe a half-written settings.json at startup.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp := path + ".kontext-tmp"
+	if err := os.WriteFile(tmp, data, perm); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // Run starts the injector and collector loops and blocks until ctx is cancelled.
@@ -123,7 +158,6 @@ func Run(ctx context.Context, opts Options) {
 	opts.Diagnostic.Printf("cowork observe: watching %s\n", opts.SessionsRoot)
 
 	c := newCollector(opts.StatePath)
-	settings := settingsJSON()
 	ticker := time.NewTicker(opts.PollInterval)
 	defer ticker.Stop()
 	for {
@@ -131,16 +165,16 @@ func Run(ctx context.Context, opts Options) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			inject(opts, settings)
+			inject(opts)
 			c.collect(opts)
 			c.saveOffsets(opts)
 		}
 	}
 }
 
-// inject writes settings.json into any recent per-session .claude dir that does
-// not yet carry our hook.
-func inject(opts Options, settings []byte) {
+// inject merges the spool hook into settings.json in any recent per-session
+// .claude dir that does not yet carry it.
+func inject(opts Options) {
 	claudeDirs, _ := filepath.Glob(filepath.Join(opts.SessionsRoot, "*", "*", "local_*", ".claude"))
 	cutoff := time.Now().Add(-3 * time.Minute)
 	for _, dir := range claudeDirs {
@@ -149,10 +183,15 @@ func inject(opts Options, settings []byte) {
 			continue
 		}
 		settingsPath := filepath.Join(dir, "settings.json")
-		if existing, err := os.ReadFile(settingsPath); err == nil && bytes.Contains(existing, []byte(settingsMark)) {
+		existing, err := os.ReadFile(settingsPath)
+		if err != nil && !os.IsNotExist(err) {
+			continue
+		}
+		merged, needed := mergeSettings(existing)
+		if !needed {
 			continue // already ours
 		}
-		if err := os.WriteFile(settingsPath, settings, 0o644); err != nil {
+		if err := writeFileAtomic(settingsPath, merged, 0o644); err != nil {
 			opts.Diagnostic.Printf("cowork observe: inject %s: %v\n", settingsPath, err)
 			continue
 		}
