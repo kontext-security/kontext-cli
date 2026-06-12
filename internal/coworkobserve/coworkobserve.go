@@ -24,6 +24,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -125,7 +128,7 @@ func Run(ctx context.Context, opts Options) {
 			return
 		case <-ticker.C:
 			inject(opts, settings)
-			c.collect(ctx, opts)
+			c.collect(opts)
 		}
 	}
 }
@@ -169,39 +172,72 @@ type coworkEvent struct {
 	CWD           string          `json:"cwd"`
 }
 
-func (c *collector) collect(ctx context.Context, opts Options) {
+func (c *collector) collect(opts Options) {
 	spools, _ := filepath.Glob(filepath.Join(opts.SessionsRoot, "*", "*", "local_*", spoolName))
 	for _, spool := range spools {
-		c.drain(ctx, opts, spool)
+		c.drain(opts, spool)
 	}
 }
 
-func (c *collector) drain(ctx context.Context, opts Options, spool string) {
-	data, err := os.ReadFile(spool)
+// errMalformed marks spool lines that can never replay successfully; drain
+// drops them. Any other replay error is treated as transient (the daemon
+// socket hiccuped), so drain stops before the failed line and retries it on
+// the next tick. Retrying after a partial send can deliver an event twice;
+// for an audit trail, at-least-once beats silently dropping it.
+var errMalformed = errors.New("malformed spool line")
+
+// drain replays complete lines appended since the last tick. The in-VM hook
+// may be mid-append while we read, so a trailing chunk without a newline is
+// left in place — the offset only ever advances past complete, handled lines.
+func (c *collector) drain(opts Options, spool string) {
+	f, err := os.Open(spool)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return
 	}
 	off := c.offsets[spool]
-	if int64(len(data)) <= off {
+	if info.Size() < off {
+		off = 0 // spool was recreated; start over on the new file
+	}
+	if info.Size() == off {
 		return
 	}
-	fresh := data[off:]
-	c.offsets[spool] = int64(len(data))
-	for _, line := range bytes.Split(fresh, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		if err := c.replay(opts, line); err != nil {
-			opts.Diagnostic.Printf("cowork observe: replay: %v\n", err)
-		}
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		return
 	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return
+	}
+	consumed := 0
+	for {
+		idx := bytes.IndexByte(data[consumed:], '\n')
+		if idx < 0 {
+			break // partial line still being appended; retry next tick
+		}
+		line := bytes.TrimSpace(data[consumed : consumed+idx])
+		if len(line) > 0 {
+			if err := c.replay(opts, line); err != nil {
+				if !errors.Is(err, errMalformed) {
+					opts.Diagnostic.Printf("cowork observe: replay: %v\n", err)
+					break
+				}
+				opts.Diagnostic.Printf("cowork observe: %v\n", err)
+			}
+		}
+		consumed += idx + 1
+	}
+	c.offsets[spool] = off + int64(consumed)
 }
 
 func (c *collector) replay(opts Options, line []byte) error {
 	var ev coworkEvent
 	if err := json.Unmarshal(line, &ev); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", errMalformed, err)
 	}
 	hookEvent := firstNonEmpty(ev.HookEventName, ev.HookEventAlt)
 	if hook.HookName(hookEvent) != hook.HookPreToolUse {
