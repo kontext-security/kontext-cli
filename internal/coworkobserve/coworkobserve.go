@@ -306,12 +306,50 @@ func (c *collector) saveOffsets(opts Options) {
 	c.dirty = false
 }
 
+// spoolRetention is how long a fully-drained spool may sit idle before the
+// collector deletes it. Spools hold raw, unredacted tool inputs, so they
+// should not accumulate on disk indefinitely.
+const spoolRetention = time.Hour
+
 func (c *collector) collect(opts Options, h *health) {
 	spools, _ := filepath.Glob(filepath.Join(opts.SessionsRoot, "*", "*", "local_*", spoolName))
+	live := make(map[string]bool, len(spools))
 	for _, spool := range spools {
+		live[spool] = true
 		h.spooled[filepath.Dir(spool)] = true
 		c.drain(opts, h, spool)
+		c.cleanup(opts, spool)
 	}
+	// Cowork deleted the session dir; its offset entry is dead weight.
+	for spool := range c.offsets {
+		if !live[spool] {
+			delete(c.offsets, spool)
+			c.dirty = true
+		}
+	}
+}
+
+// cleanup removes a spool once it is fully drained and idle past the
+// retention window. If the session wakes up again, the hook recreates the
+// file and drain starts over from offset zero (the shrink reset).
+func (c *collector) cleanup(opts Options, spool string) {
+	info, err := os.Stat(spool)
+	if err != nil {
+		return
+	}
+	if time.Since(info.ModTime()) < spoolRetention {
+		return
+	}
+	if c.offsets[spool] != info.Size() {
+		return // not fully drained yet
+	}
+	if err := os.Remove(spool); err != nil {
+		opts.Diagnostic.Printf("cowork observe: remove drained spool %s: %v\n", spool, err)
+		return
+	}
+	delete(c.offsets, spool)
+	c.dirty = true
+	opts.Diagnostic.Printf("cowork observe: removed drained spool %s\n", spool)
 }
 
 // errMalformed marks spool lines that can never replay successfully; drain

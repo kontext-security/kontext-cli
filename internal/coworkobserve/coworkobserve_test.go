@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
@@ -293,6 +294,63 @@ func TestReplayDecodesCamelCaseAndPermissionMode(t *testing.T) {
 	}
 	if !bytes.Contains(req.ToolInput, []byte(`"ls"`)) {
 		t.Fatalf("tool input dropped: %s", req.ToolInput)
+	}
+}
+
+func TestCollectCleansUpDrainedIdleSpools(t *testing.T) {
+	_, socketPath := startFakeDaemon(t)
+	opts := testOptions(t, socketPath)
+	sessionDir := filepath.Join(opts.SessionsRoot, "acct", "ws", "local_abc")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spool := filepath.Join(sessionDir, spoolName)
+	writeSpool(t, spool, eventLine("Bash")+"\n")
+
+	c := &collector{offsets: map[string]int64{}}
+	h := newHealth()
+	c.collect(opts, h)
+	if _, err := os.Stat(spool); err != nil {
+		t.Fatalf("fresh drained spool was removed: %v", err)
+	}
+
+	// Once idle past the retention window, the drained spool is deleted and
+	// its offset entry dropped.
+	old := time.Now().Add(-2 * spoolRetention)
+	if err := os.Chtimes(spool, old, old); err != nil {
+		t.Fatal(err)
+	}
+	c.collect(opts, h)
+	if _, err := os.Stat(spool); !os.IsNotExist(err) {
+		t.Fatalf("idle drained spool still present (err=%v)", err)
+	}
+	if _, ok := c.offsets[spool]; ok {
+		t.Fatal("offset entry for removed spool not pruned")
+	}
+}
+
+func TestCollectKeepsUndrainedSpools(t *testing.T) {
+	dir, err := os.MkdirTemp("", "kx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	opts := testOptions(t, filepath.Join(dir, "dead.sock")) // daemon down: nothing drains
+	sessionDir := filepath.Join(opts.SessionsRoot, "acct", "ws", "local_abc")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spool := filepath.Join(sessionDir, spoolName)
+	writeSpool(t, spool, eventLine("Bash")+"\n")
+	old := time.Now().Add(-2 * spoolRetention)
+	if err := os.Chtimes(spool, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &collector{offsets: map[string]int64{}}
+	c.collect(opts, newHealth())
+	if _, err := os.Stat(spool); err != nil {
+		t.Fatalf("undrained spool was removed: %v", err)
 	}
 }
 
