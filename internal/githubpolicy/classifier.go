@@ -396,12 +396,13 @@ func githubRepoFromGhArgs(args []string) string {
 }
 
 var ghValueOptions = map[string]bool{
-	"-R": true, "--repo": true, "--hostname": true, "--jq": true,
-	"--template": true, "--paginate": true, "--cache": true, "--preview": true,
+	"-R": true, "--repo": true, "--hostname": true, "--jq": true, "-q": true,
+	"--template": true, "-t": true, "--paginate": true, "--cache": true, "--preview": true,
 	"--limit": true, "--state": true, "--base": true, "--head": true,
 	"--label": true, "--author": true, "--assignee": true, "--milestone": true,
 	"--search": true, "--json": true, "--field": true, "-F": true,
-	"--raw-field": true, "-f": true,
+	"--raw-field": true, "-f": true, "--input": true,
+	"-X": true, "--method": true, "--request": true, "-H": true, "--header": true,
 }
 
 var gitValueOptions = map[string]bool{

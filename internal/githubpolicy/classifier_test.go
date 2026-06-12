@@ -257,6 +257,23 @@ func TestClassifyGhAPIEndpointRepo(t *testing.T) {
 			command: "gh api orgs/acme/teams",
 			want:    ProviderAction{Action: "github.api.read", Resource: "acme/api"},
 		},
+		{
+			// Value flags before the endpoint must not shift the positional.
+			command: "gh api -X DELETE repos/acme/admin/issues/1",
+			want:    ProviderAction{Action: "github.api.write", Resource: "acme/admin"},
+		},
+		{
+			command: "gh api --method=DELETE repos/acme/admin/issues/1",
+			want:    ProviderAction{Action: "github.api.write", Resource: "acme/admin"},
+		},
+		{
+			command: "gh api -H 'Accept: application/vnd.github+json' repos/acme/admin/pulls",
+			want:    ProviderAction{Action: "github.api.read", Resource: "acme/admin"},
+		},
+		{
+			command: "gh api --input payload.json repos/acme/admin/issues",
+			want:    ProviderAction{Action: "github.api.write", Resource: "acme/admin"},
+		},
 	}
 	for _, testCase := range cases {
 		got := classifyBash(t, testCase.command, projectContext())
