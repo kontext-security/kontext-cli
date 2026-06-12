@@ -65,6 +65,10 @@ type Options struct {
 	SocketPath string
 	// SessionsRoot is the Cowork sessions root; defaults to the standard path.
 	SessionsRoot string
+	// StatePath persists collector spool offsets across daemon restarts so a
+	// restart does not re-replay already-ingested events as duplicate ledger
+	// entries. Empty means offsets are kept in memory only.
+	StatePath string
 	// PollInterval controls how often the loops scan; defaults to 250ms.
 	PollInterval time.Duration
 	Diagnostic   diagnostic.Logger
@@ -118,7 +122,7 @@ func Run(ctx context.Context, opts Options) {
 	}
 	opts.Diagnostic.Printf("cowork observe: watching %s\n", opts.SessionsRoot)
 
-	c := &collector{offsets: map[string]int64{}}
+	c := newCollector(opts.StatePath)
 	settings := settingsJSON()
 	ticker := time.NewTicker(opts.PollInterval)
 	defer ticker.Stop()
@@ -129,6 +133,7 @@ func Run(ctx context.Context, opts Options) {
 		case <-ticker.C:
 			inject(opts, settings)
 			c.collect(opts)
+			c.saveOffsets(opts)
 		}
 	}
 }
@@ -156,7 +161,58 @@ func inject(opts Options, settings []byte) {
 }
 
 type collector struct {
-	offsets map[string]int64
+	offsets   map[string]int64
+	statePath string
+	dirty     bool
+}
+
+func newCollector(statePath string) *collector {
+	c := &collector{offsets: map[string]int64{}, statePath: statePath}
+	if statePath == "" {
+		return c
+	}
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		return c
+	}
+	if err := json.Unmarshal(data, &c.offsets); err != nil || c.offsets == nil {
+		c.offsets = map[string]int64{}
+	}
+	return c
+}
+
+func (c *collector) setOffset(spool string, off int64) {
+	if c.offsets[spool] == off {
+		return
+	}
+	c.offsets[spool] = off
+	c.dirty = true
+}
+
+// saveOffsets persists the offset map after ticks that changed it, via temp
+// file + rename so a crash mid-write cannot corrupt the state.
+func (c *collector) saveOffsets(opts Options) {
+	if !c.dirty || c.statePath == "" {
+		return
+	}
+	data, err := json.Marshal(c.offsets)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(c.statePath), 0o700); err != nil {
+		opts.Diagnostic.Printf("cowork observe: save offsets: %v\n", err)
+		return
+	}
+	tmp := c.statePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		opts.Diagnostic.Printf("cowork observe: save offsets: %v\n", err)
+		return
+	}
+	if err := os.Rename(tmp, c.statePath); err != nil {
+		opts.Diagnostic.Printf("cowork observe: save offsets: %v\n", err)
+		return
+	}
+	c.dirty = false
 }
 
 type coworkEvent struct {
@@ -231,7 +287,7 @@ func (c *collector) drain(opts Options, spool string) {
 		}
 		consumed += idx + 1
 	}
-	c.offsets[spool] = off + int64(consumed)
+	c.setOffset(spool, off+int64(consumed))
 }
 
 func (c *collector) replay(opts Options, line []byte) error {

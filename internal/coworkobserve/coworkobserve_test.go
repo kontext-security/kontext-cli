@@ -159,6 +159,32 @@ func TestDrainSkipsMalformedLines(t *testing.T) {
 	}
 }
 
+func TestOffsetsPersistAcrossRestarts(t *testing.T) {
+	daemon, socketPath := startFakeDaemon(t)
+	opts := testOptions(t, socketPath)
+	statePath := filepath.Join(t.TempDir(), "offsets.json")
+	spool := filepath.Join(t.TempDir(), spoolName)
+	writeSpool(t, spool, eventLine("Bash")+"\n")
+
+	c := newCollector(statePath)
+	c.drain(opts, spool)
+	c.saveOffsets(opts)
+
+	// A restarted collector must not re-replay the already-ingested event.
+	restarted := newCollector(statePath)
+	restarted.drain(opts, spool)
+	if got := daemon.toolNames(); len(got) != 1 {
+		t.Fatalf("replayed tools after restart = %v, want exactly one Bash", got)
+	}
+
+	// New events appended after the restart still flow.
+	writeSpool(t, spool, eventLine("Grep")+"\n")
+	restarted.drain(opts, spool)
+	if got := daemon.toolNames(); len(got) != 2 || got[1] != "Grep" {
+		t.Fatalf("replayed tools = %v, want [Bash Grep]", got)
+	}
+}
+
 func TestDrainResetsOffsetWhenSpoolShrinks(t *testing.T) {
 	daemon, socketPath := startFakeDaemon(t)
 	opts := testOptions(t, socketPath)

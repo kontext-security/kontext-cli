@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/coworkobserve"
@@ -97,6 +98,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	if coworkobserve.Enabled() {
 		go coworkobserve.Run(ctx, coworkobserve.Options{
 			SocketPath: socketPath,
+			StatePath:  filepath.Join(filepath.Dir(dbPath), "cowork-spool-offsets.json"),
 			Diagnostic: opts.Diagnostic,
 		})
 	}
