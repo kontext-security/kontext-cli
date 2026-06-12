@@ -86,16 +86,20 @@ func DefaultSessionsRoot() string {
 	return filepath.Join(home, "Library", "Application Support", "Claude", "local-agent-mode-sessions")
 }
 
-// The command hook reads the full Claude Code hook event from stdin and appends
-// it to a spool file one directory above cwd (the session dir, host-mounted),
-// then exits 0 so the tool is never blocked.
-const hookCommand = `p=$(cat); printf '%s\n' "$p" >> ../` + spoolName + ` 2>/dev/null; true`
+// The command hook reads the full Claude Code hook event from stdin and
+// appends it to a spool file in the guest $HOME (the per-session dir, which is
+// the host mount: its .claude subdir is where the CLI reads these settings
+// from), then exits 0 so the tool is never blocked. $HOME is absolute, so the
+// spool lands in the session dir no matter what cwd the hook inherits.
+const hookCommand = `p=$(cat); printf '%s\n' "$p" >> "$HOME"/` + spoolName + ` 2>/dev/null; true`
 
 func hookEntry() map[string]any {
 	return map[string]any{
 		"matcher": "*",
 		"hooks": []any{
-			map[string]any{"type": "command", "command": hookCommand, "timeout": 12},
+			// A local file append is near-instant; the short timeout bounds the
+			// latency a hung host mount can add to every tool call.
+			map[string]any{"type": "command", "command": hookCommand, "timeout": 5},
 		},
 	}
 }
