@@ -19,13 +19,27 @@
 //     daemon's existing localruntime socket as agent "cowork", reusing the same
 //     classify -> store -> managedstream -> ledger path Claude Code uses.
 //
+// # Modes
+//
+// The posture follows the deployment-level managed.json mode, like every
+// other hook edge. In observe mode the hook is fire-and-forget and nothing
+// blocks. In enforce mode the hook wraps each event in an envelope with a
+// request id, waits up to 10s for the daemon's verdict at
+// kontext-cowork-decisions/<rid>.json, and emits it verbatim — the bundled
+// CLI honors the permissionDecision. No verdict in time means the hook emits
+// deny ("Kontext daemon unavailable"): fail-closed, mirroring the sidecar.
+//
 // # Caveats
 //
 // Integrity: the spool is written by code running inside the VM, so anything
 // in the VM (including a prompt-injected agent) can append forged events or
 // withhold real ones. Cowork-tagged ledger entries are self-reported
-// telemetry, not attested records, and this package is observe-only —
-// it must not be treated as enforcement.
+// telemetry, not attested records. Enforcement gates agent-via-CLI actions
+// only: in-VM code that bypasses the CLI was never reachable by a hook, and
+// a tool call that lands before settings injection runs unguarded (the
+// health heartbeat surfaces such sessions). A hook killed at the CLI's own
+// timeout is treated by Claude Code as allow, so fail-closed is best-effort
+// within the timeout budget.
 //
 // Delivery: events are replayed at-least-once. A replay that fails after a
 // partial send is retried, so the ledger may very occasionally see a
