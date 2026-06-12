@@ -1424,6 +1424,7 @@ select
 	  select case when decision_result = 'deny' then 1 else 0 end as critical, 1 as actions
 	  from authorization_actions
 	  where canonical_event_type <> 'request.proposed'
+	    and coalesce(decision_category, '') <> 'dry_run'
 	)
 	`)
 	if err := row.Scan(&summary.Critical, &summary.Warnings, &summary.Actions, &summary.Sessions); err != nil {
@@ -1448,6 +1449,7 @@ select actions.session_id,
 	  select session_id, case when decision_result = 'deny' then 1 else 0 end as critical, updated_at as latest_at
 	  from authorization_actions
 	  where canonical_event_type <> 'request.proposed'
+	    and coalesce(decision_category, '') <> 'dry_run'
 		) actions
 left join agent_sessions on agent_sessions.id = actions.session_id
 group by actions.session_id, agent_sessions.mode, agent_sessions.status, agent_sessions.created_at, agent_sessions.updated_at, agent_sessions.closed_at
@@ -1492,6 +1494,7 @@ select actions.session_id,
 	  select session_id, case when decision_result = 'deny' then 1 else 0 end as critical, updated_at as latest_at
 	  from authorization_actions
 	  where session_id = ? and canonical_event_type <> 'request.proposed'
+	    and coalesce(decision_category, '') <> 'dry_run'
 		) actions
 left join agent_sessions on agent_sessions.id = actions.session_id
 group by actions.session_id, agent_sessions.mode, agent_sessions.status, agent_sessions.created_at, agent_sessions.updated_at, agent_sessions.closed_at

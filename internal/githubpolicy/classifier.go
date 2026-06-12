@@ -72,7 +72,7 @@ func ClassifyProviderActions(toolName string, toolInput map[string]any, gitConte
 	case "webfetch", "web_fetch":
 		url, _ := stringField(toolInput, "url")
 		if url != "" && isGithubURL(url) {
-			return []ProviderAction{{Action: "github.api.read"}}
+			return []ProviderAction{{Action: "github.api.read", Resource: normalizeGithubRepo(url)}}
 		}
 	}
 	return nil
@@ -110,12 +110,18 @@ func classifyCommand(command string, gitContext func() GitContext) []ProviderAct
 			continue
 		case "curl", "wget", "http", "https", "httpie":
 			if isGithubURL(segment) {
-				actions = append(actions, ProviderAction{Action: apiAction(commandLooksMutating(segment))})
+				actions = append(actions, ProviderAction{
+					Action:   apiAction(commandLooksMutating(segment)),
+					Resource: normalizeGithubRepo(segment),
+				})
 			}
 			continue
 		}
 		if isGithubURL(segment) {
-			actions = append(actions, ProviderAction{Action: apiAction(commandLooksMutating(segment))})
+			actions = append(actions, ProviderAction{
+				Action:   apiAction(commandLooksMutating(segment)),
+				Resource: normalizeGithubRepo(segment),
+			})
 		}
 	}
 	return actions
@@ -139,6 +145,15 @@ func classifyGhCommand(args []string, raw string, gitContext func() GitContext) 
 		verb = positional[1]
 	}
 	resource := githubRepoFromGhArgs(args)
+	if resource == "" && area == "api" && len(positional) > 1 {
+		// A literal REST endpoint names the repository it targets; -R only
+		// fills {owner}/{repo} placeholders.
+		resource = githubRepoFromAPIEndpoint(positional[1])
+	}
+	if resource == "" && area == "repo" && len(positional) > 2 {
+		// gh repo verbs take the target repository as a positional argument.
+		resource = normalizeGithubRepo(positional[2])
+	}
 	if resource == "" {
 		// Local extension over the cloud classifier: gh acts on the current
 		// repository when -R/--repo is absent, and the endpoint knows its cwd
@@ -347,6 +362,23 @@ func tokenize(command string) []string {
 	return tokens
 }
 
+// githubRepoFromAPIEndpoint extracts the repository slug from a gh api
+// endpoint argument: "repos/<owner>/<repo>/..." or a full API URL. Endpoints
+// with {owner}/{repo} placeholders resolve through -R or the cwd instead.
+func githubRepoFromAPIEndpoint(endpoint string) string {
+	if strings.Contains(endpoint, "{") {
+		return ""
+	}
+	if isGithubURL(endpoint) {
+		return normalizeGithubRepo(endpoint)
+	}
+	segments := strings.Split(strings.TrimPrefix(strings.Trim(endpoint, "/"), "repos/"), "/")
+	if !strings.HasPrefix(strings.Trim(endpoint, "/"), "repos/") || len(segments) < 2 {
+		return ""
+	}
+	return normalizeGithubRepo(segments[0] + "/" + segments[1])
+}
+
 func githubRepoFromGhArgs(args []string) string {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -377,6 +409,7 @@ var gitValueOptions = map[string]bool{
 	"--work-tree": true, "--namespace": true, "--exec-path": true,
 	"--super-prefix": true, "--repo": true, "-o": true, "--push-option": true,
 	"--receive-pack": true, "--exec": true, "--recurse-submodules": true,
+	"-b": true, "--branch": true,
 }
 
 func ghPositionals(args []string) []string {
@@ -457,7 +490,26 @@ func gitBranchFallback(verb string, args []string, gitContext func() GitContext)
 			}
 		}
 	}
+	// clone targets a fresh checkout, not the branch the cwd happens to be
+	// on; only an explicit -b/--branch pins it.
+	if verb == "clone" {
+		return gitFlagValue(args, "-b", "--branch")
+	}
 	return gitContext().Branch
+}
+
+func gitFlagValue(args []string, flags ...string) string {
+	for i, arg := range args {
+		for _, flag := range flags {
+			if arg == flag && i+1 < len(args) {
+				return args[i+1]
+			}
+			if strings.HasPrefix(arg, flag+"=") {
+				return strings.TrimPrefix(arg, flag+"=")
+			}
+		}
+	}
+	return ""
 }
 
 func selectedGitRemoteURL(verb string, args []string, gitContext func() GitContext) string {
@@ -469,6 +521,11 @@ func selectedGitRemoteURL(verb string, args []string, gitContext func() GitConte
 		return ""
 	}
 	if len(positionals) < 2 {
+		// push/fetch/pull without an explicit remote still hit the network —
+		// they default to origin, so the policy evaluation must too.
+		if verb == "push" || verb == "fetch" || verb == "pull" {
+			return gitContext().RemoteByName["origin"]
+		}
 		return ""
 	}
 	remote := positionals[1]
@@ -515,6 +572,7 @@ func normalizeGitPushRef(value string) string {
 
 var (
 	githubSSHRepoRE  = regexp.MustCompile(`(?i)^git@github\.com:([^/\s]+/[^/\s]+)$`)
+	githubAPIRepoRE  = regexp.MustCompile(`(?i)api\.github\.com/repos/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)`)
 	githubURLRepoRE  = regexp.MustCompile(`(?i)github\.com[:/]([^/\s]+/[^/\s?#]+)`)
 	githubSlugRepoRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 	dotGitSuffixRE   = regexp.MustCompile(`(?i)\.git$`)
@@ -527,6 +585,15 @@ func normalizeGithubRepo(value string) string {
 	}
 	if match := githubSSHRepoRE.FindStringSubmatch(trimmed); match != nil {
 		return match[1]
+	}
+	// REST API URLs nest the slug under /repos/; the generic URL pattern
+	// would capture "repos/<owner>" instead. Non-repos API paths (orgs,
+	// search, ...) carry no repository.
+	if match := githubAPIRepoRE.FindStringSubmatch(trimmed); match != nil {
+		return dotGitSuffixRE.ReplaceAllString(match[1], "")
+	}
+	if strings.Contains(strings.ToLower(trimmed), "api.github.com") {
+		return ""
 	}
 	if match := githubURLRepoRE.FindStringSubmatch(trimmed); match != nil {
 		return dotGitSuffixRE.ReplaceAllString(match[1], "")

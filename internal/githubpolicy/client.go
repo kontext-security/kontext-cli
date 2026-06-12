@@ -42,9 +42,12 @@ func FetchSnapshot(ctx context.Context, client *http.Client, cloudURL, installTo
 		return Snapshot{}, fmt.Errorf("github policy snapshot fetch failed: status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSnapshotBodyBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSnapshotBodyBytes+1))
 	if err != nil {
 		return Snapshot{}, err
+	}
+	if len(body) > maxSnapshotBodyBytes {
+		return Snapshot{}, fmt.Errorf("github policy snapshot exceeds %d bytes", maxSnapshotBodyBytes)
 	}
 	var snapshot Snapshot
 	if err := json.Unmarshal(body, &snapshot); err != nil {

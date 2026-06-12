@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -41,6 +42,18 @@ func TestFetchSnapshotSendsInstallTokenAndDecodes(t *testing.T) {
 	}
 	if snapshot.Epoch != 3 || snapshot.Hash != "hash-3" || len(snapshot.Rules) != 1 {
 		t.Fatalf("snapshot = %+v", snapshot)
+	}
+}
+
+func TestFetchSnapshotRejectsOversizedBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, maxSnapshotBodyBytes+1))
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := FetchSnapshot(context.Background(), server.Client(), server.URL, "test-install-token")
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("FetchSnapshot() error = %v, want explicit size-limit failure", err)
 	}
 }
 

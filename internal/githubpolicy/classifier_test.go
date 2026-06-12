@@ -55,7 +55,7 @@ func TestClassifyGitPush(t *testing.T) {
 		},
 		{
 			command: "git clone https://github.com/acme/api.git",
-			want:    []ProviderAction{{Action: "github.repo.read", Resource: "acme/api", BranchOrRef: "feature/x"}},
+			want:    []ProviderAction{{Action: "github.repo.read", Resource: "acme/api"}},
 		},
 	}
 	for _, testCase := range cases {
@@ -169,6 +169,119 @@ func TestClassifyNonGithubCommandsAreIgnored(t *testing.T) {
 	}
 	if got := ClassifyProviderActions("Read", map[string]any{"file_path": "/tmp/x"}, nil); got != nil {
 		t.Fatalf("Read tool = %+v, want nil", got)
+	}
+}
+
+func TestClassifyGitImplicitRemoteDefaultsToOrigin(t *testing.T) {
+	cases := []struct {
+		command string
+		want    []ProviderAction
+	}{
+		{
+			command: "git push",
+			want:    []ProviderAction{{Action: "github.repo.write", Resource: "acme/api", BranchOrRef: "feature/x"}},
+		},
+		{
+			command: "git pull",
+			want:    []ProviderAction{{Action: "github.repo.read", Resource: "acme/api", BranchOrRef: "feature/x"}},
+		},
+		{
+			command: "git fetch",
+			want:    []ProviderAction{{Action: "github.repo.read", Resource: "acme/api", BranchOrRef: "feature/x"}},
+		},
+	}
+	for _, testCase := range cases {
+		got := classifyBash(t, testCase.command, projectContext())
+		if !reflect.DeepEqual(got, testCase.want) {
+			t.Errorf("classify(%q) = %+v, want %+v", testCase.command, got, testCase.want)
+		}
+	}
+	// No origin remote configured: nothing to evaluate.
+	if got := classifyBash(t, "git push", GitContext{Branch: "main"}); got != nil {
+		t.Fatalf("classify(git push) without remotes = %+v, want nil", got)
+	}
+}
+
+func TestClassifyGitCloneDoesNotInheritCwdBranch(t *testing.T) {
+	got := classifyBash(t, "git clone https://github.com/acme/api.git", projectContext())
+	want := []ProviderAction{{Action: "github.repo.read", Resource: "acme/api"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("clone = %+v, want no branch from cwd", got)
+	}
+	got = classifyBash(t, "git clone -b release https://github.com/acme/api.git", projectContext())
+	want = []ProviderAction{{Action: "github.repo.read", Resource: "acme/api", BranchOrRef: "release"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("clone -b = %+v, want explicit branch", got)
+	}
+}
+
+func TestClassifyGhRepoPositionalArgument(t *testing.T) {
+	// The positional repo argument names the target even when the cwd is a
+	// different repository.
+	got := classifyBash(t, "gh repo delete acme/admin --yes", projectContext())
+	want := []ProviderAction{{Action: "github.repo.write", Resource: "acme/admin"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("gh repo delete = %+v, want %+v", got, want)
+	}
+	got = classifyBash(t, "gh repo clone https://github.com/acme/admin.git", projectContext())
+	want = []ProviderAction{{Action: "github.repo.read", Resource: "acme/admin"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("gh repo clone = %+v, want %+v", got, want)
+	}
+}
+
+func TestClassifyGhAPIEndpointRepo(t *testing.T) {
+	cases := []struct {
+		command string
+		want    ProviderAction
+	}{
+		{
+			command: "gh api repos/acme/admin/issues -f title=x",
+			want:    ProviderAction{Action: "github.api.write", Resource: "acme/admin"},
+		},
+		{
+			command: "gh api /repos/acme/admin/pulls",
+			want:    ProviderAction{Action: "github.api.read", Resource: "acme/admin"},
+		},
+		{
+			command: "gh api https://api.github.com/repos/acme/admin",
+			want:    ProviderAction{Action: "github.api.read", Resource: "acme/admin"},
+		},
+		{
+			// Placeholders resolve through -R, not the literal path.
+			command: "gh api repos/{owner}/{repo}/issues -R acme/web",
+			want:    ProviderAction{Action: "github.api.read", Resource: "acme/web"},
+		},
+		{
+			// Non-repos endpoints carry no repository: cwd fallback applies.
+			command: "gh api orgs/acme/teams",
+			want:    ProviderAction{Action: "github.api.read", Resource: "acme/api"},
+		},
+	}
+	for _, testCase := range cases {
+		got := classifyBash(t, testCase.command, projectContext())
+		if len(got) != 1 || got[0] != testCase.want {
+			t.Errorf("classify(%q) = %+v, want %+v", testCase.command, got, testCase.want)
+		}
+	}
+}
+
+func TestClassifyURLResources(t *testing.T) {
+	got := classifyBash(t, "curl -X DELETE https://api.github.com/repos/acme/admin/issues/1", GitContext{})
+	want := []ProviderAction{{Action: "github.api.write", Resource: "acme/admin"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("curl api = %+v, want %+v", got, want)
+	}
+	// Non-repos API paths have no repository to anchor on.
+	got = classifyBash(t, "curl https://api.github.com/orgs/acme/teams", GitContext{})
+	want = []ProviderAction{{Action: "github.api.read"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("curl orgs = %+v, want no resource", got)
+	}
+	got = ClassifyProviderActions("WebFetch", map[string]any{"url": "https://github.com/acme/admin/pull/1"}, nil)
+	want = []ProviderAction{{Action: "github.api.read", Resource: "acme/admin"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("WebFetch = %+v, want %+v", got, want)
 	}
 }
 

@@ -139,6 +139,58 @@ func TestSaveDecisionRecordsGithubDryRunRows(t *testing.T) {
 	}
 }
 
+func TestDryRunRowsDoNotCountAsCriticalActions(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+
+	event := risk.HookEvent{
+		SessionID:     "session-1",
+		Agent:         "claude",
+		HookEventName: "PreToolUse",
+		ToolName:      "Bash",
+		ToolInput:     map[string]any{"command": "git push origin main"},
+		ToolUseID:     "toolu_1",
+	}
+	decision := risk.RiskDecision{
+		Decision: risk.DecisionAllow,
+		GithubPolicy: []githubpolicy.Evaluation{{
+			Request:    githubpolicy.Request{Action: "github.repo.write", Resource: "acme/api"},
+			Result:     "deny",
+			ReasonCode: githubpolicy.ReasonCodeDeny,
+			Reason:     "would deny",
+			Epoch:      5,
+			Hash:       "hash-5",
+		}},
+	}
+	if _, err := store.SaveDecision(context.Background(), event, decision); err != nil {
+		t.Fatalf("SaveDecision() error = %v", err)
+	}
+
+	summary, err := store.Summary(context.Background())
+	if err != nil {
+		t.Fatalf("Summary() error = %v", err)
+	}
+	// The runtime decision was allow; the observer-mode would-deny must not
+	// surface as a real critical action.
+	if summary.Critical != 0 {
+		t.Fatalf("Summary.Critical = %d, want 0", summary.Critical)
+	}
+	if summary.Actions != 1 {
+		t.Fatalf("Summary.Actions = %d, want only the runtime decision", summary.Actions)
+	}
+
+	sessions, err := store.Sessions(context.Background())
+	if err != nil {
+		t.Fatalf("Sessions() error = %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].Critical != 0 {
+		t.Fatalf("Sessions() = %+v, want zero critical", sessions)
+	}
+}
+
 func TestSaveDecisionWithoutGithubPolicyAddsNoExtraRows(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {
