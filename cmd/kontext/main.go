@@ -27,6 +27,7 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/update"
 
 	_ "github.com/kontext-security/kontext-cli/internal/agent/claude"
+	_ "github.com/kontext-security/kontext-cli/internal/agent/cowork"
 )
 
 var version = "dev"

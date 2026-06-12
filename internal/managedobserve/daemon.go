@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/coworkobserve"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
@@ -90,6 +91,15 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			Diagnostic:        opts.Diagnostic,
 		})
 	}()
+
+	// Cowork observation runs alongside Claude Code in the same daemon, replaying
+	// in-VM Cowork tool events into the same localruntime socket as agent "cowork".
+	if coworkobserve.Enabled() {
+		go coworkobserve.Run(ctx, coworkobserve.Options{
+			SocketPath: socketPath,
+			Diagnostic: opts.Diagnostic,
+		})
+	}
 
 	idleTimeout := opts.IdleTimeout
 	if idleTimeout == 0 {
