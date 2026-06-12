@@ -35,6 +35,7 @@ import (
 
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/hook"
+	"github.com/kontext-security/kontext-cli/internal/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
 )
 
@@ -258,19 +259,6 @@ func (c *collector) saveOffsets(opts Options) {
 	c.dirty = false
 }
 
-type coworkEvent struct {
-	SessionID     string          `json:"session_id"`
-	SessionIDAlt  string          `json:"sessionId"`
-	HookEventName string          `json:"hook_event_name"`
-	HookEventAlt  string          `json:"hookEventName"`
-	ToolName      string          `json:"tool_name"`
-	ToolNameAlt   string          `json:"toolName"`
-	ToolInput     json.RawMessage `json:"tool_input"`
-	ToolInputAlt  json.RawMessage `json:"toolInput"`
-	ToolUseID     string          `json:"tool_use_id"`
-	CWD           string          `json:"cwd"`
-}
-
 func (c *collector) collect(opts Options) {
 	spools, _ := filepath.Glob(filepath.Join(opts.SessionsRoot, "*", "*", "local_*", spoolName))
 	for _, spool := range spools {
@@ -333,29 +321,21 @@ func (c *collector) drain(opts Options, spool string) {
 	c.setOffset(spool, off+int64(consumed))
 }
 
+// replay decodes a spool line with the same decoder the Claude Code hook path
+// uses (Cowork runs the bundled Claude Code CLI, so the formats are identical)
+// and forwards it to the daemon socket as agent "cowork".
 func (c *collector) replay(opts Options, line []byte) error {
-	var ev coworkEvent
-	if err := json.Unmarshal(line, &ev); err != nil {
+	event, err := hookruntime.DecodeClaudeEvent(line, agentName)
+	if err != nil {
 		return fmt.Errorf("%w: %v", errMalformed, err)
 	}
-	hookEvent := firstNonEmpty(ev.HookEventName, ev.HookEventAlt)
-	if hook.HookName(hookEvent) != hook.HookPreToolUse {
+	if event.HookName != hook.HookPreToolUse {
 		return nil // injector only wires PreToolUse
 	}
-	sessionID := firstNonEmpty(ev.SessionID, ev.SessionIDAlt)
-	toolInput := ev.ToolInput
-	if len(toolInput) == 0 {
-		toolInput = ev.ToolInputAlt
-	}
-	req := localruntime.EvaluateRequest{
-		Type:      "evaluate",
-		SessionID: "cowork-" + sessionID,
-		Agent:     agentName,
-		HookEvent: hook.HookPreToolUse.String(),
-		ToolName:  firstNonEmpty(ev.ToolName, ev.ToolNameAlt),
-		ToolInput: toolInput,
-		ToolUseID: ev.ToolUseID,
-		CWD:       ev.CWD,
+	event.SessionID = "cowork-" + event.SessionID
+	req, err := localruntime.EvaluateRequestFromEvent(event)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errMalformed, err)
 	}
 	return send(opts.SocketPath, req)
 }
@@ -372,13 +352,4 @@ func send(socketPath string, req localruntime.EvaluateRequest) error {
 	}
 	var res localruntime.EvaluateResult
 	return localruntime.ReadMessage(conn, &res)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }

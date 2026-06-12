@@ -234,6 +234,35 @@ func TestOffsetsPersistAcrossRestarts(t *testing.T) {
 	}
 }
 
+func TestReplayDecodesCamelCaseAndPermissionMode(t *testing.T) {
+	daemon, socketPath := startFakeDaemon(t)
+	opts := testOptions(t, socketPath)
+	spool := filepath.Join(t.TempDir(), spoolName)
+	writeSpool(t, spool, `{"sessionId":"s9","hookEventName":"PreToolUse","toolName":"Bash","toolInput":{"command":"ls"},"toolUseId":"tu-9","cwd":"/w","permission_mode":"acceptEdits"}`+"\n")
+
+	c := &collector{offsets: map[string]int64{}}
+	c.drain(opts, spool)
+
+	daemon.mu.Lock()
+	defer daemon.mu.Unlock()
+	if len(daemon.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(daemon.requests))
+	}
+	req := daemon.requests[0]
+	if req.SessionID != "cowork-s9" || req.Agent != "cowork" {
+		t.Fatalf("session/agent = %q/%q", req.SessionID, req.Agent)
+	}
+	if req.ToolName != "Bash" || req.ToolUseID != "tu-9" {
+		t.Fatalf("camelCase fields dropped: tool=%q toolUseID=%q", req.ToolName, req.ToolUseID)
+	}
+	if req.PermissionMode != "acceptEdits" {
+		t.Fatalf("permission mode dropped: %q", req.PermissionMode)
+	}
+	if !bytes.Contains(req.ToolInput, []byte(`"ls"`)) {
+		t.Fatalf("tool input dropped: %s", req.ToolInput)
+	}
+}
+
 func TestDrainResetsOffsetWhenSpoolShrinks(t *testing.T) {
 	daemon, socketPath := startFakeDaemon(t)
 	opts := testOptions(t, socketPath)
