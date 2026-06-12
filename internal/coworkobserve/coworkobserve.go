@@ -52,6 +52,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -68,9 +69,16 @@ const (
 	// EnvSessionsRoot overrides the Cowork sessions root for testing.
 	EnvSessionsRoot = "KONTEXT_COWORK_SESSIONS_ROOT"
 
-	spoolName    = "kontext-cowork-events.jsonl"
-	settingsMark = spoolName // settings.json containing this string is ours
-	agentName    = "cowork"
+	spoolName        = "kontext-cowork-events.jsonl"
+	decisionsDirName = "kontext-cowork-decisions"
+	settingsMark     = spoolName // hook commands containing this string are ours
+	agentName        = "cowork"
+
+	// Enforce-hook budget, mirroring the sidecar conventions: the hook waits
+	// up to decisionWait for the daemon's verdict (hookConnDeadline is 10s on
+	// the socket side) inside claudemanaged's default 20s hook timeout.
+	enforceHookTimeout = 20
+	observeHookTimeout = 5
 )
 
 // Enabled reports whether Cowork observation is turned on via the environment.
@@ -116,35 +124,61 @@ func DefaultSessionsRoot() string {
 	return filepath.Join(home, "Library", "Application Support", "Claude", "local-agent-mode-sessions")
 }
 
-// The command hook reads the full Claude Code hook event from stdin and
+// The observe hook reads the full Claude Code hook event from stdin and
 // appends it to a spool file in the guest $HOME (the per-session dir, which is
 // the host mount: its .claude subdir is where the CLI reads these settings
 // from), then exits 0 so the tool is never blocked. $HOME is absolute, so the
 // spool lands in the session dir no matter what cwd the hook inherits.
-const hookCommand = `p=$(cat); printf '%s\n' "$p" >> "$HOME"/` + spoolName + ` 2>/dev/null; true`
+const observeHookCommand = `p=$(cat); printf '%s\n' "$p" >> "$HOME"/` + spoolName + ` 2>/dev/null; true`
 
-func hookEntry() map[string]any {
+// denyJSON is the fail-closed verdict the enforce hook emits itself when no
+// decision arrives in time. Reason mirrors the sidecar's enforce behavior on
+// daemon unavailability (guard/hookruntime).
+const denyJSON = `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Kontext daemon unavailable"}}`
+
+// The enforce hook wraps the event in an envelope carrying a hook-generated
+// request ID (the shell cannot parse tool_use_id out of the JSON), appends it
+// to the spool, then polls for the daemon-rendered decision file and emits it
+// verbatim — so the CLI sees exactly the permissionDecision the policy engine
+// produced. No decision within 10s (100 x 0.1s) means deny: fail-closed, same
+// as the sidecar when the daemon is unreachable. The one gap we cannot close
+// is the CLI killing the hook at its 20s timeout, which Claude Code treats as
+// allow.
+const enforceHookCommand = `p=$(cat)
+deny='` + denyJSON + `'
+if [ -z "$p" ]; then printf '%s\n' "$deny"; exit 0; fi
+rid="$$-$(date +%s%N)"
+if ! printf '{"rid":"%s","event":%s}\n' "$rid" "$p" >> "$HOME"/` + spoolName + ` 2>/dev/null; then printf '%s\n' "$deny"; exit 0; fi
+d="$HOME"/` + decisionsDirName + `/"$rid".json
+i=0
+while [ "$i" -lt 100 ]; do
+  if [ -f "$d" ]; then cat "$d" 2>/dev/null; rm -f "$d" 2>/dev/null; exit 0; fi
+  i=$((i+1)); sleep 0.1
+done
+printf '%s\n' "$deny"`
+
+func hookEntry(mode guardhookruntime.Mode) map[string]any {
+	command, timeout := observeHookCommand, observeHookTimeout
+	if mode == guardhookruntime.ModeEnforce {
+		command, timeout = enforceHookCommand, enforceHookTimeout
+	}
 	return map[string]any{
 		"matcher": "*",
 		"hooks": []any{
-			// A local file append is near-instant; the short timeout bounds the
-			// latency a hung host mount can add to every tool call.
-			map[string]any{"type": "command", "command": hookCommand, "timeout": 5},
+			map[string]any{"type": "command", "command": command, "timeout": timeout},
 		},
 	}
 }
 
-// mergeSettings adds the spool hook to existing settings.json content,
-// preserving every other setting and any hooks Cowork or the user put there.
-// Existing content that is not valid JSON is replaced — the in-VM CLI could
-// not have parsed it either. The second return reports whether a write is
-// needed (false when the hook is already present).
-func mergeSettings(existing []byte) ([]byte, bool) {
+// mergeSettings adds the given spool hook entry to existing settings.json
+// content, preserving every other setting and any hooks Cowork or the user put
+// there. Stale variants of our own entry (e.g. after a mode switch) are
+// replaced. Existing content that is not valid JSON is replaced wholesale —
+// the in-VM CLI could not have parsed it either. The second return reports
+// whether a write is needed (false when the current entry is already present).
+func mergeSettings(existing []byte, entry map[string]any) ([]byte, bool) {
 	settings := map[string]any{}
 	if len(bytes.TrimSpace(existing)) > 0 {
-		if bytes.Contains(existing, []byte(settingsMark)) {
-			return nil, false
-		}
 		if err := json.Unmarshal(existing, &settings); err != nil {
 			settings = map[string]any{}
 		}
@@ -154,13 +188,56 @@ func mergeSettings(existing []byte) ([]byte, bool) {
 		hooks = map[string]any{}
 	}
 	pre, _ := hooks["PreToolUse"].([]any)
-	hooks["PreToolUse"] = append(pre, hookEntry())
+	wantJSON, err := json.Marshal(entry)
+	if err != nil {
+		return nil, false
+	}
+	kept := make([]any, 0, len(pre)+1)
+	current := false
+	for _, candidate := range pre {
+		if !entryIsOurs(candidate) {
+			kept = append(kept, candidate)
+			continue
+		}
+		if got, err := json.Marshal(candidate); err == nil && bytes.Equal(got, wantJSON) && !current {
+			current = true
+			kept = append(kept, candidate)
+		}
+		// stale or duplicate variants of our entry are dropped
+	}
+	if current && len(kept) == len(pre) {
+		return nil, false
+	}
+	if !current {
+		kept = append(kept, entry)
+	}
+	hooks["PreToolUse"] = kept
 	settings["hooks"] = hooks
 	data, err := json.Marshal(settings)
 	if err != nil {
 		return nil, false
 	}
 	return data, true
+}
+
+// entryIsOurs reports whether a PreToolUse matcher group was installed by the
+// injector (any of its command hooks references the spool file).
+func entryIsOurs(candidate any) bool {
+	m, ok := candidate.(map[string]any)
+	if !ok {
+		return false
+	}
+	hooks, _ := m["hooks"].([]any)
+	for _, h := range hooks {
+		hm, ok := h.(map[string]any)
+		if !ok {
+			continue
+		}
+		if command, _ := hm["command"].(string); strings.Contains(command, settingsMark) {
+			return true
+		}
+	}
+	return false
 }
 
 // writeFileAtomic writes via temp file + rename so the in-VM CLI can never
@@ -183,7 +260,13 @@ func Run(ctx context.Context, opts Options) {
 		opts.SessionsRoot = DefaultSessionsRoot()
 	}
 	if opts.PollInterval <= 0 {
-		opts.PollInterval = 250 * time.Millisecond
+		// Enforce holds every tool call for the spool round-trip, so scan
+		// tighter than the observe default.
+		if opts.Mode == guardhookruntime.ModeEnforce {
+			opts.PollInterval = 100 * time.Millisecond
+		} else {
+			opts.PollInterval = 250 * time.Millisecond
+		}
 	}
 	if opts.SessionsRoot == "" {
 		opts.Diagnostic.Printf("cowork observe: no sessions root; disabled\n")
@@ -224,6 +307,7 @@ type health struct {
 	spooled        map[string]bool // session dirs that produced a spool file
 	eventsReplayed int64
 	linesDropped   int64
+	denied         int64
 }
 
 func newHealth() *health {
@@ -236,8 +320,8 @@ func newHealth() *health {
 
 func (h *health) logHeartbeat(opts Options) {
 	opts.Diagnostic.Printf(
-		"cowork observe: health: sessions seen=%d hooked=%d spooling=%d events replayed=%d malformed dropped=%d\n",
-		len(h.sessionsSeen), len(h.hooked), len(h.spooled), h.eventsReplayed, h.linesDropped,
+		"cowork observe: health: sessions seen=%d hooked=%d spooling=%d events replayed=%d denied=%d malformed dropped=%d\n",
+		len(h.sessionsSeen), len(h.hooked), len(h.spooled), h.eventsReplayed, h.denied, h.linesDropped,
 	)
 	if len(h.sessionsSeen) > len(h.hooked) {
 		opts.Diagnostic.Printf(
@@ -250,11 +334,12 @@ func (h *health) logHeartbeat(opts Options) {
 	}
 }
 
-// inject merges the spool hook into settings.json in any recent per-session
-// .claude dir that does not yet carry it.
+// inject merges the mode-appropriate spool hook into settings.json in any
+// recent per-session .claude dir that does not yet carry it.
 func inject(opts Options, h *health) {
 	claudeDirs, _ := filepath.Glob(filepath.Join(opts.SessionsRoot, "*", "*", "local_*", ".claude"))
 	cutoff := time.Now().Add(-3 * time.Minute)
+	entry := hookEntry(opts.Mode)
 	for _, dir := range claudeDirs {
 		info, err := os.Stat(dir)
 		if err != nil || info.ModTime().Before(cutoff) {
@@ -266,7 +351,7 @@ func inject(opts Options, h *health) {
 		if err != nil && !os.IsNotExist(err) {
 			continue
 		}
-		merged, needed := mergeSettings(existing)
+		merged, needed := mergeSettings(existing, entry)
 		if !needed {
 			h.hooked[dir] = true
 			continue // already ours
@@ -348,6 +433,7 @@ func (c *collector) collect(opts Options, h *health) {
 		h.spooled[filepath.Dir(spool)] = true
 		c.drain(opts, h, spool)
 		c.cleanup(opts, spool)
+		cleanupOrphanDecisions(opts, filepath.Dir(spool))
 	}
 	// Cowork deleted the session dir; its offset entry is dead weight.
 	for spool := range c.offsets {
@@ -423,7 +509,7 @@ func (c *collector) drain(opts Options, h *health, spool string) {
 		}
 		line := bytes.TrimSpace(data[consumed : consumed+idx])
 		if len(line) > 0 {
-			if err := c.replay(opts, line); err != nil {
+			if err := c.replay(opts, h, spool, line); err != nil {
 				if !errors.Is(err, errMalformed) {
 					opts.Diagnostic.Printf("cowork observe: replay: %v\n", err)
 					break
@@ -439,11 +525,35 @@ func (c *collector) drain(opts Options, h *health, spool string) {
 	c.setOffset(spool, off+int64(consumed))
 }
 
+// spoolEnvelope is what the enforce hook appends: the raw event plus the
+// hook-generated request ID that names the decision file. Observe-mode lines
+// are bare events and unwrap to an empty rid.
+type spoolEnvelope struct {
+	RID   string          `json:"rid"`
+	Event json.RawMessage `json:"event"`
+}
+
+func unwrapEnvelope(line []byte) (rid string, payload []byte) {
+	var env spoolEnvelope
+	if err := json.Unmarshal(line, &env); err == nil && len(env.Event) > 0 {
+		return env.RID, env.Event
+	}
+	return "", line
+}
+
+// ridPattern bounds what may name a decision file. The rid comes from inside
+// the VM, so anything outside this charset (notably path separators) must be
+// rejected before it reaches a filepath.Join.
+var ridPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
 // replay decodes a spool line with the same decoder the Claude Code hook path
 // uses (Cowork runs the bundled Claude Code CLI, so the formats are identical)
-// and forwards it to the daemon socket as agent "cowork".
-func (c *collector) replay(opts Options, line []byte) error {
-	event, err := hookruntime.DecodeClaudeEvent(line, agentName)
+// and forwards it to the daemon socket as agent "cowork". Lines carrying a
+// request ID get the daemon's verdict written back as a decision file for the
+// waiting enforce hook.
+func (c *collector) replay(opts Options, h *health, spool string, line []byte) error {
+	rid, payload := unwrapEnvelope(line)
+	event, err := hookruntime.DecodeClaudeEvent(payload, agentName)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errMalformed, err)
 	}
@@ -455,19 +565,69 @@ func (c *collector) replay(opts Options, line []byte) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", errMalformed, err)
 	}
-	return send(opts.SocketPath, req)
-}
-
-func send(socketPath string, req localruntime.EvaluateRequest) error {
-	conn, err := net.DialTimeout("unix", socketPath, 5*time.Second)
+	res, err := send(opts.SocketPath, req)
 	if err != nil {
 		return err
+	}
+	if !res.Allowed {
+		h.denied++
+	}
+	if rid == "" {
+		return nil // observe hook: nothing is waiting
+	}
+	// A failed decision write is logged but not retried: the offset advances
+	// (the event is ingested) and the waiting hook fails closed on its own.
+	if !ridPattern.MatchString(rid) {
+		opts.Diagnostic.Printf("cowork observe: rejected decision request id %q\n", rid)
+		return nil
+	}
+	if err := writeDecision(filepath.Join(filepath.Dir(spool), decisionsDirName), rid, res); err != nil {
+		opts.Diagnostic.Printf("cowork observe: write decision %s: %v\n", rid, err)
+	}
+	return nil
+}
+
+// writeDecision renders the verdict in the exact PreToolUse output shape the
+// bundled CLI honors and parks it where the enforce hook is polling.
+func writeDecision(dir, rid string, res localruntime.EvaluateResult) error {
+	result := localruntime.ResultFromEvaluateResult(res)
+	data, err := hookruntime.EncodeClaudeResult(hook.HookPreToolUse.String(), result)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return writeFileAtomic(filepath.Join(dir, rid+".json"), data, 0o644)
+}
+
+// cleanupOrphanDecisions removes decision files nobody consumed (hook killed,
+// session gone). The hook deletes its own file on the happy path.
+func cleanupOrphanDecisions(opts Options, sessionDir string) {
+	files, _ := filepath.Glob(filepath.Join(sessionDir, decisionsDirName, "*.json"))
+	cutoff := time.Now().Add(-10 * time.Minute)
+	for _, file := range files {
+		if info, err := os.Stat(file); err == nil && info.ModTime().Before(cutoff) {
+			if err := os.Remove(file); err != nil {
+				opts.Diagnostic.Printf("cowork observe: remove orphan decision %s: %v\n", file, err)
+			}
+		}
+	}
+}
+
+func send(socketPath string, req localruntime.EvaluateRequest) (localruntime.EvaluateResult, error) {
+	var res localruntime.EvaluateResult
+	conn, err := net.DialTimeout("unix", socketPath, 5*time.Second)
+	if err != nil {
+		return res, err
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if err := localruntime.WriteMessage(conn, req); err != nil {
-		return err
+		return res, err
 	}
-	var res localruntime.EvaluateResult
-	return localruntime.ReadMessage(conn, &res)
+	if err := localruntime.ReadMessage(conn, &res); err != nil {
+		return res, err
+	}
+	return res, nil
 }

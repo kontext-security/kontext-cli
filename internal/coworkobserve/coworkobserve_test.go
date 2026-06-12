@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
+	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
 )
 
@@ -21,6 +22,13 @@ type fakeDaemon struct {
 	listener net.Listener
 	mu       sync.Mutex
 	requests []localruntime.EvaluateRequest
+	result   *localruntime.EvaluateResult
+}
+
+func (d *fakeDaemon) setResult(res localruntime.EvaluateResult) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.result = &res
 }
 
 func startFakeDaemon(t *testing.T) (*fakeDaemon, string) {
@@ -51,8 +59,12 @@ func startFakeDaemon(t *testing.T) (*fakeDaemon, string) {
 				}
 				d.mu.Lock()
 				d.requests = append(d.requests, req)
+				res := localruntime.EvaluateResult{Type: "result", Decision: "allow", Allowed: true}
+				if d.result != nil {
+					res = *d.result
+				}
 				d.mu.Unlock()
-				_ = localruntime.WriteMessage(conn, localruntime.EvaluateResult{Type: "result", Allowed: true})
+				_ = localruntime.WriteMessage(conn, res)
 			}(conn)
 		}
 	}()
@@ -96,7 +108,7 @@ func eventLine(tool string) string {
 
 func TestMergeSettingsPreservesExistingContent(t *testing.T) {
 	existing := []byte(`{"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo hi"}]}],"Stop":[{"hooks":[{"type":"command","command":"echo bye"}]}]}}`)
-	merged, needed := mergeSettings(existing)
+	merged, needed := mergeSettings(existing, hookEntry(guardhookruntime.ModeObserve))
 	if !needed {
 		t.Fatal("mergeSettings reported no write needed for foreign settings")
 	}
@@ -120,14 +132,14 @@ func TestMergeSettingsPreservesExistingContent(t *testing.T) {
 	}
 
 	// A second merge is a no-op.
-	if _, needed := mergeSettings(merged); needed {
+	if _, needed := mergeSettings(merged, hookEntry(guardhookruntime.ModeObserve)); needed {
 		t.Fatal("mergeSettings wants to rewrite settings that already carry the hook")
 	}
 }
 
 func TestMergeSettingsFromEmptyAndInvalid(t *testing.T) {
 	for _, existing := range [][]byte{nil, []byte("  "), []byte("{broken")} {
-		merged, needed := mergeSettings(existing)
+		merged, needed := mergeSettings(existing, hookEntry(guardhookruntime.ModeObserve))
 		if !needed {
 			t.Fatalf("mergeSettings(%q) reported no write needed", existing)
 		}
@@ -138,6 +150,32 @@ func TestMergeSettingsFromEmptyAndInvalid(t *testing.T) {
 		if !bytes.Contains(merged, []byte(settingsMark)) {
 			t.Fatal("merged settings missing spool hook")
 		}
+	}
+}
+
+func TestMergeSettingsReplacesStaleVariantOnModeSwitch(t *testing.T) {
+	observed, needed := mergeSettings(nil, hookEntry(guardhookruntime.ModeObserve))
+	if !needed {
+		t.Fatal("initial observe merge reported no write needed")
+	}
+
+	enforced, needed := mergeSettings(observed, hookEntry(guardhookruntime.ModeEnforce))
+	if !needed {
+		t.Fatal("mode switch reported no write needed")
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(enforced, &settings); err != nil {
+		t.Fatalf("merged settings are not valid JSON: %v", err)
+	}
+	pre := settings["hooks"].(map[string]any)["PreToolUse"].([]any)
+	if len(pre) != 1 {
+		t.Fatalf("PreToolUse entries = %d, want stale observe variant replaced", len(pre))
+	}
+	if !bytes.Contains(enforced, []byte(decisionsDirName)) {
+		t.Fatal("enforce variant missing decision poll")
+	}
+	if _, needed := mergeSettings(enforced, hookEntry(guardhookruntime.ModeEnforce)); needed {
+		t.Fatal("repeat enforce merge should be a no-op")
 	}
 }
 
@@ -351,6 +389,86 @@ func TestCollectKeepsUndrainedSpools(t *testing.T) {
 	c.collect(opts, newHealth())
 	if _, err := os.Stat(spool); err != nil {
 		t.Fatalf("undrained spool was removed: %v", err)
+	}
+}
+
+func TestEnforceReplayWritesDecisionFile(t *testing.T) {
+	daemon, socketPath := startFakeDaemon(t)
+	daemon.setResult(localruntime.EvaluateResult{
+		Type:     "result",
+		Decision: "deny",
+		Allowed:  false,
+		Reason:   "blocked by policy",
+	})
+	opts := testOptions(t, socketPath)
+	sessionDir := filepath.Join(opts.SessionsRoot, "acct", "ws", "local_abc")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spool := filepath.Join(sessionDir, spoolName)
+	writeSpool(t, spool, `{"rid":"123-456","event":`+eventLine("Bash")+`}`+"\n")
+
+	c := &collector{offsets: map[string]int64{}}
+	h := newHealth()
+	c.collect(opts, h)
+
+	decision, err := os.ReadFile(filepath.Join(sessionDir, decisionsDirName, "123-456.json"))
+	if err != nil {
+		t.Fatalf("decision file not written: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(decision, &out); err != nil {
+		t.Fatalf("decision is not valid JSON: %v", err)
+	}
+	specific := out["hookSpecificOutput"].(map[string]any)
+	if specific["permissionDecision"] != "deny" {
+		t.Fatalf("permissionDecision = %v, want deny", specific["permissionDecision"])
+	}
+	if specific["permissionDecisionReason"] != "blocked by policy" {
+		t.Fatalf("reason = %v", specific["permissionDecisionReason"])
+	}
+	if h.denied != 1 {
+		t.Fatalf("denied counter = %d, want 1", h.denied)
+	}
+}
+
+func TestObserveLinesWriteNoDecision(t *testing.T) {
+	_, socketPath := startFakeDaemon(t)
+	opts := testOptions(t, socketPath)
+	sessionDir := filepath.Join(opts.SessionsRoot, "acct", "ws", "local_abc")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSpool(t, filepath.Join(sessionDir, spoolName), eventLine("Bash")+"\n")
+
+	c := &collector{offsets: map[string]int64{}}
+	c.collect(opts, newHealth())
+	if _, err := os.Stat(filepath.Join(sessionDir, decisionsDirName)); !os.IsNotExist(err) {
+		t.Fatalf("decisions dir created for observe-mode line (err=%v)", err)
+	}
+}
+
+func TestReplayRejectsUnsafeRequestIDs(t *testing.T) {
+	daemon, socketPath := startFakeDaemon(t)
+	opts := testOptions(t, socketPath)
+	sessionDir := filepath.Join(opts.SessionsRoot, "acct", "ws", "local_abc")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spool := filepath.Join(sessionDir, spoolName)
+	writeSpool(t, spool, `{"rid":"../escape","event":`+eventLine("Bash")+`}`+"\n")
+
+	c := &collector{offsets: map[string]int64{}}
+	c.collect(opts, newHealth())
+
+	// The event is still ingested, but no decision file may be written for a
+	// rid that could steer the path (".." alone has no separator, but the
+	// pattern rejects "/" outright).
+	if got := daemon.toolNames(); len(got) != 1 {
+		t.Fatalf("replayed tools = %v, want the event ingested", got)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, decisionsDirName)); !os.IsNotExist(err) {
+		t.Fatalf("decision written for unsafe rid (err=%v)", err)
 	}
 }
 
