@@ -44,6 +44,25 @@ func TestParseValidConfigNormalizesStrings(t *testing.T) {
 	}
 }
 
+func TestParseCoworkObserve(t *testing.T) {
+	cfg, err := Parse([]byte(validConfigJSON()))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if cfg.CoworkObserve {
+		t.Fatal("cowork_observe should default to false")
+	}
+	withFlag := strings.Replace(validConfigJSON(), `"mode": "observe",`, `"mode": "observe",
+  "cowork_observe": true,`, 1)
+	cfg, err = Parse([]byte(withFlag))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if !cfg.CoworkObserve {
+		t.Fatal("cowork_observe = false, want true")
+	}
+}
+
 func TestParseRejectsUnknownFields(t *testing.T) {
 	_, err := Parse([]byte(`{
   "version": "managed-install-v1",

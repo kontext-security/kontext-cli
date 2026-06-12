@@ -95,7 +95,8 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 
 	// Cowork observation runs alongside Claude Code in the same daemon, replaying
 	// in-VM Cowork tool events into the same localruntime socket as agent "cowork".
-	if coworkobserve.Enabled() {
+	// Enabled via managed.json (cowork_observe) or the env var override.
+	if loadedConfig.Config.CoworkObserve || coworkobserve.Enabled() {
 		go coworkobserve.Run(ctx, coworkobserve.Options{
 			SocketPath: socketPath,
 			StatePath:  filepath.Join(filepath.Dir(dbPath), "cowork-spool-offsets.json"),

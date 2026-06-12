@@ -44,6 +44,10 @@ type Config struct {
 	Agent          string      `json:"agent"`
 	Credentials    Credentials `json:"credentials"`
 	Device         Device      `json:"device,omitempty"`
+	// CoworkObserve turns on Claude Cowork observation in the managed-observe
+	// daemon. A managed.json field so MDM-deployed installs control it through
+	// config rather than launchd environment plumbing.
+	CoworkObserve bool `json:"cowork_observe,omitempty"`
 }
 
 type Credentials struct {
