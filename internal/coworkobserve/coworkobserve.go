@@ -96,7 +96,7 @@ const (
 )
 
 // Enabled reports whether Cowork observation is turned on via the environment.
-// Managed installs should prefer the cowork_observe field in managed.json;
+// Managed installs should prefer the cowork_enabled field in managed.json;
 // the env var remains as a development/debugging override.
 func Enabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvEnabled))) {
