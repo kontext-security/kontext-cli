@@ -190,8 +190,8 @@ func TestInjectAndHealthTracking(t *testing.T) {
 
 	h := newHealth()
 	inject(opts, h)
-	if len(h.sessionsSeen) != 1 || len(h.hooked) != 1 {
-		t.Fatalf("seen=%d hooked=%d, want 1/1", len(h.sessionsSeen), len(h.hooked))
+	if len(h.sessionsSeen) != 1 || len(h.written) != 1 {
+		t.Fatalf("seen=%d written=%d, want 1/1", len(h.sessionsSeen), len(h.written))
 	}
 	settings, err := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
 	if err != nil {
@@ -528,8 +528,8 @@ func TestReinjectExistingRemergesRunningSessionOnRestart(t *testing.T) {
 	// it so the heartbeat can warn if hooking ever fails.
 	h := newHealth()
 	reinjectExisting(opts, h)
-	if len(h.sessionsSeen) != 1 || len(h.hooked) != 1 {
-		t.Fatalf("startup pass did not record the running session: seen=%d hooked=%d", len(h.sessionsSeen), len(h.hooked))
+	if len(h.sessionsSeen) != 1 || len(h.written) != 1 {
+		t.Fatalf("startup pass did not record the running session: seen=%d written=%d", len(h.sessionsSeen), len(h.written))
 	}
 	settings, err := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
 	if err != nil {
@@ -561,6 +561,48 @@ func TestReinjectExistingSkipsAbandonedSessions(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(claudeDir, "settings.json")); !os.IsNotExist(err) {
 		t.Fatal("startup pass wrote settings into an abandoned session dir")
+	}
+}
+
+// When the startup pass writes a first-time hook onto a session that may
+// already be running (no hook of ours was there), it cannot know the CLI's
+// settings watcher ever watched the dir, so it must record the session as
+// unverified, not working. A later spool is ground truth and promotes it.
+func TestReinjectExistingFlagsFreshHookUnverifiedUntilSpooled(t *testing.T) {
+	_, socketPath := startFakeDaemon(t)
+	opts := testOptions(t, socketPath)
+	sessionDir := filepath.Join(opts.SessionsRoot, "acct", "ws", "local_pre")
+	claudeDir := filepath.Join(sessionDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Recent (within the window) but with no hook of ours: the daemon was down
+	// when this session's CLI started, so we are creating its first settings
+	// file only now.
+	stale := time.Now().Add(-30 * time.Minute)
+	if err := os.Chtimes(claudeDir, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newHealth()
+	reinjectExisting(opts, h)
+	if len(h.written) != 0 {
+		t.Fatalf("first-time hook on a pre-existing session was trusted: written=%d", len(h.written))
+	}
+	if len(h.unverified) != 1 {
+		t.Fatalf("first-time hook not flagged unverified: unverified=%d", len(h.unverified))
+	}
+	// Still written best-effort, in case the dir happens to be watched.
+	if _, err := os.Stat(filepath.Join(claudeDir, "settings.json")); err != nil {
+		t.Fatalf("best-effort settings.json not written: %v", err)
+	}
+
+	// A spool confirms the hook actually fires: promote to written, clear unverified.
+	writeSpool(t, filepath.Join(sessionDir, spoolName), eventLine("Bash")+"\n")
+	c := &collector{offsets: map[string]int64{}}
+	c.collect(opts, h)
+	if len(h.unverified) != 0 || !h.written[claudeDir] {
+		t.Fatalf("spool did not confirm the session: unverified=%d written=%v", len(h.unverified), h.written[claudeDir])
 	}
 }
 

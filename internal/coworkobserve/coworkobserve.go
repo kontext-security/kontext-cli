@@ -327,9 +327,21 @@ const heartbeatInterval = 5 * time.Minute
 // The heartbeat makes "no Cowork activity" distinguishable from "observation
 // broken" in the daemon diagnostics.
 type health struct {
-	sessionsSeen   map[string]bool // recent .claude dirs discovered by the injector
-	hooked         map[string]bool // .claude dirs carrying our hook
-	spooled        map[string]bool // session dirs that produced a spool file
+	sessionsSeen map[string]bool // .claude dirs discovered by the injector
+	// written is .claude dirs where we wrote (or found current) our hook AND
+	// have reason to believe it takes effect — the dir was watched at session
+	// start (a new session we seeded before its CLI started, or a re-merge of a
+	// hook that was already there). It is not, on its own, proof the hook fires.
+	written map[string]bool
+	// unverified is .claude dirs where we wrote a first-time hook onto a session
+	// whose CLI may already be running. Claude Code's settings watcher only
+	// watches dirs that had a settings file when the session started, so such a
+	// write may never load. These are best-effort and must not be reported as
+	// working until a spool confirms otherwise.
+	unverified map[string]bool
+	// spooled is session dirs that produced a spool — ground truth that the hook
+	// actually fired. A spool promotes a session from unverified to written.
+	spooled        map[string]bool
 	eventsReplayed int64
 	linesDropped   int64
 	denied         int64
@@ -338,24 +350,31 @@ type health struct {
 func newHealth() *health {
 	return &health{
 		sessionsSeen: map[string]bool{},
-		hooked:       map[string]bool{},
+		written:      map[string]bool{},
+		unverified:   map[string]bool{},
 		spooled:      map[string]bool{},
 	}
 }
 
 func (h *health) logHeartbeat(opts Options) {
 	opts.Diagnostic.Printf(
-		"cowork observe: health: sessions seen=%d hooked=%d spooling=%d events replayed=%d denied=%d malformed dropped=%d\n",
-		len(h.sessionsSeen), len(h.hooked), len(h.spooled), h.eventsReplayed, h.denied, h.linesDropped,
+		"cowork observe: health: sessions seen=%d written=%d confirmed=%d unverified=%d events replayed=%d denied=%d malformed dropped=%d\n",
+		len(h.sessionsSeen), len(h.written), len(h.spooled), len(h.unverified), h.eventsReplayed, h.denied, h.linesDropped,
 	)
-	if len(h.sessionsSeen) > len(h.hooked) {
+	if len(h.unverified) > 0 {
 		opts.Diagnostic.Printf(
-			"cowork observe: warning: %d session(s) never received the hook (injection raced CLI startup, or the daemon started after the session)\n",
-			len(h.sessionsSeen)-len(h.hooked),
+			"cowork observe: warning: %d pre-existing session(s) had a hook written but unconfirmed — their CLI likely started before the hook existed, so it will not fire until the session restarts\n",
+			len(h.unverified),
 		)
 	}
-	if len(h.hooked) > 0 && len(h.spooled) == 0 {
-		opts.Diagnostic.Printf("cowork observe: warning: hook injected but no spool has appeared; the Cowork session layout or mount may have changed\n")
+	if seen := len(h.sessionsSeen) - len(h.written) - len(h.unverified); seen > 0 {
+		opts.Diagnostic.Printf(
+			"cowork observe: warning: %d session(s) never received the hook (injection raced CLI startup, or the daemon started after the session)\n",
+			seen,
+		)
+	}
+	if len(h.written) > 0 && len(h.spooled) == 0 {
+		opts.Diagnostic.Printf("cowork observe: warning: hook written but no spool has appeared; the Cowork session layout or mount may have changed\n")
 	}
 }
 
@@ -374,7 +393,9 @@ func inject(opts Options, h *health) {
 		if err != nil || info.ModTime().Before(cutoff) {
 			continue
 		}
-		mergeInto(opts, h, dir, entry)
+		// trustFresh: a brand-new session's CLI has not started yet (we win the
+		// race against it), so even a first-time hook will be loaded.
+		mergeInto(opts, h, dir, entry, true)
 	}
 }
 
@@ -402,32 +423,72 @@ func reinjectExisting(opts Options, h *health) {
 		if err != nil || info.ModTime().Before(cutoff) {
 			continue // abandoned session dir
 		}
-		mergeInto(opts, h, dir, entry)
+		// trustFresh is false: this session's CLI may already be running. If we
+		// are writing the first settings file into its dir, Claude Code's
+		// watcher never watched that dir (it only watches dirs that had a
+		// settings file at session start), so the write will not take effect —
+		// record it as unverified rather than working.
+		mergeInto(opts, h, dir, entry, false)
 	}
 }
 
 // mergeInto records the session for the heartbeat, then writes entry into its
-// settings.json when it is missing or a stale-mode variant is present. The
-// session is recorded as seen before the write so a hook that fails to land
-// shows up as seen-but-not-hooked in the heartbeat.
-func mergeInto(opts Options, h *health, dir string, entry map[string]any) {
+// settings.json when it is missing or a stale-mode variant is present.
+//
+// trustFresh says whether a first-time hook write (no hook of ours was already
+// present) can be trusted to take effect. It is true for steady-state inject —
+// a new session's CLI has not started, so it will load our settings.json — and
+// false for the startup pass, where the session may already be running over a
+// dir the settings watcher never watched. A write that updates a hook of ours
+// already present is always trusted: that dir was watched at session start, so
+// the change hot-reloads. Anything written but not trusted is recorded as
+// unverified, and only a spool (see collect) confirms it actually fires.
+func mergeInto(opts Options, h *health, dir string, entry map[string]any, trustFresh bool) {
 	h.sessionsSeen[dir] = true
 	settingsPath := filepath.Join(dir, "settings.json")
 	existing, err := os.ReadFile(settingsPath)
 	if err != nil && !os.IsNotExist(err) {
 		return
 	}
+	hadOurHook := hasOurHook(existing)
 	merged, needed := mergeSettings(existing, entry)
 	if !needed {
-		h.hooked[dir] = true
-		return // already ours
+		h.written[dir] = true
+		return // already current
 	}
 	if err := writeFileAtomic(settingsPath, merged, 0o644); err != nil {
 		opts.Diagnostic.Printf("cowork observe: inject %s: %v\n", settingsPath, err)
 		return
 	}
-	h.hooked[dir] = true
-	opts.Diagnostic.Printf("cowork observe: injected hook into %s\n", settingsPath)
+	if hadOurHook || trustFresh {
+		h.written[dir] = true
+		opts.Diagnostic.Printf("cowork observe: injected hook into %s\n", settingsPath)
+		return
+	}
+	h.unverified[dir] = true
+	opts.Diagnostic.Printf("cowork observe: wrote hook into pre-existing session %s (unverified; will not fire until the session restarts unless its dir was already watched)\n", settingsPath)
+}
+
+// hasOurHook reports whether settings.json already carries a PreToolUse hook the
+// injector installed (i.e. one whose command references the spool). Used to tell
+// a mode-switch re-merge (the dir was watched at session start, so the change
+// hot-reloads) apart from a first-time hook on an already-running session.
+func hasOurHook(existing []byte) bool {
+	if len(bytes.TrimSpace(existing)) == 0 {
+		return false
+	}
+	var settings map[string]any
+	if json.Unmarshal(existing, &settings) != nil {
+		return false
+	}
+	hooks, _ := settings["hooks"].(map[string]any)
+	pre, _ := hooks["PreToolUse"].([]any)
+	for _, candidate := range pre {
+		if entryIsOurs(candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 type collector struct {
@@ -495,7 +556,14 @@ func (c *collector) collect(opts Options, h *health) {
 	live := make(map[string]bool, len(spools))
 	for _, spool := range spools {
 		live[spool] = true
-		h.spooled[filepath.Dir(spool)] = true
+		sessionDir := filepath.Dir(spool)
+		h.spooled[sessionDir] = true
+		// A spool is ground truth the hook fired: promote the session out of
+		// unverified into written, since the watcher clearly did load it.
+		if claudeDir := filepath.Join(sessionDir, ".claude"); h.unverified[claudeDir] {
+			delete(h.unverified, claudeDir)
+			h.written[claudeDir] = true
+		}
 		c.drain(opts, h, spool)
 		c.cleanup(opts, spool)
 		cleanupOrphanDecisions(opts, filepath.Dir(spool))
