@@ -138,12 +138,15 @@ func DefaultSessionsRoot() string {
 	return filepath.Join(home, "Library", "Application Support", "Claude", "local-agent-mode-sessions")
 }
 
-// The observe hook reads the full Claude Code hook event from stdin and
-// appends it to a spool file in the guest $HOME (the per-session dir, which is
-// the host mount: its .claude subdir is where the CLI reads these settings
-// from), then exits 0 so the tool is never blocked. $HOME is absolute, so the
-// spool lands in the session dir no matter what cwd the hook inherits.
-const observeHookCommand = `p=$(cat); printf '%s\n' "$p" >> "$HOME"/` + spoolName + ` 2>/dev/null; true`
+// The observe hook reads the full Claude Code hook event from stdin and appends
+// it to a spool file in the session dir, then exits 0 so the tool is never
+// blocked. The spool path is relative to the hook's cwd, which Cowork sets to
+// the session's outputs/ dir (a host mount); `..` is therefore the session dir
+// itself, where .claude lives and where the collector globs. NB: the guest
+// $HOME is NOT the session dir (Cowork points the CLI at the per-session
+// .claude via a config-dir override, not via $HOME), so a $HOME-relative spool
+// would land on the ephemeral VM filesystem and never reach the host collector.
+const observeHookCommand = `p=$(cat); printf '%s\n' "$p" >> ../` + spoolName + ` 2>/dev/null; true`
 
 // denyJSON is the fail-closed verdict the enforce hook emits itself when no
 // decision arrives in time. Reason mirrors the sidecar's enforce behavior on
@@ -162,8 +165,8 @@ const enforceHookCommand = `p=$(cat)
 deny='` + denyJSON + `'
 if [ -z "$p" ]; then printf '%s\n' "$deny"; exit 0; fi
 rid="$$-$(date +%s%N)"
-if ! printf '{"rid":"%s","event":%s}\n' "$rid" "$p" >> "$HOME"/` + spoolName + ` 2>/dev/null; then printf '%s\n' "$deny"; exit 0; fi
-d="$HOME"/` + decisionsDirName + `/"$rid".json
+if ! printf '{"rid":"%s","event":%s}\n' "$rid" "$p" >> ../` + spoolName + ` 2>/dev/null; then printf '%s\n' "$deny"; exit 0; fi
+d=../` + decisionsDirName + `/"$rid".json
 i=0
 while [ "$i" -lt 100 ]; do
   if [ -f "$d" ]; then cat "$d" 2>/dev/null; rm -f "$d" 2>/dev/null; exit 0; fi
