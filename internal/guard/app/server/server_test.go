@@ -29,18 +29,22 @@ func newTestServer(t *testing.T, store *sqlite.Store) *Server {
 
 func newTestServerWithPolicy(t *testing.T, store *sqlite.Store, policy PolicyProvider) *Server {
 	t.Helper()
-	server, err := NewServerWithPolicy(store, policy)
+	policyStore, err := openPolicyStoreForSQLite(store)
 	if err != nil {
-		t.Fatalf("NewServerWithPolicy() error = %v", err)
+		t.Fatalf("openPolicyStoreForSQLite() error = %v", err)
+	}
+	server, err := NewServerWithPolicyConfigAndOptions(store, policy, policyStore, Options{})
+	if err != nil {
+		t.Fatalf("NewServerWithPolicyConfigAndOptions() error = %v", err)
 	}
 	return server
 }
 
 func newTestServerWithPolicyConfig(t *testing.T, store *sqlite.Store, policyStore *policyconfig.Store) *Server {
 	t.Helper()
-	server, err := NewServerWithPolicyConfig(store, NewRiskPolicyProvider(), policyStore)
+	server, err := NewServerWithPolicyConfigAndOptions(store, nil, policyStore, Options{})
 	if err != nil {
-		t.Fatalf("NewServerWithPolicyConfig() error = %v", err)
+		t.Fatalf("NewServerWithPolicyConfigAndOptions() error = %v", err)
 	}
 	return server
 }

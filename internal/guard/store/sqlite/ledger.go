@@ -179,7 +179,7 @@ func ledgerCursor(actions []LedgerRecord) (*LedgerCursor, error) {
 	if updatedAtKey == "" || actionID == "" {
 		return nil, nil
 	}
-	updatedAt, err := parseLedgerTimestamp(updatedAtKey)
+	updatedAt, err := ParseLedgerTimestamp(updatedAtKey)
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +309,7 @@ func normalizeLedgerRecord(record LedgerRecord) {
 }
 
 func normalizeLedgerTimeValue(column, value string, fallback time.Time) any {
-	if parsed, err := parseLedgerTimestamp(value); err == nil {
+	if parsed, err := ParseLedgerTimestamp(value); err == nil {
 		return parsed.UTC().Format(time.RFC3339Nano)
 	}
 	if isRequiredLedgerTimeColumn(column) {
@@ -321,7 +321,7 @@ func normalizeLedgerTimeValue(column, value string, fallback time.Time) any {
 func ledgerRecordFallbackTime(record LedgerRecord) time.Time {
 	for _, column := range []string{"updated_at", "created_at"} {
 		value, _ := record[column].(string)
-		if parsed, err := parseLedgerTimestamp(value); err == nil {
+		if parsed, err := ParseLedgerTimestamp(value); err == nil {
 			return parsed.UTC()
 		}
 	}
@@ -347,7 +347,9 @@ func isRequiredLedgerTimeColumn(column string) bool {
 	return column == "created_at" || column == "updated_at"
 }
 
-func parseLedgerTimestamp(value string) (time.Time, error) {
+// ParseLedgerTimestamp accepts the RFC3339Nano timestamps we write today plus
+// the legacy layouts that may still exist in SQLite rows or persisted cursors.
+func ParseLedgerTimestamp(value string) (time.Time, error) {
 	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
 		return parsed, nil
 	}
@@ -370,7 +372,7 @@ func ledgerTimestampCursorKeyFromTime(value time.Time) string {
 
 func ledgerTimestampCursorKeyFromValues(values ...string) string {
 	for _, value := range values {
-		parsed, err := parseLedgerTimestamp(value)
+		parsed, err := ParseLedgerTimestamp(value)
 		if err == nil {
 			return ledgerTimestampCursorKeyFromTime(parsed)
 		}

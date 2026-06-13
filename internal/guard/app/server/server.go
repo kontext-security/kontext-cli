@@ -93,21 +93,6 @@ func NewServerWithOptions(store *sqlite.Store, opts Options) (*Server, error) {
 	}), policyStore, opts)
 }
 
-// NewServerWithPolicy creates a Guard server with an injected policy provider.
-// A nil interface uses the default local risk policy; callers must not pass a
-// typed-nil provider because it still satisfies the PolicyProvider interface.
-func NewServerWithPolicy(store *sqlite.Store, policy PolicyProvider) (*Server, error) {
-	policyStore, err := openPolicyStoreForSQLite(store)
-	if err != nil {
-		return nil, err
-	}
-	return NewServerWithPolicyConfig(store, policy, policyStore)
-}
-
-func NewServerWithPolicyConfig(store *sqlite.Store, policy PolicyProvider, policyStore *policyconfig.Store) (*Server, error) {
-	return NewServerWithPolicyConfigAndOptions(store, policy, policyStore, Options{})
-}
-
 func NewServerWithPolicyConfigAndOptions(store *sqlite.Store, policy PolicyProvider, policyStore *policyconfig.Store, opts Options) (*Server, error) {
 	if policyStore == nil {
 		var err error
@@ -459,10 +444,6 @@ func openPolicyStoreForSQLite(store *sqlite.Store) (*policyconfig.Store, error) 
 		return nil, fmt.Errorf("policy config requires sqlite store path")
 	}
 	return policyconfig.Open(filepath.Dir(store.Path()))
-}
-
-func OpenDefaultServer(dbPath string) (*Server, func() error, error) {
-	return OpenDefaultServerWithOptions(dbPath, Options{})
 }
 
 func OpenDefaultServerWithOptions(dbPath string, opts Options) (*Server, func() error, error) {

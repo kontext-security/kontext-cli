@@ -447,12 +447,12 @@ func TestParseStateUpdatedAfterAcceptsLegacyTimestampFormats(t *testing.T) {
 		"2026-06-08T12:20:07.853885",
 		"2026-06-08 12:20:07.853885",
 	} {
-		parsed, err := parseStateUpdatedAfter(value)
+		parsed, err := sqlite.ParseLedgerTimestamp(value)
 		if err != nil {
-			t.Fatalf("parseStateUpdatedAfter(%q) error = %v", value, err)
+			t.Fatalf("ParseLedgerTimestamp(%q) error = %v", value, err)
 		}
 		if got := parsed.UTC().Format(time.RFC3339Nano); got != "2026-06-08T12:20:07.853885Z" {
-			t.Fatalf("parseStateUpdatedAfter(%q) = %q", value, got)
+			t.Fatalf("ParseLedgerTimestamp(%q) = %q", value, got)
 		}
 	}
 }

@@ -39,16 +39,6 @@ func (p staticPolicyConfigProvider) ActivePolicyConfig(context.Context) (guardpo
 	return p.config, nil
 }
 
-func NewRiskPolicyProvider() RiskPolicyProvider {
-	return NewRiskPolicyProviderWithJudge(nil)
-}
-
-func NewRiskPolicyProviderWithJudge(localJudge judge.Judge) RiskPolicyProvider {
-	return NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
-		Judge: localJudge,
-	})
-}
-
 func NewRiskPolicyProviderWithOptions(opts RiskPolicyProviderOptions) RiskPolicyProvider {
 	configProvider := opts.PolicyConfigProvider
 	if configProvider == nil {
