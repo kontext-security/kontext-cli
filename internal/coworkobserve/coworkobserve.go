@@ -293,6 +293,14 @@ func Run(ctx context.Context, opts Options) {
 
 	c := newCollector(opts.StatePath)
 	h := newHealth()
+	// Re-merge the configured-mode hook into sessions already running when the
+	// daemon comes up. The mode is read once from managed.json at startup, so a
+	// mode change (observe -> enforce) and a late daemon start are the same
+	// event: the daemon starting while sessions already exist. Those sessions'
+	// .claude dir modtimes froze long ago (our own settings.json write is the
+	// last thing to touch the dir), so the steady-state inject would never
+	// re-reach them; this one forced pass does, before they next act.
+	reinjectExisting(opts, h)
 	ticker := time.NewTicker(opts.PollInterval)
 	defer ticker.Stop()
 	heartbeat := time.NewTicker(heartbeatInterval)
@@ -351,60 +359,75 @@ func (h *health) logHeartbeat(opts Options) {
 	}
 }
 
-// inject merges the mode-appropriate spool hook into settings.json in any
-// live per-session .claude dir that does not yet carry the current entry
-// (including dirs carrying a stale variant from a previous mode).
-//
-// Liveness can't key on the .claude dir modtime alone: our own settings.json
-// write freezes that modtime, so a session would look stale ~3 minutes after
-// the first injection even while it keeps running. A mode switch or a late
-// daemon start would then never re-reach the session, and — because the dir
-// was skipped before being recorded — the heartbeat would never surface it
-// either. So a session is also live if its spool was written recently: that
-// is the signal the in-VM CLI keeps fresh as it drives tool calls.
+// inject merges the mode-appropriate spool hook into settings.json in each
+// per-session .claude dir freshly created within the cutoff. Steady state only
+// needs to catch new sessions: a new session's dir modtime is fresh when it
+// appears, and once the daemon is running, the mode cannot change without a
+// restart (which runs reinjectExisting again). Sessions older than the cutoff
+// are handled at startup, not here.
 func inject(opts Options, h *health) {
 	claudeDirs, _ := filepath.Glob(filepath.Join(opts.SessionsRoot, "*", "*", "local_*", ".claude"))
 	cutoff := time.Now().Add(-3 * time.Minute)
 	entry := hookEntry(opts.Mode)
 	for _, dir := range claudeDirs {
 		info, err := os.Stat(dir)
-		if err != nil || !sessionLive(filepath.Dir(dir), info, cutoff) {
+		if err != nil || info.ModTime().Before(cutoff) {
 			continue
 		}
-		h.sessionsSeen[dir] = true
-		settingsPath := filepath.Join(dir, "settings.json")
-		existing, err := os.ReadFile(settingsPath)
-		if err != nil && !os.IsNotExist(err) {
-			continue
-		}
-		merged, needed := mergeSettings(existing, entry)
-		if !needed {
-			h.hooked[dir] = true
-			continue // already ours
-		}
-		if err := writeFileAtomic(settingsPath, merged, 0o644); err != nil {
-			opts.Diagnostic.Printf("cowork observe: inject %s: %v\n", settingsPath, err)
-			continue
-		}
-		h.hooked[dir] = true
-		opts.Diagnostic.Printf("cowork observe: injected hook into %s\n", settingsPath)
+		mergeInto(opts, h, dir, entry)
 	}
 }
 
-// sessionLive reports whether a per-session dir is worth (re-)injecting into:
-// either its .claude dir was touched after cutoff (a fresh session, before our
-// settings.json write freezes the dir modtime) or its spool was written after
-// cutoff (a long-running session the in-VM CLI is actively driving). The spool
-// signal is what keeps a session reachable for a mode-switch re-merge and
-// visible to the heartbeat once the dir modtime has frozen.
-func sessionLive(sessionDir string, claudeInfo os.FileInfo, cutoff time.Time) bool {
-	if claudeInfo.ModTime().After(cutoff) {
-		return true
+// reinjectWindow bounds how far back the startup pass looks. A session whose
+// .claude dir has not been touched within this window is treated as abandoned
+// and left alone, so the pass does not write into the pile of dead session
+// dirs Cowork leaves behind. It is generous because a session's dir modtime
+// freezes once we inject, so this is "created/active within the last day",
+// not "used in the last day".
+const reinjectWindow = 24 * time.Hour
+
+// reinjectExisting force-merges the configured-mode hook into every recent
+// session at daemon startup, ignoring the steady-state freshness cutoff that
+// inject uses. This is what reaches a session that was already running when
+// the daemon came up — whether because the daemon started late or because the
+// mode just changed (which requires a restart). Without it, such a session
+// keeps whatever hook it had (a stale observe hook, or none) until it happens
+// to start a fresh session.
+func reinjectExisting(opts Options, h *health) {
+	claudeDirs, _ := filepath.Glob(filepath.Join(opts.SessionsRoot, "*", "*", "local_*", ".claude"))
+	cutoff := time.Now().Add(-reinjectWindow)
+	entry := hookEntry(opts.Mode)
+	for _, dir := range claudeDirs {
+		info, err := os.Stat(dir)
+		if err != nil || info.ModTime().Before(cutoff) {
+			continue // abandoned session dir
+		}
+		mergeInto(opts, h, dir, entry)
 	}
-	if si, err := os.Stat(filepath.Join(sessionDir, spoolName)); err == nil && si.ModTime().After(cutoff) {
-		return true
+}
+
+// mergeInto records the session for the heartbeat, then writes entry into its
+// settings.json when it is missing or a stale-mode variant is present. The
+// session is recorded as seen before the write so a hook that fails to land
+// shows up as seen-but-not-hooked in the heartbeat.
+func mergeInto(opts Options, h *health, dir string, entry map[string]any) {
+	h.sessionsSeen[dir] = true
+	settingsPath := filepath.Join(dir, "settings.json")
+	existing, err := os.ReadFile(settingsPath)
+	if err != nil && !os.IsNotExist(err) {
+		return
 	}
-	return false
+	merged, needed := mergeSettings(existing, entry)
+	if !needed {
+		h.hooked[dir] = true
+		return // already ours
+	}
+	if err := writeFileAtomic(settingsPath, merged, 0o644); err != nil {
+		opts.Diagnostic.Printf("cowork observe: inject %s: %v\n", settingsPath, err)
+		return
+	}
+	h.hooked[dir] = true
+	opts.Diagnostic.Printf("cowork observe: injected hook into %s\n", settingsPath)
 }
 
 type collector struct {

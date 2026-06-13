@@ -493,11 +493,11 @@ func TestDrainResetsOffsetWhenSpoolShrinks(t *testing.T) {
 	}
 }
 
-// A long-running session's .claude dir modtime freezes once we write
-// settings.json, so the injector must fall back to the spool modtime to keep
-// re-reaching it. Without that, a mode switch never reaches a session older
-// than the cutoff, and the session is invisible to the heartbeat.
-func TestInjectRemergesLongRunningSessionViaSpoolSignal(t *testing.T) {
+// A session already running when the daemon comes up has a long-frozen .claude
+// dir modtime, so the steady-state inject skips it. The startup pass must still
+// re-merge it to the configured mode — this is both the late-daemon-start and
+// the observe->enforce mode-switch case, since a mode change needs a restart.
+func TestReinjectExistingRemergesRunningSessionOnRestart(t *testing.T) {
 	_, socketPath := startFakeDaemon(t)
 	opts := testOptions(t, socketPath)
 	sessionDir := filepath.Join(opts.SessionsRoot, "acct", "ws", "local_abc")
@@ -506,47 +506,61 @@ func TestInjectRemergesLongRunningSessionViaSpoolSignal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	inject(opts, newHealth()) // observe hook into the fresh session
-	settings, err := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
-	if err != nil {
-		t.Fatalf("settings.json not written: %v", err)
+	// A session carrying the observe hook, its dir modtime long frozen.
+	observed, _ := mergeSettings(nil, hookEntry(guardhookruntime.ModeObserve))
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), observed, 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if bytes.Contains(settings, []byte(decisionsDirName)) {
-		t.Fatal("observe injection unexpectedly wrote the enforce hook")
-	}
-
-	// Freeze the dir modtime in the past, as it would be once the session has
-	// been running a while. With no spool yet, the injector must now treat the
-	// session as stale and leave it untouched.
-	stale := time.Now().Add(-10 * time.Minute)
+	stale := time.Now().Add(-30 * time.Minute)
 	if err := os.Chtimes(claudeDir, stale, stale); err != nil {
 		t.Fatal(err)
 	}
-	h := newHealth()
+
+	// inject (steady state) skips it — too old.
+	hTick := newHealth()
 	opts.Mode = guardhookruntime.ModeEnforce
-	inject(opts, h)
-	if len(h.sessionsSeen) != 0 {
-		t.Fatalf("stale dir with no spool was visited: seen=%d", len(h.sessionsSeen))
+	inject(opts, hTick)
+	if len(hTick.sessionsSeen) != 0 {
+		t.Fatalf("steady-state inject visited a frozen session: seen=%d", len(hTick.sessionsSeen))
 	}
 
-	// The session produces a spool (the in-VM CLI is firing tool calls). Now
-	// the injector must re-reach it under the new mode, re-merge the stale
-	// observe hook into the enforce hook, and record it for the heartbeat.
-	writeSpool(t, filepath.Join(sessionDir, spoolName), eventLine("Bash")+"\n")
-	if err := os.Chtimes(claudeDir, stale, stale); err != nil {
-		t.Fatal(err)
-	}
-	h = newHealth()
-	inject(opts, h)
+	// The startup pass re-reaches it, re-merges observe -> enforce, and records
+	// it so the heartbeat can warn if hooking ever fails.
+	h := newHealth()
+	reinjectExisting(opts, h)
 	if len(h.sessionsSeen) != 1 || len(h.hooked) != 1 {
-		t.Fatalf("live session not re-reached: seen=%d hooked=%d", len(h.sessionsSeen), len(h.hooked))
+		t.Fatalf("startup pass did not record the running session: seen=%d hooked=%d", len(h.sessionsSeen), len(h.hooked))
 	}
-	settings, err = os.ReadFile(filepath.Join(claudeDir, "settings.json"))
+	settings, err := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(settings, []byte(decisionsDirName)) {
-		t.Fatalf("mode switch did not re-merge to the enforce hook: %s", settings)
+		t.Fatalf("startup pass did not re-merge to the enforce hook: %s", settings)
+	}
+}
+
+// The startup pass must not write into the pile of long-dead session dirs
+// Cowork leaves behind.
+func TestReinjectExistingSkipsAbandonedSessions(t *testing.T) {
+	_, socketPath := startFakeDaemon(t)
+	opts := testOptions(t, socketPath)
+	claudeDir := filepath.Join(opts.SessionsRoot, "acct", "ws", "local_old", ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ancient := time.Now().Add(-2 * reinjectWindow)
+	if err := os.Chtimes(claudeDir, ancient, ancient); err != nil {
+		t.Fatal(err)
+	}
+
+	h := newHealth()
+	reinjectExisting(opts, h)
+	if len(h.sessionsSeen) != 0 {
+		t.Fatalf("startup pass touched an abandoned session: seen=%d", len(h.sessionsSeen))
+	}
+	if _, err := os.Stat(filepath.Join(claudeDir, "settings.json")); !os.IsNotExist(err) {
+		t.Fatal("startup pass wrote settings into an abandoned session dir")
 	}
 }
 
