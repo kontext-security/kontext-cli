@@ -1,0 +1,49 @@
+[     604ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:20102
+[  241317ms] ReferenceError: ArrowRight is not defined
+    at http://localhost:5173/src/pages/engineering.tsx?t=1779705144110:737:15
+    at Array.map (<anonymous>)
+    at EngineeringPage (http://localhost:5173/src/pages/engineering.tsx?t=1779705144110:728:9)
+    at Object.react_stack_bottom_frame (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:18509:20)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:5654:24)
+    at updateFunctionComponent (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:7475:21)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:8525:20)
+    at runWithFiberInDEV (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:997:72)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:12561:98)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:12424:43)
+[  241305ms] [WARNING] %s
+
+%s
+ An error occurred in the <EngineeringPage> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:6965
+[  249207ms] ReferenceError: ArrowRight is not defined
+    at http://localhost:5173/src/pages/engineering.tsx?t=1779705152296:737:15
+    at Array.map (<anonymous>)
+    at EngineeringPage (http://localhost:5173/src/pages/engineering.tsx?t=1779705152296:728:9)
+    at Object.react_stack_bottom_frame (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:18509:20)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:5654:24)
+    at updateFunctionComponent (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:7475:21)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:8525:20)
+    at runWithFiberInDEV (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:997:72)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:12561:98)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:12424:43)
+[  249205ms] [WARNING] %s
+
+%s
+ An error occurred in the <EngineeringPage> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:6965
+[  256258ms] ReferenceError: ArrowRight is not defined
+    at http://localhost:5173/src/pages/engineering.tsx?t=1779705159383:737:15
+    at Array.map (<anonymous>)
+    at EngineeringPage (http://localhost:5173/src/pages/engineering.tsx?t=1779705159383:728:9)
+    at Object.react_stack_bottom_frame (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:18509:20)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:5654:24)
+    at updateFunctionComponent (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:7475:21)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:8525:20)
+    at runWithFiberInDEV (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:997:72)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:12561:98)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:12424:43)
+[  256249ms] [WARNING] %s
+
+%s
+ An error occurred in the <EngineeringPage> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=53fc6e53:6965

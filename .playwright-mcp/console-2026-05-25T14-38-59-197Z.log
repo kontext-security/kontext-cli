@@ -1,0 +1,66 @@
+[     606ms] [LOG] %c __                                               _____          __          __           ______          v1.65465.0
+/\ \       __                                    /\  __`\       /\ \      __/\ \__       /\__  _\                       
+\ \ \     /\_\    ___      __     __     _ __    \ \ \/\ \  _ __\ \ \____/\_\ \ ,_\      \/_/\ \/     ___     ___       
+ \ \ \  __\/\ \ /' _ `\  /'__`\ /'__`\  /\`'__\   \ \ \ \ \/\`'__\ \ '__`\/\ \ \ \/         \ \ \   /' _ `\  /'___\     
+  \ \ \L\ \\ \ \/\ \/\ \/\  __//\ \L\.\_\ \ \/     \ \ \_\ \ \ \/ \ \ \L\ \ \ \ \ \_  __     \_\ \__/\ \/\ \/\ \__/  __ 
+   \ \____/ \ \_\ \_\ \_\ \____\ \__/.\_\\ \_\      \ \_____\ \_\  \ \_,__/\ \_\ \__\/\ \    /\_____\ \_\ \_\ \____\/\_\
+    \/___/   \/_/\/_/\/_/\/____/\/__/\/_/ \/_/       \/_____/\/_/   \/___/  \/_/\/__/\ \/    \/_____/\/_/\/_/\/____/\/_/
+                                                                                      \/
+
+The product development system for teams and agents
+
+WE'RE HIRING: https://linear.app/careers
+CHANGELOG:    https://linear.app/changelog
+ 
+  font-family: monospace;
+  color: #282A30;
+   @ https://static.linear.app/client/assets/vendor-sentry.djDVAJCa.js:5
+[   12303ms] [ERROR] Access to fetch at 'http://127.0.0.1:44450/linear/check-url' from origin 'https://linear.app' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space. @ https://linear.app/cobrowser/project/kontext-cli-multi-agent-expansion-40d3940032c7/overview:0
+[   12303ms] [ERROR] Failed to load resource: net::ERR_FAILED @ http://127.0.0.1:44450/linear/check-url:0
+[   18086ms] [LOG] %c%s color: red; background: yellow; font-size: 24px; WARNING! @ https://www.gstatic.com/_/mss/boq-identity/_/js/k=boq-identity.AccountsSignInUi.en.JhxErr_badU.es5.O/am=iW8AAACEQhQhA4D9_38jAQggiA74ngVoAoQMAAAAAAAAAABYAAAAjQ/d=1/excm=_b,_tp,accountchooserview/ed=1/dg=0/wt=2/ujg=1/rs=AOaEmlG3txdFvYLFaIZAVeAe1pf-v-4HnA/dti=1/m=_b,_tp:545
+[   18086ms] [LOG] %c%s font-size: 18px; Using this console may allow attackers to impersonate you and steal your information using an attack called Self-XSS.
+Do not enter or paste code that you do not understand. @ https://www.gstatic.com/_/mss/boq-identity/_/js/k=boq-identity.AccountsSignInUi.en.JhxErr_badU.es5.O/am=iW8AAACEQhQhA4D9_38jAQggiA74ngVoAoQMAAAAAAAAAABYAAAAjQ/d=1/excm=_b,_tp,accountchooserview/ed=1/dg=0/wt=2/ujg=1/rs=AOaEmlG3txdFvYLFaIZAVeAe1pf-v-4HnA/dti=1/m=_b,_tp:545
+[   19403ms] [WARNING] Blocked aria-hidden on an element because its descendant retained focus. The focus must not be hidden from assistive technology users. Avoid using aria-hidden on a focused element or its ancestor. Consider using the inert attribute instead, which will also prevent focus. For more details, see the aria-hidden section of the WAI-ARIA specification at https://w3c.github.io/aria/#aria-hidden.
+Element with focus: <div.sZwd7c B6Vhqe>
+Ancestor with aria-hidden: <div.TdwKnf> @ https://accounts.google.com/v3/signin/accountchooser?access_type=offline&client_id=463717515632-5f96ed9uaue5p206umg9toffdbfmsfbm.apps.googleusercontent.com&prompt=consent&redirect_uri=https%3A%2F%2Flinear.app%2Fauth%2Fgoogle%2Fcallback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile&state=%7B%22key%22%3A%22rFX7wR7M7YvGu0XUpLg4mLdhzNnVOEYe%22%2C%22isMobileAppLogin%22%3Afalse%7D&dsh=S742059764%3A1779719956634049&o2v=2&service=lso&flowName=GeneralOAuthFlow&opparams=%253F&continue=https%3A%2F%2Faccounts.google.com%2Fsignin%2Foauth%2Fconsent%3Fauthuser%3Dunknown%26part%3DAJi8hAPh-6VA-2TIfWIdmJm-3wGOWsb3lgyWzxXMisDNRHQVcUP_Pvmaz1e5_yNTD4L-MkmTb1wLRHoxG9Y2mgAfnZ6xH1DuD0OvYJCxUIl9BctGcW4NN86ETw1I1BwnfiA1gYnWPxo0Ghp3XSBoLkkW3BXIVNSlZKzzior8hHX6FzSRm2_SMSxBrEoO5Hz0I58uCpttz74LKAGhNROr9ZtuL4160ZukmzusI7jIRr5tAkST0_5jvFjtBjngQagrzJV9WrSLx72xdt2tPcYYCMdFDw8Z45UFuWbQQxvJx5tS_xezu3qQTuEf1OWery_mUSLyEoyntjhZUTHMONo84PHkr-1IRLeDabzzadQeQVGYQ1_QHghD-HB8-aXXGvuF8FlW8ROMD2c8lNk5_MfGUXvxqBI58SSARB0BHB0X_ylt8YXgTMimGP5vdjKqIO76QLE3dCE8rUhPrnm_8YjD9-nGmiFw3e9wDw%26flowName%3DGeneralOAuthFlow%26as%3DS742059764%253A1779719956634049%26client_id%3D463717515632-5f96ed9uaue5p206umg9toffdbfmsfbm.apps.googleusercontent.com%26requestPath%3D%252Fsignin%252Foauth%252Fconsent%23&app_domain=https%3A%2F%2Flinear.app:0
+[   20513ms] [LOG] %c%s color: red; background: yellow; font-size: 24px; WARNING! @ https://www.gstatic.com/_/mss/boq-identity/_/js/k=boq-identity.OAuthUi.en.Ys6eOG9sKOw.es5.O/am=8gMAAABQBGAA4P__N4AgOvCeAQoQAAAAAAAAAAAMAAAR/d=1/excm=_b,_tp,attributesview/ed=1/dg=0/wt=2/ujg=1/rs=AOaEmlES7n6ny-LeXieTUS1r_i23VUVf5w/dti=1/m=_b,_tp:531
+[   20513ms] [LOG] %c%s font-size: 18px; Using this console may allow attackers to impersonate you and steal your information using an attack called Self-XSS.
+Do not enter or paste code that you do not understand. @ https://www.gstatic.com/_/mss/boq-identity/_/js/k=boq-identity.OAuthUi.en.Ys6eOG9sKOw.es5.O/am=8gMAAABQBGAA4P__N4AgOvCeAQoQAAAAAAAAAAAMAAAR/d=1/excm=_b,_tp,attributesview/ed=1/dg=0/wt=2/ujg=1/rs=AOaEmlES7n6ny-LeXieTUS1r_i23VUVf5w/dti=1/m=_b,_tp:531
+[   21497ms] [WARNING] Blocked aria-hidden on an element because its descendant retained focus. The focus must not be hidden from assistive technology users. Avoid using aria-hidden on a focused element or its ancestor. Consider using the inert attribute instead, which will also prevent focus. For more details, see the aria-hidden section of the WAI-ARIA specification at https://w3c.github.io/aria/#aria-hidden.
+Element with focus: <div.sZwd7c B6Vhqe>
+Ancestor with aria-hidden: <div.TdwKnf> @ https://accounts.google.com/signin/oauth/id?authuser=0&part=AJi8hAPEMlzoGaLozizT1_gT8auAsQWzN4igT6Pdg3eUqzDm4SgZ-tSD1UAFwD_0kCV2VBPAzgF0kfl0R_bEfgPkLIvejERK7pswXS5O0b0ytopvQBelCdFTN0vLbmEw1D5qfp_c7hgrjCDRjd-dnmqf0B-0Ct_q2-CucqtAvdvrJAanJBFd9uJopyfwes1IdA27gtWFL_lOlDr7e0ksXr40LOwQSfw4UK1b-iW7drmYu5DPNbyDJYKaCJoEEo2gKpS0WhB0GpbGIZ7PwMYoTCIRdsQNPUWqYGHupEjH9k6xOH9zladSajU5cpgdBkJc0399QIb9I9LiLW3MIJy9wl_aKUEG84Uhej4KxoShzMcj8FTKEQpkvAlr8L1nJdsythzByMJosM2sCBMVhpfuw5nDCwSOb46VSOetLX7YQ6OUCfMczPzqPV1hnrn1QKTvLehhun8Zc4DAqXd1tugVIOuMACr5qY0Y515sRheRWcEK1qHBR_PdOgkA_Gv1o4zbZvme7ljk1X93qYEp0643InvZtpnaPl9_qJOJzXy7o43ni1E_85y6t8xI3KDIa4swekPLilFNpCMm6aUAxVDumLYymHd31h7EIhkpAWSrKCkpsScmcX4Zt87GCwSLm0bMgMOOfNf7zDmyHdRaLMIpwn-AtRiyZZc5e7yWV9OYjl2URLNS4lTe6ZOZ3cH5Z2wGC2gafvvyD2LOBiRYgO788sQEJ-sUgriz3irYG_vLJF82yiMompccBJbudLOvpiTFPerVEaLCfWAkXKhmrWGf5kLXSEG6UjOYcaDGzG2CicueiSmmsqj06rsl-5Sac5vfhzF-9mn0JZClhkltKjRvGy39H42X-04UFT4ZxzMRbDoDTRq650QiMIXjpDl1lL0dXB3ztlIUPCHRAbkx7HwmtQU40vL5gZSDYfBW0zyWudtOKbd8XruFs-wLuXALLWX9yDYaugt5FPOM9eq8SZplUbOIdYgEfsLWeg&flowName=GeneralOAuthFlow&as=S742059764%3A1779719956634049&client_id=463717515632-5f96ed9uaue5p206umg9toffdbfmsfbm.apps.googleusercontent.com&rapt=AEjHL4NQPIficNOMgpmf4iTvUJfY4Q-Ip9bsILDDuI8e15W-rSoXWyDrZ6BCv_zuxYJ-NeqHLv7tw7emkZte1E5E2dpMelw9sMvtcAtKkC0x-vNywdNHq-M#:0
+[   22101ms] [LOG] %c __                                               _____          __          __           ______          v1.65465.0
+/\ \       __                                    /\  __`\       /\ \      __/\ \__       /\__  _\                       
+\ \ \     /\_\    ___      __     __     _ __    \ \ \/\ \  _ __\ \ \____/\_\ \ ,_\      \/_/\ \/     ___     ___       
+ \ \ \  __\/\ \ /' _ `\  /'__`\ /'__`\  /\`'__\   \ \ \ \ \/\`'__\ \ '__`\/\ \ \ \/         \ \ \   /' _ `\  /'___\     
+  \ \ \L\ \\ \ \/\ \/\ \/\  __//\ \L\.\_\ \ \/     \ \ \_\ \ \ \/ \ \ \L\ \ \ \ \ \_  __     \_\ \__/\ \/\ \/\ \__/  __ 
+   \ \____/ \ \_\ \_\ \_\ \____\ \__/.\_\\ \_\      \ \_____\ \_\  \ \_,__/\ \_\ \__\/\ \    /\_____\ \_\ \_\ \____\/\_\
+    \/___/   \/_/\/_/\/_/\/____/\/__/\/_/ \/_/       \/_____/\/_/   \/___/  \/_/\/__/\ \/    \/_____/\/_/\/_/\/____/\/_/
+                                                                                      \/
+
+The product development system for teams and agents
+
+WE'RE HIRING: https://linear.app/careers
+CHANGELOG:    https://linear.app/changelog
+ 
+  font-family: monospace;
+  color: #282A30;
+   @ https://static.linear.app/client/assets/vendor-sentry.djDVAJCa.js:5
+[  946616ms] [LOG] %c __                                               _____          __          __           ______          v1.65465.0
+/\ \       __                                    /\  __`\       /\ \      __/\ \__       /\__  _\                       
+\ \ \     /\_\    ___      __     __     _ __    \ \ \/\ \  _ __\ \ \____/\_\ \ ,_\      \/_/\ \/     ___     ___       
+ \ \ \  __\/\ \ /' _ `\  /'__`\ /'__`\  /\`'__\   \ \ \ \ \/\`'__\ \ '__`\/\ \ \ \/         \ \ \   /' _ `\  /'___\     
+  \ \ \L\ \\ \ \/\ \/\ \/\  __//\ \L\.\_\ \ \/     \ \ \_\ \ \ \/ \ \ \L\ \ \ \ \ \_  __     \_\ \__/\ \/\ \/\ \__/  __ 
+   \ \____/ \ \_\ \_\ \_\ \____\ \__/.\_\\ \_\      \ \_____\ \_\  \ \_,__/\ \_\ \__\/\ \    /\_____\ \_\ \_\ \____\/\_\
+    \/___/   \/_/\/_/\/_/\/____/\/__/\/_/ \/_/       \/_____/\/_/   \/___/  \/_/\/__/\ \/    \/_____/\/_/\/_/\/____/\/_/
+                                                                                      \/
+
+The product development system for teams and agents
+
+WE'RE HIRING: https://linear.app/careers
+CHANGELOG:    https://linear.app/changelog
+ 
+  font-family: monospace;
+  color: #282A30;
+   @ https://static.linear.app/client/assets/vendor-sentry.djDVAJCa.js:5
+[10070446ms] [ERROR] Failed to load resource: net::ERR_NETWORK_CHANGED @ https://constellation.linear.app/api/statuspage:0

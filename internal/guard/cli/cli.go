@@ -17,6 +17,7 @@ import (
 
 	"github.com/cli/browser"
 
+	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/guard/app/server"
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
@@ -538,9 +539,7 @@ func isGuardHookEntry(entry any) bool {
 }
 
 func isGuardHookCommand(command string) bool {
-	normalized := strings.ReplaceAll(command, "'", "")
-	return strings.Contains(normalized, "kontext guard hook claude-code") ||
-		(strings.Contains(normalized, "kontext hook --agent claude") && strings.Contains(normalized, "--mode"))
+	return claudemanaged.IsGuardHookCommand(command)
 }
 
 func runSmokeTest(ctx context.Context, args []string, out io.Writer) error {

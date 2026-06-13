@@ -1,0 +1,232 @@
+- generic [ref=e4]:
+  - banner [ref=e5]:
+    - generic [ref=e6]:
+      - paragraph [ref=e7]: Engineering
+      - heading "Current build plan." [level=1] [ref=e8]
+      - paragraph [ref=e9]: "Current date: May 25, 2026. Active Katana work due May 28: pilot hardening, runtime data cleanup, and data model prep before Access Control."
+    - generic [ref=e10]:
+      - link "Back to dashboard" [ref=e11] [cursor=pointer]:
+        - /url: /
+        - img [ref=e12]
+        - text: Back to dashboard
+      - button "Edit" [ref=e17]:
+        - img [ref=e18]
+        - text: Edit
+      - button "Review" [ref=e21]:
+        - img [ref=e22]
+        - text: Review
+  - generic [ref=e26]:
+    - generic [ref=e28]:
+      - img [ref=e29]
+      - heading "Roadmap" [level=2] [ref=e31]
+    - generic [ref=e35]:
+      - generic [ref=e38]:
+        - generic:
+          - generic: partnership starts May 21
+          - generic: partnership ends Aug 21
+        - generic [ref=e39]:
+          - paragraph [ref=e40]: May 28
+          - paragraph [ref=e41]: Jun 4
+          - paragraph [ref=e42]: Jun 11
+          - paragraph [ref=e43]: Jun 18
+          - paragraph [ref=e44]: Jun 25
+          - paragraph [ref=e45]: Jul 2
+          - paragraph [ref=e46]: Jul 9
+      - generic [ref=e47]:
+        - generic [ref=e48]:
+          - generic [ref=e49]:
+            - generic [ref=e50]:
+              - img [ref=e52]
+              - link "Doc" [ref=e56] [cursor=pointer]:
+                - /url: https://docs.google.com/document/d/1zIito8toGRPsHFakkZ86a4VGkFxzi6GOsF5Ga9VQSg8/edit?tab=t.0
+                - img [ref=e57]
+                - text: Doc
+                - img [ref=e60]
+            - heading "Katana design partnership" [level=3] [ref=e64]
+            - paragraph [ref=e65]: 3-month customer proof path
+          - generic [ref=e66]:
+            - link "Week 2 Data model prep" [ref=e67] [cursor=pointer]:
+              - /url: https://linear.app/cobrowser/project/katana-week-2-deployment-hardening-policy-readiness-b12adabe2134/issues?layout=list&ordering=priority&grouping=workflowState&subGrouping=none&showCompletedIssues=all&showSubIssues=true&showTriageIssues=true
+              - generic [ref=e69]: Week 2
+              - heading "Data model prep" [level=4] [ref=e72]
+              - img [ref=e74]
+            - generic [ref=e77]:
+              - generic [ref=e79]: Week 3
+              - heading "Access-control model" [level=4] [ref=e82]
+            - generic [ref=e83]:
+              - generic [ref=e85]: Week 4
+              - heading "GitHub policy dry-run" [level=4] [ref=e88]
+        - generic [ref=e89]:
+          - generic [ref=e90]:
+            - generic [ref=e91]:
+              - img [ref=e93]
+              - link "Linear" [ref=e98] [cursor=pointer]:
+                - /url: https://linear.app/cobrowser/project/kontext-cli-multi-agent-expansion-40d3940032c7/overview
+                - img [ref=e99]
+                - text: Linear
+                - img [ref=e102]
+            - heading "Kontext CLI" [level=3] [ref=e106]
+            - paragraph [ref=e107]: Multi-agent expansion
+          - generic [ref=e108]:
+            - generic [ref=e109]:
+              - generic [ref=e111]: ENG-389
+              - heading "Codex support" [level=4] [ref=e114]
+            - generic [ref=e115]:
+              - generic [ref=e117]: ENG-390
+              - heading "Goose support" [level=4] [ref=e120]
+            - generic [ref=e121]:
+              - generic [ref=e123]: ENG-391
+              - heading "Cursor path" [level=4] [ref=e126]
+            - generic [ref=e127]:
+              - generic [ref=e129]: ENG-392
+              - heading "Agent matrix" [level=4] [ref=e132]
+        - generic [ref=e133]:
+          - generic [ref=e134]:
+            - generic [ref=e135]:
+              - img [ref=e137]
+              - link "Notion" [ref=e146] [cursor=pointer]:
+                - /url: https://www.notion.so/Research-on-pre-action-authorization-layer-WIP-36578100d8f98041b891dcc7d6936ccf?source=copy_link
+                - img [ref=e147]
+                - text: Notion
+                - img [ref=e150]
+            - heading "Probabilistic risk" [level=3] [ref=e154]
+            - paragraph [ref=e155]: Parallel research track
+          - generic [ref=e156]:
+            - generic [ref=e157]:
+              - generic [ref=e159]: Evals
+              - heading "Benchmark baseline" [level=4] [ref=e162]
+            - generic [ref=e163]:
+              - generic [ref=e165]: Model
+              - heading "Risk signal" [level=4] [ref=e168]
+            - generic [ref=e169]:
+              - generic [ref=e171]: Product
+              - heading "Trace integration" [level=4] [ref=e174]
+  - generic [ref=e175]:
+    - generic [ref=e176]:
+      - generic [ref=e177]:
+        - generic [ref=e178]:
+          - img [ref=e179]
+          - heading "Product destination" [level=2] [ref=e184]
+        - paragraph [ref=e185]: Architecture map first, demo dashboard second; Katana ships the first usable slice across Access, Traces, and Providers.
+      - link "Architecture diagram" [ref=e186] [cursor=pointer]:
+        - /url: https://excalidraw.com/#room=464e1f712b9f27df95ef,_iVu4KDcMBY9Ge08JKAuag
+        - img [ref=e187]
+        - text: Architecture diagram
+        - img [ref=e192]
+    - generic [ref=e198]:
+      - generic [ref=e199]:
+        - paragraph [ref=e200]: Demo dashboard nav
+        - generic [ref=e201]:
+          - generic [ref=e203]: Overview
+          - generic [ref=e205]: Registry
+          - generic [ref=e207]: Providers
+          - generic [ref=e209]: Traces
+          - generic [ref=e212]: Access
+      - generic [ref=e214]:
+        - generic [ref=e215]:
+          - generic [ref=e216]:
+            - generic [ref=e217]:
+              - generic [ref=e218]: Agent
+              - generic [ref=e219]: "->"
+            - generic [ref=e220]:
+              - generic [ref=e221]: Session
+              - generic [ref=e222]: "->"
+            - generic [ref=e223]:
+              - generic [ref=e224]: Tool call
+              - generic [ref=e225]: "->"
+            - generic [ref=e226]:
+              - generic [ref=e227]: Resource
+              - generic [ref=e228]: "->"
+            - generic [ref=e230]: Decision
+          - paragraph [ref=e231]: "Katana is the first customer proof for these surfaces: real Claude Code activity becomes Access, Traces, and Provider-backed resource policy."
+        - generic [ref=e232]:
+          - generic [ref=e233]:
+            - paragraph [ref=e234]: First customer slice
+            - heading "Access" [level=3] [ref=e235]
+            - paragraph [ref=e236]: Policy versions, access graph, users, agents, resources, decisions.
+          - generic [ref=e237]:
+            - paragraph [ref=e238]: Evidence layer
+            - heading "Traces" [level=3] [ref=e239]
+            - paragraph [ref=e240]: Agent -> session -> tool call -> resource for every action.
+          - generic [ref=e241]:
+            - paragraph [ref=e242]: Resource paths
+            - heading "Providers" [level=3] [ref=e243]
+            - paragraph [ref=e244]: GitHub, Databricks, HubSpot, org credentials, and protected resources.
+          - generic [ref=e245]:
+            - paragraph [ref=e246]: Coverage layer
+            - heading "Registry" [level=3] [ref=e247]
+            - paragraph [ref=e248]: Claude Code and Cowork first; Codex, Goose, OpenClaw after the CLI work.
+          - generic [ref=e249]:
+            - paragraph [ref=e250]: Executive view
+            - heading "Overview" [level=3] [ref=e251]
+            - paragraph [ref=e252]: Registered agents, active sessions, protected resources, stopped actions.
+  - generic [ref=e254]:
+    - generic [ref=e255]:
+      - generic [ref=e256]:
+        - img [ref=e257]
+        - heading "How we get there" [level=2] [ref=e260]
+      - paragraph [ref=e261]: Katana is the first real slice of the final product. Their workflows force the dashboard to handle actual agents, users, sessions, resources, providers, and policy decisions.
+      - generic [ref=e262]:
+        - generic [ref=e263]: Claude Code / Cowork
+        - generic [ref=e264]: Mac endpoints
+        - generic [ref=e265]: GitHub
+        - generic [ref=e266]: Databricks
+        - generic [ref=e267]: HubSpot
+    - generic [ref=e268]:
+      - generic [ref=e269]:
+        - generic [ref=e271]: "01"
+        - heading "Katana customer proof" [level=3] [ref=e273]
+        - paragraph [ref=e274]: Build Access, Traces, and Providers from real Claude Code workflows while hardening enterprise rollout.
+      - generic [ref=e275]:
+        - generic [ref=e277]: "02"
+        - heading "Provider coverage" [level=3] [ref=e279]
+        - paragraph [ref=e280]: Expand provider coverage so the product can support Codex, Goose, and adjacent agents after Claude Code.
+      - generic [ref=e281]:
+        - generic [ref=e283]: "03"
+        - heading "Risk quality" [level=3] [ref=e285]
+        - paragraph [ref=e286]: Probabilistic evals compare LLM judge, ML, and Markov-style signals before they appear in traces.
+  - generic [ref=e287]:
+    - generic [ref=e288]:
+      - generic [ref=e289]:
+        - img [ref=e290]
+        - heading "Where to go" [level=2] [ref=e294]
+      - paragraph [ref=e295]: "Keep the tool boundaries simple: Linear for execution, Notion for durable docs, hosted dashboard for the product demo."
+    - generic [ref=e296]:
+      - link "Linear Execution source of truth. Issues Project timelines Owners and priority" [ref=e297] [cursor=pointer]:
+        - /url: https://linear.app/next
+        - generic [ref=e298]:
+          - generic [ref=e299]:
+            - img [ref=e301]
+            - generic [ref=e304]:
+              - heading "Linear" [level=3] [ref=e305]
+              - paragraph [ref=e306]: Execution source of truth.
+          - img [ref=e307]
+        - generic [ref=e311]:
+          - generic [ref=e312]: Issues
+          - generic [ref=e313]: Project timelines
+          - generic [ref=e314]: Owners and priority
+      - generic [ref=e315]:
+        - generic [ref=e317]:
+          - img [ref=e319]
+          - generic [ref=e322]:
+            - heading "Notion" [level=3] [ref=e323]
+            - paragraph [ref=e324]: Deep docs and long-form storage.
+        - generic [ref=e325]:
+          - generic [ref=e326]: Specs
+          - generic [ref=e327]: Research notes
+          - generic [ref=e328]: Evaluation docs
+      - link "Demo dashboard Hosted product destination. Overview Registry Providers Traces Access" [ref=e329] [cursor=pointer]:
+        - /url: https://dashboard.kontext.security/
+        - generic [ref=e330]:
+          - generic [ref=e331]:
+            - img [ref=e333]
+            - generic [ref=e338]:
+              - heading "Demo dashboard" [level=3] [ref=e339]
+              - paragraph [ref=e340]: Hosted product destination.
+          - img [ref=e341]
+        - generic [ref=e345]:
+          - generic [ref=e346]: Overview
+          - generic [ref=e347]: Registry
+          - generic [ref=e348]: Providers
+          - generic [ref=e349]: Traces
+          - generic [ref=e350]: Access

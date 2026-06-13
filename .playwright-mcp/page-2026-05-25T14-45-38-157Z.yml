@@ -1,0 +1,112 @@
+- generic [ref=e1]:
+  - banner:
+    - heading "Excalidraw" [level=1] [ref=e2]
+  - generic [active] [ref=e5]:
+    - generic:
+      - generic:
+        - generic:
+          - button [ref=e9] [cursor=pointer]:
+            - img [ref=e10]
+          - region "Shapes":
+            - generic [ref=e15]:
+              - generic [ref=e16]:
+                - generic:
+                  - generic:
+                    - text: To move canvas, hold
+                    - generic: Scroll wheel
+                    - text: or
+                    - generic: Space
+                    - text: while dragging, or use the hand tool
+                - heading "Shapes" [level=2] [ref=e17]
+                - generic [ref=e18]:
+                  - generic "Keep selected tool active after drawing — Q" [ref=e19] [cursor=pointer]:
+                    - checkbox "Keep selected tool active after drawing"
+                    - img [ref=e21]
+                  - generic "Hand (panning tool) — H or null" [ref=e28] [cursor=pointer]:
+                    - radio "Hand (panning tool)"
+                    - img [ref=e30]
+                  - generic "Selection — V or 1" [ref=e37] [cursor=pointer]:
+                    - radio "Selection" [checked]
+                    - generic [ref=e38]:
+                      - img [ref=e39]
+                      - generic [ref=e44]: "1"
+                  - generic "Rectangle — R or 2" [ref=e45] [cursor=pointer]:
+                    - radio "Rectangle"
+                    - generic [ref=e46]:
+                      - img [ref=e47]
+                      - generic [ref=e51]: "2"
+                  - generic "Diamond — D or 3" [ref=e52] [cursor=pointer]:
+                    - radio "Diamond"
+                    - generic [ref=e53]:
+                      - img [ref=e54]
+                      - generic [ref=e58]: "3"
+                  - generic "Ellipse — O or 4" [ref=e59] [cursor=pointer]:
+                    - radio "Ellipse"
+                    - generic [ref=e60]:
+                      - img [ref=e61]
+                      - generic [ref=e65]: "4"
+                  - generic "Arrow — A or 5" [ref=e66] [cursor=pointer]:
+                    - radio "Arrow"
+                    - generic [ref=e67]:
+                      - img [ref=e68]
+                      - generic [ref=e73]: "5"
+                  - generic "Line — L or 6" [ref=e74] [cursor=pointer]:
+                    - radio "Line"
+                    - generic [ref=e75]:
+                      - img [ref=e76]
+                      - generic [ref=e77]: "6"
+                  - generic "Draw — P or 7" [ref=e78] [cursor=pointer]:
+                    - radio "Draw"
+                    - generic [ref=e79]:
+                      - img [ref=e80]
+                      - generic [ref=e84]: "7"
+                  - generic "Text — T or 8" [ref=e85] [cursor=pointer]:
+                    - radio "Text"
+                    - generic [ref=e86]:
+                      - img [ref=e87]
+                      - generic [ref=e92]: "8"
+                  - generic "Insert image — 9" [ref=e93] [cursor=pointer]:
+                    - radio "Insert image"
+                    - generic [ref=e94]:
+                      - img [ref=e95]
+                      - generic [ref=e100]: "9"
+                  - generic "Eraser — E or 0" [ref=e101] [cursor=pointer]:
+                    - radio "Eraser"
+                    - generic [ref=e102]:
+                      - img [ref=e103]
+                      - generic [ref=e108]: "0"
+                  - button "More tools" [ref=e111] [cursor=pointer]:
+                    - img [ref=e112]
+              - generic "Laser pointer" [ref=e119] [cursor=pointer]:
+                - checkbox "Laser pointer"
+                - img [ref=e121]
+          - generic:
+            - generic [ref=e125]:
+              - link "Excalidraw+" [ref=e126] [cursor=pointer]:
+                - /url: https://plus.excalidraw.com/plus?utm_source=excalidraw&utm_medium=app&utm_content=guestBanner#excalidraw-redirect
+              - button "Share" [ref=e127] [cursor=pointer]
+            - generic "Library" [ref=e128]:
+              - checkbox "Library"
+              - img [ref=e131] [cursor=pointer]
+      - contentinfo:
+        - region "Canvas actions" [ref=e136]:
+          - heading "Canvas actions" [level=2] [ref=e137]
+          - generic [ref=e139]:
+            - button "Zoom out" [ref=e140] [cursor=pointer]:
+              - img [ref=e142]
+            - button "Reset zoom" [ref=e144] [cursor=pointer]: 100%
+            - button "Zoom in" [ref=e145] [cursor=pointer]:
+              - img [ref=e147]
+          - generic [ref=e149]:
+            - button "Undo" [disabled] [ref=e152]:
+              - img [ref=e154]
+            - button "Redo" [disabled] [ref=e158]:
+              - img [ref=e160]
+        - link "Blog post on end-to-end encryption in Excalidraw" [ref=e163] [cursor=pointer]:
+          - /url: https://plus.excalidraw.com/blog/end-to-end-encryption
+          - img [ref=e165]
+        - button "Help" [ref=e168] [cursor=pointer]:
+          - img [ref=e169]
+    - generic:
+      - img
+    - generic [ref=e174]: Drawing canvas

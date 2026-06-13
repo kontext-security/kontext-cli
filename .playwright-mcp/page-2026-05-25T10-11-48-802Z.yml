@@ -1,0 +1,156 @@
+- generic [ref=e4]:
+  - banner [ref=e5]:
+    - generic [ref=e6]:
+      - paragraph [ref=e7]: Kontext OS
+      - heading "Build the control dashboard one proof path at a time." [level=1] [ref=e8]
+      - paragraph [ref=e9]: "The demo dashboard is the destination. Katana is the first customer path: make Claude Code activity understandable, then turn that into Access Control."
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - generic [ref=e12]: Current read
+        - img [ref=e13]
+      - generic [ref=e18]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: "01"
+          - paragraph [ref=e21]: Week 2 makes the pilot trustworthy
+        - generic [ref=e22]:
+          - generic [ref=e23]: "02"
+          - paragraph [ref=e24]: Week 3 defines the access model
+        - generic [ref=e25]:
+          - generic [ref=e26]: "03"
+          - paragraph [ref=e27]: Week 4 shows GitHub policy dry-run
+  - generic [ref=e28]:
+    - generic [ref=e29]:
+      - generic [ref=e30]:
+        - img [ref=e31]
+        - heading "Execution timeline" [level=2] [ref=e38]
+      - paragraph [ref=e39]: Start here. This is the simplest way to explain where the work is going.
+    - generic [ref=e42]:
+      - generic [ref=e43]:
+        - img [ref=e46]
+        - generic [ref=e49]:
+          - paragraph [ref=e50]: Week 1
+          - heading "First endpoint" [level=3] [ref=e51]
+          - paragraph [ref=e52]: Addigy installed the package, Claude kept using plain claude, and events reached the hosted dashboard.
+      - generic [ref=e57]:
+        - paragraph [ref=e58]: Week 2
+        - heading "Make the pilot legible" [level=3] [ref=e59]
+        - paragraph [ref=e60]: Fix log semantics, validate updates, stabilize deployment, and make the Access Control direction obvious.
+      - generic [ref=e65]:
+        - paragraph [ref=e66]: Week 3
+        - heading "Access model" [level=3] [ref=e67]
+        - paragraph [ref=e68]: Define one data model for hooks, OTEL, endpoints, users, agents, resources, decisions, and policy.
+      - generic [ref=e73]:
+        - paragraph [ref=e74]: Week 4
+        - heading "GitHub dry-run" [level=3] [ref=e75]
+        - paragraph [ref=e76]: Show the first deterministic GitHub policy path in Katana without blocking engineers yet.
+      - generic [ref=e80]:
+        - paragraph [ref=e81]: Month 2
+        - heading "Full dashboard expansion" [level=3] [ref=e82]
+        - paragraph [ref=e83]: Expand beyond Access Control into registry, providers, deployments, and probabilistic trace intelligence.
+  - generic [ref=e84]:
+    - generic [ref=e85]:
+      - paragraph [ref=e86]: The product bet
+      - heading "Access Control is the first slice of the full dashboard." [level=2] [ref=e87]
+      - paragraph [ref=e88]: "Everything in Week 2 should make this path clearer: clean logs, a stable deployment, and one data model that can later support GitHub, Databricks, HubSpot, and more."
+    - generic [ref=e89]:
+      - generic [ref=e90]:
+        - generic [ref=e91]:
+          - img [ref=e92]
+          - heading "Access-control path" [level=2] [ref=e95]
+        - paragraph [ref=e96]: This replaces the architecture diagram with the actual product flow.
+      - generic [ref=e99]:
+        - generic [ref=e100]:
+          - img [ref=e101]
+          - paragraph [ref=e103]: Capture
+          - heading "Agent activity" [level=3] [ref=e104]
+          - paragraph [ref=e105]: Claude hooks and OTEL-compatible events enter the system.
+        - generic [ref=e106]:
+          - img [ref=e107]
+          - paragraph [ref=e109]: Model
+          - heading "Runtime ledger" [level=3] [ref=e110]
+          - paragraph [ref=e111]: Events become users, endpoints, agents, sessions, resources, and decisions.
+        - generic [ref=e112]:
+          - img [ref=e113]
+          - paragraph [ref=e115]: Control
+          - heading "Access policy" [level=3] [ref=e116]
+          - paragraph [ref=e117]: Deterministic policy runs first; probabilistic judgement becomes an explanation layer.
+        - generic [ref=e118]:
+          - paragraph [ref=e119]: Show
+          - heading "Dashboard" [level=3] [ref=e120]
+          - paragraph [ref=e121]: Katana sees what happened, why it was allowed, and what can be enforced next.
+  - generic [ref=e122]:
+    - generic [ref=e123]:
+      - generic [ref=e124]:
+        - img [ref=e125]
+        - heading "Details" [level=2] [ref=e128]
+      - paragraph [ref=e129]: Open only the part you need. Linear stays tactical; this page explains the product direction.
+    - generic [ref=e130]:
+      - group [ref=e131]:
+        - generic "Runtime motion The system path from observed activity to enforceable policy." [ref=e132] [cursor=pointer]:
+          - generic [ref=e133]:
+            - img [ref=e134]
+            - generic [ref=e140]:
+              - heading "Runtime motion" [level=3] [ref=e141]
+              - paragraph [ref=e142]: The system path from observed activity to enforceable policy.
+          - img [ref=e143]
+        - generic [ref=e146]:
+          - generic [ref=e147]:
+            - generic [ref=e148]:
+              - generic [ref=e149]: "01"
+              - img [ref=e150]
+            - heading "Observe" [level=3] [ref=e152]
+            - paragraph [ref=e153]: Capture endpoint, session, tool, and hook events.
+          - generic [ref=e154]:
+            - generic [ref=e155]:
+              - generic [ref=e156]: "02"
+              - img [ref=e157]
+            - heading "Normalize" [level=3] [ref=e159]
+            - paragraph [ref=e160]: Create one activity model across Claude hooks and OTEL.
+          - generic [ref=e161]:
+            - generic [ref=e162]:
+              - generic [ref=e163]: "03"
+              - img [ref=e164]
+            - heading "Decide" [level=3] [ref=e166]
+            - paragraph [ref=e167]: Run deterministic policy before probabilistic judgement.
+          - generic [ref=e168]:
+            - generic [ref=e169]:
+              - generic [ref=e170]: "04"
+              - img [ref=e171]
+            - heading "Explain" [level=3] [ref=e173]
+            - paragraph [ref=e174]: Show why the system allowed, denied, or flagged the action.
+          - generic [ref=e175]:
+            - generic [ref=e177]: "05"
+            - heading "Enforce" [level=3] [ref=e178]
+            - paragraph [ref=e179]: Turn on blocking only after dry-run trust is established.
+      - group [ref=e180]:
+        - 'generic "Linear projects The execution containers: Katana Week 2, Kontext CLI, and probabilistic risk." [ref=e181] [cursor=pointer]':
+          - generic [ref=e182]:
+            - img [ref=e183]
+            - generic [ref=e187]:
+              - heading "Linear projects" [level=3] [ref=e188]
+              - paragraph [ref=e189]: "The execution containers: Katana Week 2, Kontext CLI, and probabilistic risk."
+          - img [ref=e190]
+      - group [ref=e192]:
+        - generic "Dashboard surfaces The demo dashboard end-state, with Katana starting on Access Control." [ref=e193] [cursor=pointer]:
+          - generic [ref=e194]:
+            - img [ref=e195]
+            - generic [ref=e200]:
+              - heading "Dashboard surfaces" [level=3] [ref=e201]
+              - paragraph [ref=e202]: The demo dashboard end-state, with Katana starting on Access Control.
+          - img [ref=e203]
+      - group [ref=e205]:
+        - generic "Schema pressure Why the broken log/observation work matters before policy becomes real." [ref=e206] [cursor=pointer]:
+          - generic [ref=e207]:
+            - img [ref=e208]
+            - generic [ref=e212]:
+              - heading "Schema pressure" [level=3] [ref=e213]
+              - paragraph [ref=e214]: Why the broken log/observation work matters before policy becomes real.
+          - img [ref=e215]
+      - group [ref=e217]:
+        - generic "Current decisions The alignment rules behind the current roadmap." [ref=e218] [cursor=pointer]:
+          - generic [ref=e219]:
+            - img [ref=e220]
+            - generic [ref=e223]:
+              - heading "Current decisions" [level=3] [ref=e224]
+              - paragraph [ref=e225]: The alignment rules behind the current roadmap.
+          - img [ref=e226]
