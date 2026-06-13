@@ -228,13 +228,6 @@ func TestResolveInstallTokenRejectsEmptyEnv(t *testing.T) {
 	}
 }
 
-func TestPathFromEnvHonorsOverride(t *testing.T) {
-	t.Setenv(EnvPath, " "+filepath.Join(t.TempDir(), "managed.json")+" ")
-	if got := PathFromEnv(); got != strings.TrimSpace(os.Getenv(EnvPath)) {
-		t.Fatalf("PathFromEnv() = %q", got)
-	}
-}
-
 func TestDeploymentVersionReadsAndTrimsMarker(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "deployment-version")
 	if err := os.WriteFile(marker, []byte("  0.2.0\n"), 0o600); err != nil {

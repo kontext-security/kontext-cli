@@ -122,13 +122,6 @@ type LoadedConfig struct {
 	Scope Scope
 }
 
-func PathFromEnv() string {
-	if path := strings.TrimSpace(os.Getenv(EnvPath)); path != "" {
-		return path
-	}
-	return DefaultPath
-}
-
 // DeploymentVersion returns the installed package version recorded in the
 // deployment marker, or "" if the marker is missing or unreadable.
 func DeploymentVersion() string {

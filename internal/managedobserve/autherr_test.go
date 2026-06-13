@@ -22,12 +22,16 @@ func TestAuthErrorRoundTrip(t *testing.T) {
 		t.Fatalf("LoadAuthError = %+v", got)
 	}
 
-	ClearAuthError(dbPath)
+	if err := ClearAuthError(dbPath); err != nil {
+		t.Fatal(err)
+	}
 	if got := LoadAuthError(dbPath); got != nil {
 		t.Fatalf("LoadAuthError after clear = %v, want nil", got)
 	}
 	// Clearing again is a no-op.
-	ClearAuthError(dbPath)
+	if err := ClearAuthError(dbPath); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestStartupErrorRoundTrip(t *testing.T) {
@@ -41,9 +45,27 @@ func TestStartupErrorRoundTrip(t *testing.T) {
 		t.Fatalf("LoadAuthError = %+v", got)
 	}
 
-	ClearAuthError(dbPath)
+	if err := ClearAuthError(dbPath); err != nil {
+		t.Fatal(err)
+	}
 	if LoadAuthError(dbPath) != nil {
 		t.Fatal("startup breadcrumb not cleared")
+	}
+}
+
+func TestClearAuthErrorSurfacesRemoveFailure(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "guard.db")
+	breadcrumbPath := AuthErrorPath(dbPath)
+	if err := os.Mkdir(breadcrumbPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(breadcrumbPath, "child"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ClearAuthError(dbPath); err == nil {
+		t.Fatal("ClearAuthError() error = nil, want remove failure")
 	}
 }
 
