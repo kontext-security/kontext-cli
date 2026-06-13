@@ -1,0 +1,160 @@
+package setup
+
+import (
+	"context"
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/kontext-security/kontext-cli/internal/managedobserve"
+)
+
+// LaunchAgentLabel matches the enterprise LaunchAgent so the hook-side
+// kickstart (managedobserve.Lifecycle) works identically for both install
+// kinds. The refusal gate in Run keeps the two from coexisting on one Mac.
+const LaunchAgentLabel = managedobserve.DefaultLaunchdLabel
+
+func launchAgentPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "Library", "LaunchAgents", LaunchAgentLabel+".plist"), nil
+}
+
+func logFilePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "Library", "Logs", "Kontext", "managed-observe.log"), nil
+}
+
+// renderLaunchAgentPlist produces the user LaunchAgent. KeepAlive + a 30s
+// throttle keeps the pipeline always-on (matching the enterprise agent)
+// without thrashing if the config is removed out from under the daemon;
+// RunAtLoad covers login, and the hook-side kickstart covers everything else.
+func renderLaunchAgentPlist(binary, logPath string) string {
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>` + xmlEscape(LaunchAgentLabel) + `</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>` + xmlEscape(binary) + `</string>
+		<string>managed-observe-daemon</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>KONTEXT_EXPECTED_CONFIG_SCOPE</key>
+		<string>user</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>` + xmlEscape(logPath) + `</string>
+	<key>StandardErrorPath</key>
+	<string>` + xmlEscape(logPath) + `</string>
+</dict>
+</plist>
+`
+}
+
+func xmlEscape(value string) string {
+	var builder strings.Builder
+	_ = xml.EscapeText(&builder, []byte(value))
+	return builder.String()
+}
+
+// installLaunchAgent writes the plist and (re)starts the agent in the user's
+// GUI launchd domain — no sudo anywhere. Bootout failure is expected on first
+// install; bootstrap failure usually means no GUI session (SSH).
+func installLaunchAgent(ctx context.Context, binary string) (plistPath, logPath string, err error) {
+	plistPath, err = launchAgentPath()
+	if err != nil {
+		return "", "", err
+	}
+	logPath, err = logFilePath()
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
+		return "", "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return "", "", err
+	}
+	if err := os.WriteFile(plistPath, []byte(renderLaunchAgentPlist(binary, logPath)), 0o644); err != nil {
+		return "", "", err
+	}
+
+	domainTarget := "gui/" + strconv.Itoa(os.Getuid())
+	serviceTarget := domainTarget + "/" + LaunchAgentLabel
+
+	// Not loaded on first install is fine. A failed bootout while the service
+	// is still loaded is not fine: bootstrap can then leave launchd running the
+	// old plist definition while setup reports success.
+	if out, err := execCommand(ctx, "", "launchctl", "bootout", serviceTarget); err != nil {
+		if _, printErr := execCommand(ctx, "", "launchctl", "print", serviceTarget); printErr == nil {
+			return "", "", fmt.Errorf("launchctl bootout failed before reload: %w (%s)", err, strings.TrimSpace(out))
+		}
+	}
+
+	if out, err := execCommand(ctx, "", "launchctl", "bootstrap", domainTarget, plistPath); err != nil {
+		detail := strings.TrimSpace(out)
+		if strings.Contains(detail, "Input/output error") {
+			return "", "", fmt.Errorf("launchctl bootstrap failed (%s) — this usually means no GUI login session; run `kontext setup` from a logged-in desktop session, not SSH", detail)
+		}
+		return "", "", fmt.Errorf("launchctl bootstrap failed: %w (%s)", err, detail)
+	}
+	// -k restarts a running agent: a re-run with a rotated token must not
+	// leave the old process flushing with the old credential.
+	if out, err := execCommand(ctx, "", "launchctl", "kickstart", "-k", serviceTarget); err != nil {
+		return "", "", fmt.Errorf("launchctl kickstart failed: %w (%s)", err, strings.TrimSpace(out))
+	}
+	return plistPath, logPath, nil
+}
+
+// removeLaunchAgent reverses installLaunchAgent; both steps tolerate
+// already-removed state. Bootout targets OUR plist by path, not the shared
+// label: if an MDM install's agent holds the same label, a label-target
+// bootout could unload the wrong service (or "succeed" while our daemon
+// keeps streaming with the token still in memory).
+func removeLaunchAgent(ctx context.Context) (string, error) {
+	plistPath, err := launchAgentPath()
+	if err != nil {
+		return "", err
+	}
+	domainTarget := "gui/" + strconv.Itoa(os.Getuid())
+	serviceTarget := domainTarget + "/" + LaunchAgentLabel
+	plistExists := true
+	if _, err := os.Lstat(plistPath); errors.Is(err, os.ErrNotExist) {
+		plistExists = false
+	} else if err != nil {
+		return "", err
+	}
+	if out, err := execCommand(ctx, "", "launchctl", "bootout", domainTarget, plistPath); err != nil {
+		if plistExists {
+			return "", fmt.Errorf("launchctl bootout failed: %w (%s)", err, strings.TrimSpace(out))
+		}
+		if _, printErr := execCommand(ctx, "", "launchctl", "print", serviceTarget); printErr == nil {
+			return "", fmt.Errorf("launchctl bootout failed and %s is still loaded: %w (%s)", LaunchAgentLabel, err, strings.TrimSpace(out))
+		}
+	}
+	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	return plistPath, nil
+}
