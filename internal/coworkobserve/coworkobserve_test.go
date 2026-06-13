@@ -492,3 +492,60 @@ func TestDrainResetsOffsetWhenSpoolShrinks(t *testing.T) {
 		t.Fatalf("replayed tools = %v, want [Bash Read]", got)
 	}
 }
+
+// A long-running session's .claude dir modtime freezes once we write
+// settings.json, so the injector must fall back to the spool modtime to keep
+// re-reaching it. Without that, a mode switch never reaches a session older
+// than the cutoff, and the session is invisible to the heartbeat.
+func TestInjectRemergesLongRunningSessionViaSpoolSignal(t *testing.T) {
+	_, socketPath := startFakeDaemon(t)
+	opts := testOptions(t, socketPath)
+	sessionDir := filepath.Join(opts.SessionsRoot, "acct", "ws", "local_abc")
+	claudeDir := filepath.Join(sessionDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	inject(opts, newHealth()) // observe hook into the fresh session
+	settings, err := os.ReadFile(filepath.Join(claudeDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("settings.json not written: %v", err)
+	}
+	if bytes.Contains(settings, []byte(decisionsDirName)) {
+		t.Fatal("observe injection unexpectedly wrote the enforce hook")
+	}
+
+	// Freeze the dir modtime in the past, as it would be once the session has
+	// been running a while. With no spool yet, the injector must now treat the
+	// session as stale and leave it untouched.
+	stale := time.Now().Add(-10 * time.Minute)
+	if err := os.Chtimes(claudeDir, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	h := newHealth()
+	opts.Mode = guardhookruntime.ModeEnforce
+	inject(opts, h)
+	if len(h.sessionsSeen) != 0 {
+		t.Fatalf("stale dir with no spool was visited: seen=%d", len(h.sessionsSeen))
+	}
+
+	// The session produces a spool (the in-VM CLI is firing tool calls). Now
+	// the injector must re-reach it under the new mode, re-merge the stale
+	// observe hook into the enforce hook, and record it for the heartbeat.
+	writeSpool(t, filepath.Join(sessionDir, spoolName), eventLine("Bash")+"\n")
+	if err := os.Chtimes(claudeDir, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	h = newHealth()
+	inject(opts, h)
+	if len(h.sessionsSeen) != 1 || len(h.hooked) != 1 {
+		t.Fatalf("live session not re-reached: seen=%d hooked=%d", len(h.sessionsSeen), len(h.hooked))
+	}
+	settings, err = os.ReadFile(filepath.Join(claudeDir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(settings, []byte(decisionsDirName)) {
+		t.Fatalf("mode switch did not re-merge to the enforce hook: %s", settings)
+	}
+}

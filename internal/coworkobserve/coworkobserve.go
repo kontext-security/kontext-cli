@@ -352,14 +352,23 @@ func (h *health) logHeartbeat(opts Options) {
 }
 
 // inject merges the mode-appropriate spool hook into settings.json in any
-// recent per-session .claude dir that does not yet carry it.
+// live per-session .claude dir that does not yet carry the current entry
+// (including dirs carrying a stale variant from a previous mode).
+//
+// Liveness can't key on the .claude dir modtime alone: our own settings.json
+// write freezes that modtime, so a session would look stale ~3 minutes after
+// the first injection even while it keeps running. A mode switch or a late
+// daemon start would then never re-reach the session, and — because the dir
+// was skipped before being recorded — the heartbeat would never surface it
+// either. So a session is also live if its spool was written recently: that
+// is the signal the in-VM CLI keeps fresh as it drives tool calls.
 func inject(opts Options, h *health) {
 	claudeDirs, _ := filepath.Glob(filepath.Join(opts.SessionsRoot, "*", "*", "local_*", ".claude"))
 	cutoff := time.Now().Add(-3 * time.Minute)
 	entry := hookEntry(opts.Mode)
 	for _, dir := range claudeDirs {
 		info, err := os.Stat(dir)
-		if err != nil || info.ModTime().Before(cutoff) {
+		if err != nil || !sessionLive(filepath.Dir(dir), info, cutoff) {
 			continue
 		}
 		h.sessionsSeen[dir] = true
@@ -380,6 +389,22 @@ func inject(opts Options, h *health) {
 		h.hooked[dir] = true
 		opts.Diagnostic.Printf("cowork observe: injected hook into %s\n", settingsPath)
 	}
+}
+
+// sessionLive reports whether a per-session dir is worth (re-)injecting into:
+// either its .claude dir was touched after cutoff (a fresh session, before our
+// settings.json write freezes the dir modtime) or its spool was written after
+// cutoff (a long-running session the in-VM CLI is actively driving). The spool
+// signal is what keeps a session reachable for a mode-switch re-merge and
+// visible to the heartbeat once the dir modtime has frozen.
+func sessionLive(sessionDir string, claudeInfo os.FileInfo, cutoff time.Time) bool {
+	if claudeInfo.ModTime().After(cutoff) {
+		return true
+	}
+	if si, err := os.Stat(filepath.Join(sessionDir, spoolName)); err == nil && si.ModTime().After(cutoff) {
+		return true
+	}
+	return false
 }
 
 type collector struct {
