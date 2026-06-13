@@ -60,7 +60,7 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadState() error = %v", err)
 	}
-	if state.UpdatedAfter == "" {
+	if state.UpdatedAfter == nil {
 		t.Fatal("updated_after was not persisted")
 	}
 }
@@ -227,7 +227,7 @@ func TestFlushRetriesWithSmallerBatchWhenHostedBackendRejectsSize(t *testing.T) 
 	if err != nil {
 		t.Fatalf("LoadState() error = %v", err)
 	}
-	if state.UpdatedAfter == "" {
+	if state.UpdatedAfter == nil {
 		t.Fatal("updated_after was not persisted after smaller retry")
 	}
 }
@@ -362,7 +362,7 @@ func TestFlushAdvancesCursorPastOversizedMinimumBatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadState() error = %v", err)
 	}
-	if state.UpdatedAfter == "" || state.ActionID == "" {
+	if state.UpdatedAfter == nil || state.ActionID == "" {
 		t.Fatalf("state = %+v, want cursor advanced", state)
 	}
 }
@@ -392,7 +392,7 @@ func TestFlushDefaultsStatePathBesideLedgerDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadState() error = %v", err)
 	}
-	if state.UpdatedAfter == "" {
+	if state.UpdatedAfter == nil {
 		t.Fatal("updated_after was not persisted")
 	}
 }
@@ -402,7 +402,8 @@ func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 	saveTestDecision(t, store, "session-1", "toolu_1")
 
 	statePath := filepath.Join(t.TempDir(), "stream-state.json")
-	if err := SaveState(statePath, State{UpdatedAfter: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano)}); err != nil {
+	updatedAfter := time.Now().Add(time.Hour).UTC()
+	if err := SaveState(statePath, State{UpdatedAfter: &updatedAfter}); err != nil {
 		t.Fatalf("SaveState() error = %v", err)
 	}
 
@@ -425,6 +426,30 @@ func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 	}
 	if called {
 		t.Fatal("server was called despite cursor being newer than action")
+	}
+}
+
+func TestStatePersistsUpdatedAfterAsRFC3339String(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	updatedAfter := time.Date(2026, 6, 8, 12, 20, 7, 853885000, time.UTC)
+	if err := SaveState(statePath, State{UpdatedAfter: &updatedAfter, ActionID: "act_123"}); err != nil {
+		t.Fatalf("SaveState() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if got := string(raw); !strings.Contains(got, `"updated_after": "2026-06-08T12:20:07.853885Z"`) {
+		t.Fatalf("state json = %s, want RFC3339 updated_after string", got)
+	}
+
+	state, err := LoadState(statePath)
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if state.UpdatedAfter == nil || !state.UpdatedAfter.Equal(updatedAfter) || state.ActionID != "act_123" {
+		t.Fatalf("LoadState() = %+v, want typed cursor", state)
 	}
 }
 

@@ -72,7 +72,9 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	}
 	// Token resolved — clear any stale startup breadcrumb from a prior boot.
 	if previous := LoadAuthError(dbPath); previous != nil && previous.Kind == "startup" {
-		ClearAuthError(dbPath)
+		if err := ClearAuthError(dbPath); err != nil {
+			opts.Diagnostic.Printf("clear startup-error breadcrumb: %v\n", err)
+		}
 	}
 
 	socketPath := opts.SocketPath
@@ -126,7 +128,9 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 				}
 			},
 			OnFlushSuccess: func() {
-				ClearAuthError(dbPath)
+				if err := ClearAuthError(dbPath); err != nil {
+					opts.Diagnostic.Printf("clear auth-error breadcrumb: %v\n", err)
+				}
 			},
 		})
 	}()

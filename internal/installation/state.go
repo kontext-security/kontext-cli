@@ -43,10 +43,6 @@ func UserPath() string {
 	return filepath.Join(home, "Library", "Application Support", "Kontext", "installation.json")
 }
 
-func Load() (State, error) {
-	return LoadFile(PathFromEnv())
-}
-
 func LoadFile(path string) (State, error) {
 	if err := validateStateFile(path); err != nil {
 		return State{}, err
@@ -59,10 +55,6 @@ func LoadFile(path string) (State, error) {
 		return State{}, err
 	}
 	return parse(data)
-}
-
-func Ensure() (State, error) {
-	return EnsureFile(PathFromEnv())
 }
 
 func EnsureFile(path string) (State, error) {

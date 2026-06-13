@@ -96,6 +96,11 @@ type Device struct {
 }
 
 type State struct {
+	UpdatedAfter *time.Time
+	ActionID     string
+}
+
+type persistedState struct {
 	UpdatedAfter string `json:"updated_after,omitempty"`
 	ActionID     string `json:"action_id,omitempty"`
 }
@@ -169,19 +174,10 @@ func Flush(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	var updatedAfter *time.Time
-	if state.UpdatedAfter != "" {
-		parsed, err := parseStateUpdatedAfter(state.UpdatedAfter)
-		if err != nil {
-			return fmt.Errorf("parse managed stream state: %w", err)
-		}
-		updatedAfter = &parsed
-	}
-
 	limit := batchLimit(opts.BatchLimit)
 	for {
 		batch, err := store.LedgerBatch(ctx, sqlite.LedgerExportOptions{
-			UpdatedAfter:   updatedAfter,
+			UpdatedAfter:   state.UpdatedAfter,
 			UpdatedAfterID: state.ActionID,
 			Limit:          limit,
 		})
@@ -368,8 +364,9 @@ func advancePastMinimumBatch(statePath string, batch sqlite.LedgerBatch, reason 
 }
 
 func saveCursor(statePath string, batch sqlite.LedgerBatch) error {
+	updatedAfter := batch.Cursor.UpdatedAt.UTC()
 	return SaveState(statePath, State{
-		UpdatedAfter: batch.Cursor.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAfter: &updatedAfter,
 		ActionID:     batch.Cursor.ActionID,
 	})
 }
@@ -456,11 +453,18 @@ func LoadState(path string) (State, error) {
 		return State{}, err
 	}
 	var state State
-	if err := json.Unmarshal(data, &state); err != nil {
+	var persisted persistedState
+	if err := json.Unmarshal(data, &persisted); err != nil {
 		return State{}, err
 	}
-	state.UpdatedAfter = strings.TrimSpace(state.UpdatedAfter)
-	state.ActionID = strings.TrimSpace(state.ActionID)
+	if updatedAfter := strings.TrimSpace(persisted.UpdatedAfter); updatedAfter != "" {
+		parsed, err := parseStateUpdatedAfter(updatedAfter)
+		if err != nil {
+			return State{}, fmt.Errorf("parse managed stream state: %w", err)
+		}
+		state.UpdatedAfter = &parsed
+	}
+	state.ActionID = strings.TrimSpace(persisted.ActionID)
 	return state, nil
 }
 
@@ -468,7 +472,11 @@ func SaveState(path string, state State) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(state, "", "  ")
+	persisted := persistedState{ActionID: strings.TrimSpace(state.ActionID)}
+	if state.UpdatedAfter != nil {
+		persisted.UpdatedAfter = state.UpdatedAfter.UTC().Format(time.RFC3339Nano)
+	}
+	data, err := json.MarshalIndent(persisted, "", "  ")
 	if err != nil {
 		return err
 	}
