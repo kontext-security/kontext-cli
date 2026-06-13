@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,7 +30,6 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 		DBPath:         dbPath,
 		StatePath:      statePath,
 		CloudURL:       server.URL,
-		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		DeviceLabel:    "michel-macbook",
@@ -40,9 +40,6 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 
 	if got.SchemaVersion != SchemaVersion {
 		t.Fatalf("schema_version = %q, want %q", got.SchemaVersion, SchemaVersion)
-	}
-	if got.OrganizationID != "org_123" {
-		t.Fatalf("organization_id = %q", got.OrganizationID)
 	}
 	if got.InstallationID != "ins_0123456789abcdefghijklmnopqrstuv" {
 		t.Fatalf("installation_id = %q", got.InstallationID)
@@ -80,7 +77,6 @@ func TestFlushOmitsBlankDeviceLabel(t *testing.T) {
 		DBPath:         dbPath,
 		StatePath:      filepath.Join(t.TempDir(), "stream-state.json"),
 		CloudURL:       server.URL,
-		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		DeviceLabel:    " \t\n ",
@@ -108,7 +104,6 @@ func TestFlushResolvesDeploymentVersionPerFlush(t *testing.T) {
 			DBPath:            dbPath,
 			StatePath:         filepath.Join(t.TempDir(), "stream-state.json"),
 			CloudURL:          server.URL,
-			OrganizationID:    "org_123",
 			InstallationID:    "ins_0123456789abcdefghijklmnopqrstuv",
 			InstallToken:      "test-install-token",
 			DeploymentVersion: func() string { return version },
@@ -148,7 +143,6 @@ func TestFlushDoesNotAdvanceCursorWhenHostedBackendFails(t *testing.T) {
 		DBPath:         dbPath,
 		StatePath:      statePath,
 		CloudURL:       server.URL,
-		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		HTTPClient:     server.Client(),
@@ -175,7 +169,6 @@ func TestFlushCapsBatchLimitBeforePosting(t *testing.T) {
 		DBPath:         dbPath,
 		StatePath:      filepath.Join(t.TempDir(), "stream-state.json"),
 		CloudURL:       server.URL,
-		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		BatchLimit:     1000,
@@ -216,7 +209,6 @@ func TestFlushRetriesWithSmallerBatchWhenHostedBackendRejectsSize(t *testing.T) 
 		DBPath:         dbPath,
 		StatePath:      statePath,
 		CloudURL:       server.URL,
-		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		BatchLimit:     4,
@@ -254,7 +246,6 @@ func TestFlushReportsHostedValidationBody(t *testing.T) {
 		DBPath:         dbPath,
 		StatePath:      filepath.Join(t.TempDir(), "stream-state.json"),
 		CloudURL:       server.URL,
-		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		BatchLimit:     1,
@@ -283,7 +274,6 @@ func TestFlushRedactsHostedValidationBody(t *testing.T) {
 		DBPath:         dbPath,
 		StatePath:      filepath.Join(t.TempDir(), "stream-state.json"),
 		CloudURL:       server.URL,
-		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		BatchLimit:     1,
@@ -325,7 +315,6 @@ func TestFlushDoesNotAdvanceCursorPastHostedRejectedMinimumBatch(t *testing.T) {
 		DBPath:         dbPath,
 		StatePath:      statePath,
 		CloudURL:       server.URL,
-		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		BatchLimit:     1,
@@ -355,7 +344,6 @@ func TestFlushAdvancesCursorPastOversizedMinimumBatch(t *testing.T) {
 		DBPath:         dbPath,
 		StatePath:      statePath,
 		CloudURL:       server.URL,
-		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		BatchLimit:     1,
@@ -392,7 +380,6 @@ func TestFlushDefaultsStatePathBesideLedgerDB(t *testing.T) {
 	if err := Flush(context.Background(), Options{
 		DBPath:         dbPath,
 		CloudURL:       server.URL,
-		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		HTTPClient:     server.Client(),
@@ -430,7 +417,6 @@ func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 		DBPath:         dbPath,
 		StatePath:      statePath,
 		CloudURL:       server.URL,
-		OrganizationID: "org_123",
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		HTTPClient:     server.Client(),
@@ -477,8 +463,17 @@ func capturePayloadServer(t *testing.T, got *Payload) *httptest.Server {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-install-token" {
 			t.Fatalf("Authorization = %q, want bearer install token", got)
 		}
-		if err := json.NewDecoder(r.Body).Decode(got); err != nil {
-			t.Fatalf("Decode() error = %v", err)
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		// New agents must not send the legacy organization_id claim — the
+		// install token alone binds the batch to its org.
+		if strings.Contains(string(raw), `"organization_id"`) {
+			t.Fatalf("payload contains organization_id claim: %s", raw)
+		}
+		if err := json.Unmarshal(raw, got); err != nil {
+			t.Fatalf("Unmarshal() error = %v", err)
 		}
 		w.WriteHeader(http.StatusAccepted)
 	}))

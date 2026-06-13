@@ -169,8 +169,8 @@ func TestDaemonStreamsLedgerBatches(t *testing.T) {
 
 	select {
 	case body := <-requests:
-		if body.OrganizationID != "org_123" {
-			t.Fatalf("organization_id = %q", body.OrganizationID)
+		if body.OrganizationID != "" {
+			t.Fatalf("organization_id sent = %q, want omitted (token binds the org)", body.OrganizationID)
 		}
 		if body.InstallationID != "ins_0123456789abcdefghijklmnopqrstuv" {
 			t.Fatalf("installation_id = %q", body.InstallationID)
