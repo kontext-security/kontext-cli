@@ -486,6 +486,11 @@ func (c *collector) collect(opts Options, h *health) {
 	}
 }
 
+// beforeSpoolRemove, when non-nil, runs inside cleanup after the drained/idle
+// checks but before the re-stat guard. It exists only for tests to drive the
+// stat/remove race deterministically; production leaves it nil.
+var beforeSpoolRemove func(spool string)
+
 // cleanup removes a spool once it is fully drained and idle past the
 // retention window. If the session wakes up again, the hook recreates the
 // file and drain starts over from offset zero (the shrink reset).
@@ -499,6 +504,19 @@ func (c *collector) cleanup(opts Options, spool string) {
 	}
 	if c.offsets[spool] != info.Size() {
 		return // not fully drained yet
+	}
+	if beforeSpoolRemove != nil {
+		beforeSpoolRemove(spool) // test seam: simulate a hook appending in the window
+	}
+	// Re-stat immediately before unlinking. drain ran earlier this tick, but a
+	// hook may append between then and now; if the spool grew or its modtime
+	// advanced since the check above, a fresh (undrained) event just landed, so
+	// leave the file for the next tick to drain rather than unlink data we
+	// never replayed. This shrinks — does not fully close — the stat/remove
+	// window, but the loss it guards against requires an append landing in that
+	// window after a full hour of spool idleness, so a narrow guard suffices.
+	if again, err := os.Stat(spool); err != nil || again.Size() != info.Size() || !again.ModTime().Equal(info.ModTime()) {
+		return
 	}
 	if err := os.Remove(spool); err != nil {
 		opts.Diagnostic.Printf("cowork observe: remove drained spool %s: %v\n", spool, err)

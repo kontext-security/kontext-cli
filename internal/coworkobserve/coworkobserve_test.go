@@ -549,3 +549,42 @@ func TestInjectRemergesLongRunningSessionViaSpoolSignal(t *testing.T) {
 		t.Fatalf("mode switch did not re-merge to the enforce hook: %s", settings)
 	}
 }
+
+// cleanup must not unlink a drained, idle spool if a hook appends a fresh event
+// in the window between the drained check and the remove — the re-stat guard
+// has to catch the change and leave the file for the next tick to drain.
+func TestCleanupSkipsSpoolAppendedInRemoveWindow(t *testing.T) {
+	_, socketPath := startFakeDaemon(t)
+	opts := testOptions(t, socketPath)
+	spool := filepath.Join(t.TempDir(), spoolName)
+	writeSpool(t, spool, eventLine("Bash")+"\n")
+
+	c := &collector{offsets: map[string]int64{}}
+	c.drain(opts, newHealth(), spool) // offset now == size: fully drained
+	old := time.Now().Add(-2 * spoolRetention)
+	if err := os.Chtimes(spool, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a hook landing a new event in the stat/remove window.
+	beforeSpoolRemove = func(s string) {
+		writeSpool(t, s, eventLine("Read")+"\n")
+	}
+	t.Cleanup(func() { beforeSpoolRemove = nil })
+
+	c.cleanup(opts, spool)
+	if _, err := os.Stat(spool); err != nil {
+		t.Fatalf("spool unlinked despite an append in the remove window: %v", err)
+	}
+
+	// Without further appends, the next cleanup tick removes it normally.
+	beforeSpoolRemove = nil
+	c.drain(opts, newHealth(), spool) // drain the event that landed
+	if err := os.Chtimes(spool, old, old); err != nil {
+		t.Fatal(err)
+	}
+	c.cleanup(opts, spool)
+	if _, err := os.Stat(spool); !os.IsNotExist(err) {
+		t.Fatalf("drained idle spool not removed on a quiet tick (err=%v)", err)
+	}
+}
