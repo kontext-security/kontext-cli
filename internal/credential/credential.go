@@ -115,8 +115,8 @@ func ParseTemplate(path string) ([]Entry, error) {
 
 // BuildEnv converts resolved credentials into environment variable assignments.
 func BuildEnv(resolved []Resolved, base []string) []string {
-	env := make([]string, len(base))
-	copy(env, base)
+	env := make([]string, 0, len(base)+len(resolved))
+	env = append(env, base...)
 	for _, r := range resolved {
 		env = append(env, fmt.Sprintf("%s=%s", r.EnvVar, r.Value))
 	}

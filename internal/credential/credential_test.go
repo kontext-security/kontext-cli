@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -85,5 +86,37 @@ func TestNoopProviderReportsUnavailable(t *testing.T) {
 	})
 	if !errors.Is(err, ErrNoopProvider) {
 		t.Fatalf("err = %v, want ErrNoopProvider", err)
+	}
+}
+
+func TestBuildEnvAppendsResolvedValuesWithoutMutatingBase(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"PATH=/usr/bin", "HOME=/tmp/test"}
+	got := BuildEnv([]Resolved{
+		{
+			Entry: Entry{EnvVar: "GITHUB_TOKEN"},
+			Value: "token-1",
+		},
+		{
+			Entry: Entry{EnvVar: "LINEAR_API_KEY"},
+			Value: "token-2",
+		},
+	}, base)
+
+	want := []string{
+		"PATH=/usr/bin",
+		"HOME=/tmp/test",
+		"GITHUB_TOKEN=token-1",
+		"LINEAR_API_KEY=token-2",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildEnv() = %#v, want %#v", got, want)
+	}
+	if !reflect.DeepEqual(base, []string{"PATH=/usr/bin", "HOME=/tmp/test"}) {
+		t.Fatalf("BuildEnv() mutated base = %#v", base)
+	}
+	if len(got) > 0 && len(base) > 0 && &got[0] == &base[0] {
+		t.Fatal("BuildEnv() reused base backing array")
 	}
 }
