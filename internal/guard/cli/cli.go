@@ -172,7 +172,7 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := runtimeService.Start(context.Background()); err != nil {
+	if err := runtimeService.Start(ctx); err != nil {
 		return fmt.Errorf("local runtime start: %w", err)
 	}
 	defer runtimeService.Stop()
@@ -184,7 +184,7 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 	if !*noOpen {
 		_ = browser.OpenURL("http://" + *addr)
 	}
-	return localServer.ListenAndServe(*addr)
+	return localServer.ListenAndServe(ctx, *addr)
 }
 
 func localJudgeStatusLine(localJudge judge.Judge) string {
