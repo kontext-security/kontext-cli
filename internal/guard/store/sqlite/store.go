@@ -16,6 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
+	"github.com/kontext-security/kontext-cli/internal/hook"
 )
 
 type Store struct {
@@ -1172,14 +1173,10 @@ func canonicalEventType(hookEventName string) string {
 }
 
 func canonicalDecisionResult(decision risk.Decision) string {
-	switch strings.ToLower(strings.TrimSpace(string(decision))) {
-	case "allow":
-		return "allow"
-	case "deny":
-		fallthrough
-	default:
-		return "deny"
+	if normalized, ok := hook.NormalizeDecision(string(decision)); ok {
+		return string(normalized)
 	}
+	return "deny"
 }
 
 func actionStatus(canonicalEvent, decisionResult string) string {
@@ -1204,11 +1201,10 @@ func actionStatus(canonicalEvent, decisionResult string) string {
 }
 
 func adapterDecision(decision risk.Decision) string {
-	normalized := strings.ToLower(strings.TrimSpace(string(decision)))
-	switch normalized {
-	case "allow", "deny":
-		return normalized
+	if normalized, ok := hook.NormalizeDecision(string(decision)); ok {
+		return string(normalized)
 	}
+	normalized := strings.ToLower(strings.TrimSpace(string(decision)))
 	if normalized == "" {
 		normalized = "empty"
 	}

@@ -769,6 +769,15 @@ where id = ?
 	}
 }
 
+func TestDecisionHelpersNormalizeWhitespaceAndCase(t *testing.T) {
+	if got := canonicalDecisionResult(risk.Decision(" Allow \n")); got != "allow" {
+		t.Fatalf("canonicalDecisionResult() = %q, want allow", got)
+	}
+	if got := adapterDecision(risk.Decision("\tDeNy ")); got != "deny" {
+		t.Fatalf("adapterDecision() = %q, want deny", got)
+	}
+}
+
 func TestLedgerBatchExportsSessionsActionsAndReceipts(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {
