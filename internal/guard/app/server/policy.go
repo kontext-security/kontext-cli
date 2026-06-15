@@ -285,9 +285,9 @@ func judgeInputFromRiskEvent(event risk.HookEvent, riskEvent risk.RiskEvent) jud
 	if toolInput.Command == "" {
 		switch {
 		case toolInput.Path != "":
-			toolInput.Request = sanitizedPathRequest(event.ToolName, toolInput.Path)
+			toolInput.Request = judge.SanitizedPathRequest(event.ToolName, toolInput.Path)
 		case strings.EqualFold(event.ToolName, "Skill"):
-			toolInput.Request = skillRequest(event.ToolInput)
+			toolInput.Request = judge.SkillRequest(event.ToolInput)
 		default:
 			toolInput.Request = riskEvent.RequestSummary
 		}
@@ -297,35 +297,6 @@ func judgeInputFromRiskEvent(event risk.HookEvent, riskEvent risk.RiskEvent) jud
 		ExplicitUserIntent: riskEvent.ExplicitUserIntent,
 		ToolInput:          toolInput,
 	}
-}
-
-func sanitizedPathRequest(toolName, pathClass string) string {
-	action := strings.TrimSpace(toolName)
-	if action == "" {
-		action = "Tool"
-	}
-	if isCredentialPathClass(pathClass) {
-		return action + " credential_path " + pathClass
-	}
-	return action + " " + pathClass
-}
-
-func isCredentialPathClass(pathClass string) bool {
-	switch pathClass {
-	case "credential_file", "env_file", "cloud_credentials":
-		return true
-	default:
-		return false
-	}
-}
-
-func skillRequest(input map[string]any) string {
-	name, _ := input["skill"].(string)
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "Skill"
-	}
-	return "Skill " + name
 }
 
 func pathClassForJudge(input map[string]any, normalizedClass string) string {
