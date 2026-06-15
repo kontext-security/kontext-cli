@@ -66,7 +66,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		dbPath = DefaultDBPath()
 	}
 
-	installToken, err := managedconfig.ResolveInstallToken(ctx, loadedConfig.Config.Credentials.InstallTokenRef)
+	_, err = managedconfig.ResolveInstallToken(ctx, loadedConfig.Config.Credentials.InstallTokenRef)
 	if err != nil {
 		// Leave a breadcrumb: under launchd this exit is otherwise invisible
 		// (doctor would only see "daemon: not running" with no cause). A
@@ -127,46 +127,13 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 
 	policyCtx, stopPolicyRefresh := context.WithCancel(ctx)
 	defer stopPolicyRefresh()
-	go githubpolicy.Run(policyCtx, githubpolicy.RunOptions{
-		Cache:        policyCache,
-		CloudURL:     loadedConfig.Config.CloudURL,
-		InstallToken: installToken,
-		Interval:     opts.GithubPolicyInterval,
-		HTTPClient:   opts.GithubPolicyClient,
-		Diagnostic:   opts.Diagnostic,
-	})
+	go runGithubPolicy(policyCtx, opts, policyCache)
 
 	streamCtx, stopStream := context.WithCancel(ctx)
 	defer stopStream()
 	streamErr := make(chan error, 1)
 	go func() {
-		streamErr <- managedstream.Run(streamCtx, managedstream.Options{
-			DBPath:            dbPath,
-			StatePath:         opts.StreamStatePath,
-			CloudURL:          loadedConfig.Config.CloudURL,
-			InstallationID:    installationState.InstallationID,
-			InstallToken:      installToken,
-			DeviceLabel:       loadedConfig.Config.Device.Label,
-			DeploymentVersion: deploymentVersionWithFallback(opts.FallbackDeploymentVersion),
-			Interval:          opts.StreamInterval,
-			HTTPClient:        opts.StreamHTTPClient,
-			Diagnostic:        opts.Diagnostic,
-			OnAuthFailure: func(status int) {
-				// Unconditional stderr (Diagnostic is env-gated and would be
-				// silent under launchd) plus a breadcrumb for `kontext doctor`.
-				fmt.Fprintf(os.Stderr,
-					"Kontext install token rejected by %s (HTTP %d). It may have been revoked — run `kontext setup` with a new token from the dashboard.\n",
-					loadedConfig.Config.CloudURL, status)
-				if err := WriteAuthError(dbPath, status); err != nil {
-					opts.Diagnostic.Printf("write auth-error breadcrumb: %v\n", err)
-				}
-			},
-			OnFlushSuccess: func() {
-				if err := ClearAuthError(dbPath); err != nil {
-					opts.Diagnostic.Printf("clear auth-error breadcrumb: %v\n", err)
-				}
-			},
-		})
+		streamErr <- runManagedStream(streamCtx, opts, dbPath, installationState.InstallationID)
 	}()
 
 	// Cowork observation runs alongside Claude Code in the same daemon, replaying
@@ -233,6 +200,134 @@ func installationPathForScope(scope managedconfig.Scope) string {
 		}
 	}
 	return installation.PathFromEnv()
+}
+
+func loadManagedConfig(ctx context.Context) (managedconfig.LoadedConfig, string, error) {
+	loadedConfig, err := managedconfig.Load()
+	if err != nil {
+		if errors.Is(err, managedconfig.ErrNotManaged) {
+			return managedconfig.LoadedConfig{}, "", err
+		}
+		return managedconfig.LoadedConfig{}, "", fmt.Errorf("load managed config: %w", err)
+	}
+	installToken, err := managedconfig.ResolveInstallToken(ctx, loadedConfig.Config.Credentials.InstallTokenRef)
+	if err != nil {
+		return managedconfig.LoadedConfig{}, "", fmt.Errorf("resolve install token: %w", err)
+	}
+	return loadedConfig, installToken, nil
+}
+
+func runGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache) {
+	interval := opts.GithubPolicyInterval
+	if interval == 0 {
+		interval = githubpolicy.DefaultIntervalFromEnv()
+	}
+	refreshGithubPolicy(ctx, opts, cache)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refreshGithubPolicy(ctx, opts, cache)
+		}
+	}
+}
+
+func refreshGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache) {
+	loadedConfig, installToken, err := loadManagedConfig(ctx)
+	if err != nil {
+		cache.MarkFetchFailed(err)
+		opts.Diagnostic.Printf("github policy config reload: %v\n", err)
+		return
+	}
+	snapshot, err := githubpolicy.FetchSnapshot(ctx, opts.GithubPolicyClient, loadedConfig.Config.CloudURL, installToken)
+	if err != nil {
+		cache.MarkFetchFailed(err)
+		opts.Diagnostic.Printf("github policy refresh: %v\n", err)
+		return
+	}
+	if err := cache.Apply(snapshot, time.Now().UTC()); err != nil {
+		opts.Diagnostic.Printf("github policy persist: %v\n", err)
+	}
+}
+
+func runManagedStream(ctx context.Context, opts DaemonOptions, dbPath, installationID string) error {
+	interval := opts.StreamInterval
+	if interval == 0 {
+		interval = managedstream.DefaultIntervalFromEnv()
+	}
+	var consecutiveAuthFailures int
+	flush := func() {
+		err := flushManagedStream(ctx, opts, dbPath, installationID)
+		if err == nil {
+			consecutiveAuthFailures = 0
+			return
+		}
+		opts.Diagnostic.Printf("managed stream flush: %v\n", err)
+		status, ok := managedstream.AuthFailureStatus(err)
+		if !ok {
+			consecutiveAuthFailures = 0
+			return
+		}
+		consecutiveAuthFailures++
+		if managedstream.ShouldReportAuthFailure(consecutiveAuthFailures) {
+			writeStreamAuthFailure(opts, dbPath, status)
+		}
+	}
+	flush()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			flush()
+		}
+	}
+}
+
+func flushManagedStream(ctx context.Context, opts DaemonOptions, dbPath, installationID string) error {
+	loadedConfig, installToken, err := loadManagedConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("managed stream config reload: %w", err)
+	}
+	if err := managedstream.Flush(ctx, managedstream.Options{
+		DBPath:            dbPath,
+		StatePath:         opts.StreamStatePath,
+		CloudURL:          loadedConfig.Config.CloudURL,
+		InstallationID:    installationID,
+		InstallToken:      installToken,
+		DeviceLabel:       loadedConfig.Config.Device.Label,
+		DeploymentVersion: deploymentVersionWithFallback(opts.FallbackDeploymentVersion),
+		HTTPClient:        opts.StreamHTTPClient,
+		Diagnostic:        opts.Diagnostic,
+		OnFlushSuccess: func() {
+			if err := ClearAuthError(dbPath); err != nil {
+				opts.Diagnostic.Printf("clear auth-error breadcrumb: %v\n", err)
+			}
+		},
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeStreamAuthFailure(opts DaemonOptions, dbPath string, status int) {
+	// Unconditional stderr (Diagnostic is env-gated and would be silent under
+	// launchd) plus a breadcrumb for `kontext doctor`.
+	target := "hosted API"
+	if loadedConfig, err := managedconfig.Load(); err == nil && strings.TrimSpace(loadedConfig.Config.CloudURL) != "" {
+		target = loadedConfig.Config.CloudURL
+	}
+	fmt.Fprintf(os.Stderr,
+		"Kontext install token rejected by %s (HTTP %d). It may have been revoked — run `kontext setup` with a new token from the dashboard.\n",
+		target, status)
+	if err := WriteAuthError(dbPath, status); err != nil {
+		opts.Diagnostic.Printf("write auth-error breadcrumb: %v\n", err)
+	}
 }
 
 func idleTimeoutOrDefault(idleTimeout time.Duration) time.Duration {

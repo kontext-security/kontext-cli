@@ -55,12 +55,6 @@ type Options struct {
 	BatchLimit        int
 	HTTPClient        *http.Client
 	Diagnostic        diagnostic.Logger
-	// OnAuthFailure fires (nil-safe) after several consecutive 401/403
-	// rejections — the signature of a revoked or rotated install token,
-	// which would otherwise spin silently under launchd. Re-fires
-	// periodically so a long-running daemon keeps surfacing it without
-	// spamming every flush.
-	OnAuthFailure func(status int)
 	// OnFlushSuccess fires (nil-safe) after every ACCEPTED hosted post, so
 	// callers can clear "token rejected" breadcrumbs. It deliberately does
 	// not depend on this process's failure counter (a breadcrumb can outlive
@@ -111,54 +105,24 @@ type persistedState struct {
 	LastHeartbeatAt        string `json:"last_heartbeat_at,omitempty"`
 }
 
-func Run(ctx context.Context, opts Options) error {
-	if err := validateOptions(opts); err != nil {
-		return err
-	}
-	interval := opts.Interval
-	if interval == 0 {
-		interval = DefaultIntervalFromEnv()
-	}
-
-	var consecutiveAuthFailures int
-	flush := func() {
-		// OnFlushSuccess is invoked inside Flush (only after an accepted
-		// post); here we only track consecutive auth rejections.
-		err := Flush(ctx, opts)
-		if err == nil {
-			consecutiveAuthFailures = 0
-			return
-		}
-		opts.Diagnostic.Printf("managed stream flush: %v\n", err)
-
-		var hostedErr *hostedIngestError
-		if !errors.As(err, &hostedErr) || !isAuthStatus(hostedErr.StatusCode) {
-			consecutiveAuthFailures = 0
-			return
-		}
-		consecutiveAuthFailures++
-		if opts.OnAuthFailure != nil &&
-			(consecutiveAuthFailures == authFailureThreshold ||
-				consecutiveAuthFailures%authFailureRefire == 0) {
-			opts.OnAuthFailure(hostedErr.StatusCode)
-		}
-	}
-
-	flush()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			flush()
-		}
-	}
-}
-
 func isAuthStatus(status int) bool {
 	return status == http.StatusUnauthorized || status == http.StatusForbidden
+}
+
+func AuthFailureStatus(err error) (int, bool) {
+	var hostedErr *hostedIngestError
+	if !errors.As(err, &hostedErr) || !isAuthStatus(hostedErr.StatusCode) {
+		return 0, false
+	}
+	return hostedErr.StatusCode, true
+}
+
+func ShouldReportAuthFailure(consecutiveFailures int) bool {
+	if consecutiveFailures <= 0 {
+		return false
+	}
+	return consecutiveFailures == authFailureThreshold ||
+		consecutiveFailures%authFailureRefire == 0
 }
 
 func Flush(ctx context.Context, opts Options) error {

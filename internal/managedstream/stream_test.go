@@ -235,6 +235,41 @@ func TestFlushRetriesWithSmallerBatchWhenHostedBackendRejectsSize(t *testing.T) 
 	}
 }
 
+func TestFlushDoesNotRetrySmallerBatchForHostedValidation(t *testing.T) {
+	store, dbPath := testStore(t)
+	for i := 0; i < 4; i++ {
+		saveTestDecision(t, store, fmt.Sprintf("session-%03d", i), fmt.Sprintf("toolu_%03d", i))
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"organization_id does not match installation"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      statePath,
+		CloudURL:       server.URL,
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     4,
+		HTTPClient:     server.Client(),
+	})
+	if err == nil {
+		t.Fatal("Flush() error = nil, want hosted validation failure")
+	}
+	if requests != 1 {
+		t.Fatalf("request count = %d, want 1 terminal attempt", requests)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("state file error = %v, want not exist", err)
+	}
+}
+
 func TestFlushReportsHostedValidationBody(t *testing.T) {
 	store, dbPath := testStore(t)
 	saveTestDecision(t, store, "session-1", "toolu_1")
@@ -325,6 +360,34 @@ func TestFlushDoesNotAdvanceCursorPastHostedRejectedMinimumBatch(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Flush() error = nil, want hosted validation failure")
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("state file error = %v, want not exist", err)
+	}
+}
+
+func TestFlushDoesNotAdvanceCursorPastHostedTooLargeMinimumBatch(t *testing.T) {
+	store, dbPath := testStore(t)
+	saveTestDecision(t, store, "session-1", "toolu_1")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_, _ = w.Write([]byte(`{"message":"payload too large"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      statePath,
+		CloudURL:       server.URL,
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     1,
+		HTTPClient:     server.Client(),
+	})
+	if err == nil {
+		t.Fatal("Flush() error = nil, want hosted size failure")
 	}
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
 		t.Fatalf("state file error = %v, want not exist", err)

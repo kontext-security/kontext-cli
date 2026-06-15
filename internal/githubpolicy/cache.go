@@ -1,17 +1,13 @@
 package githubpolicy
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 )
 
 // DefaultRefreshInterval is how often the managed daemon re-fetches the
@@ -177,48 +173,6 @@ func (c *Cache) persist(snapshot Snapshot, fetchedAt time.Time) error {
 	}
 	cleanup = false
 	return nil
-}
-
-type RunOptions struct {
-	Cache        *Cache
-	CloudURL     string
-	InstallToken string
-	Interval     time.Duration
-	HTTPClient   *http.Client
-	Diagnostic   diagnostic.Logger
-}
-
-// Run fetches the snapshot once at start and then on every interval tick
-// until the context is cancelled. Fetch failures are logged and leave the
-// last cached snapshot in place.
-func Run(ctx context.Context, opts RunOptions) {
-	interval := opts.Interval
-	if interval == 0 {
-		interval = DefaultIntervalFromEnv()
-	}
-	refresh(ctx, opts)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			refresh(ctx, opts)
-		}
-	}
-}
-
-func refresh(ctx context.Context, opts RunOptions) {
-	snapshot, err := FetchSnapshot(ctx, opts.HTTPClient, opts.CloudURL, opts.InstallToken)
-	if err != nil {
-		opts.Cache.MarkFetchFailed(err)
-		opts.Diagnostic.Printf("github policy refresh: %v\n", err)
-		return
-	}
-	if err := opts.Cache.Apply(snapshot, time.Now().UTC()); err != nil {
-		opts.Diagnostic.Printf("github policy persist: %v\n", err)
-	}
 }
 
 func DefaultIntervalFromEnv() time.Duration {
