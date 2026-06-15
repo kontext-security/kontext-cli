@@ -31,6 +31,7 @@ export default function App() {
   const [policy, setPolicy] = useState<PolicyProfile | null>(null);
   const [policyPending, setPolicyPending] = useState<PolicyProfileID | null>(null);
   const [policyError, setPolicyError] = useState("");
+  const policyPendingRef = useRef<PolicyProfileID | null>(null);
   const selectedRef = useRef("");
   const useSampleDashboard = USE_SAMPLE_DATA && API === "";
 
@@ -138,17 +139,28 @@ export default function App() {
   }
 
   function activate(id: PolicyProfileID) {
-    if (id === policy?.profile || policyPending) return;
+    if (id === policy?.profile || policyPendingRef.current) return;
     if (useSampleDashboard && selectedSessionID === SAMPLE_SESSION_ID) {
       applySamplePolicy(id);
       return;
     }
+    policyPendingRef.current = id;
     setPolicyPending(id);
     setPolicyError("");
     activatePolicy(id)
-      .then(setPolicy)
-      .catch((e: unknown) => setPolicyError(`Couldn't update policy profile. ${errorMessage(e)}`))
-      .finally(() => setPolicyPending(null));
+      .then((next) => {
+        if (policyPendingRef.current !== id) return;
+        setPolicy(next);
+      })
+      .catch((e: unknown) => {
+        if (policyPendingRef.current !== id) return;
+        setPolicyError(`Couldn't update policy profile. ${errorMessage(e)}`);
+      })
+      .finally(() => {
+        if (policyPendingRef.current !== id) return;
+        policyPendingRef.current = null;
+        setPolicyPending(null);
+      });
   }
 
   const { counts, groups } = useMemo(() => bucket(events), [events]);
