@@ -44,6 +44,38 @@ func TestParseValidConfigNormalizesStrings(t *testing.T) {
 	}
 }
 
+func TestParseCoworkEnabled(t *testing.T) {
+	cfg, err := Parse([]byte(validConfigJSON()))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if cfg.CoworkEnabled {
+		t.Fatal("cowork_enabled should default to false")
+	}
+	withFlag := strings.Replace(validConfigJSON(), `"mode": "observe",`, `"mode": "observe",
+  "cowork_enabled": true,`, 1)
+	cfg, err = Parse([]byte(withFlag))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if !cfg.CoworkEnabled {
+		t.Fatal("cowork_enabled = false, want true")
+	}
+}
+
+func TestParseModeObserveAndEnforce(t *testing.T) {
+	cfg, err := Parse([]byte(strings.Replace(validConfigJSON(), `"mode": "observe"`, `"mode": "enforce"`, 1)))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if cfg.Mode != ModeEnforce {
+		t.Fatalf("Mode = %q, want %q", cfg.Mode, ModeEnforce)
+	}
+	if _, err := Parse([]byte(strings.Replace(validConfigJSON(), `"mode": "observe"`, `"mode": "block"`, 1))); err == nil {
+		t.Fatal("Parse() accepted unknown mode")
+	}
+}
+
 func TestParseRejectsUnknownFields(t *testing.T) {
 	_, err := Parse([]byte(`{
   "version": "managed-install-v1",

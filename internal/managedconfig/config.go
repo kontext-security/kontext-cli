@@ -21,8 +21,11 @@ import (
 
 const (
 	Version = "managed-install-v1"
-	Mode    = "observe"
-	Agent   = "claude"
+	// Mode is the default posture; ModeEnforce turns daemon decisions into
+	// real denies at every hook edge (Claude Code and Cowork alike).
+	Mode        = "observe"
+	ModeEnforce = "enforce"
+	Agent       = "claude"
 
 	DefaultPath  = "/Library/Application Support/Kontext/managed.json"
 	EnvPath      = "KONTEXT_MANAGED_CONFIG"
@@ -44,6 +47,11 @@ type Config struct {
 	Agent          string      `json:"agent"`
 	Credentials    Credentials `json:"credentials"`
 	Device         Device      `json:"device,omitempty"`
+	// CoworkEnabled turns on Claude Cowork observation/enforcement in the
+	// managed-observe daemon (the posture follows Mode). A managed.json field
+	// so MDM-deployed installs control it through config rather than launchd
+	// environment plumbing.
+	CoworkEnabled bool `json:"cowork_enabled,omitempty"`
 }
 
 type Credentials struct {
@@ -201,8 +209,8 @@ func normalizeAndValidate(cfg Config) (Config, error) {
 	if err := validateCloudURL(cfg.CloudURL); err != nil {
 		return Config{}, err
 	}
-	if cfg.Mode != Mode {
-		return Config{}, fmt.Errorf("mode must be %q", Mode)
+	if cfg.Mode != Mode && cfg.Mode != ModeEnforce {
+		return Config{}, fmt.Errorf("mode must be %q or %q", Mode, ModeEnforce)
 	}
 	if cfg.Agent != Agent {
 		return Config{}, fmt.Errorf("agent must be %q", Agent)

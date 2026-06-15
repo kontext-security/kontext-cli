@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/coworkobserve"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
@@ -58,11 +60,18 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		opts.Diagnostic.Printf("managed observe cleanup: %v\n", err)
 	}
 
+	// The deployment-level mode from managed.json drives every hook edge:
+	// observe records would-decisions, enforce returns real denies.
+	mode, err := guardhookruntime.ParseMode(loadedConfig.Config.Mode)
+	if err != nil {
+		return fmt.Errorf("parse managed mode: %w", err)
+	}
+
 	host, err := runtimehost.Start(ctx, runtimehost.Options{
 		AgentName:          managedconfig.Agent,
 		DBPath:             dbPath,
 		SocketPath:         socketPath,
-		Mode:               guardhookruntime.ModeObserve,
+		Mode:               mode,
 		Diagnostic:         opts.Diagnostic,
 		SkipInitialSession: true,
 		DisableAsyncIngest: true,
@@ -90,6 +99,18 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			Diagnostic:        opts.Diagnostic,
 		})
 	}()
+
+	// Cowork observation runs alongside Claude Code in the same daemon, replaying
+	// in-VM Cowork tool events into the same localruntime socket as agent "cowork".
+	// Enabled via managed.json (cowork_enabled) or the env var override.
+	if loadedConfig.Config.CoworkEnabled || coworkobserve.Enabled() {
+		go coworkobserve.Run(ctx, coworkobserve.Options{
+			SocketPath: socketPath,
+			StatePath:  filepath.Join(filepath.Dir(dbPath), "cowork-spool-offsets.json"),
+			Mode:       mode,
+			Diagnostic: opts.Diagnostic,
+		})
+	}
 
 	idleTimeout := opts.IdleTimeout
 	if idleTimeout == 0 {
