@@ -196,6 +196,44 @@ func TestUninstallClaudeHooksPreservesNonGuardHookInMixedGroup(t *testing.T) {
 	}
 }
 
+func TestInstallClaudeHooksPreservesRestrictiveSettingsMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(`{"hooks":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	if err := installClaudeHooks(&stdout, "/tmp/kontext.sock"); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFileMode(t, settingsPath, 0o600)
+	backups, err := filepath.Glob(settingsPath + ".kontext-guard-backup-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("backup count = %d, want 1", len(backups))
+	}
+	assertFileMode(t, backups[0], 0o600)
+}
+
+func assertFileMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %o, want %o", path, got, want)
+	}
+}
+
 func TestPrintHookStatusReportsGuardAndHostedConflict(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
