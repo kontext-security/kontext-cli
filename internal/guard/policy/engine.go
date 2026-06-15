@@ -21,9 +21,10 @@ func (e Engine) Evaluate(event risk.RiskEvent, cfg Config) Result {
 	if cfg.RulePack == "" {
 		cfg.RulePack = e.pack.ID
 	}
+	enabledCategories := enabledCategories(cfg.Profile)
 
 	for _, rule := range e.pack.Rules {
-		if !categoryEnabled(cfg.Profile, rule.Category) || !rule.When(event) {
+		if !enabledCategories[rule.Category] || !rule.When(event) {
 			continue
 		}
 		return Result{
