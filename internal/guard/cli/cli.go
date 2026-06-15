@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -117,6 +118,9 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 	judgePort := fs.Int("judge-port", defaultJudgePort, "managed llama-server port")
 	judgeStartupTimeout := fs.Duration("judge-startup-timeout", defaultJudgeStartupTimeout, "managed llama-server startup timeout")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := validateDaemonAddr(*addr); err != nil {
 		return err
 	}
 	if !*skipHookInstall {
@@ -760,6 +764,21 @@ func validateLocalJudgeURL(value string) error {
 	default:
 		return fmt.Errorf("judge URL must point to localhost")
 	}
+}
+
+func validateDaemonAddr(value string) error {
+	host, _, err := net.SplitHostPort(value)
+	if err != nil {
+		return fmt.Errorf("daemon address must be host:port on localhost: %w", err)
+	}
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("daemon address must bind to localhost")
+	}
+	return nil
 }
 
 func defaultDBPath() string {

@@ -252,6 +252,38 @@ func TestValidateLocalJudgeURLAllowsLoopback(t *testing.T) {
 	}
 }
 
+func TestValidateDaemonAddrAllowsLoopback(t *testing.T) {
+	t.Parallel()
+
+	for _, addr := range []string{
+		"localhost:4765",
+		"127.0.0.1:4765",
+		"127.0.0.2:4765",
+		"[::1]:4765",
+	} {
+		if err := validateDaemonAddr(addr); err != nil {
+			t.Fatalf("validateDaemonAddr(%q) error = %v", addr, err)
+		}
+	}
+}
+
+func TestValidateDaemonAddrRejectsNonLoopback(t *testing.T) {
+	t.Parallel()
+
+	for _, addr := range []string{
+		"0.0.0.0:4765",
+		"[::]:4765",
+		"192.168.1.4:4765",
+		":4765",
+		"example.com:4765",
+		"127.0.0.1",
+	} {
+		if err := validateDaemonAddr(addr); err == nil {
+			t.Fatalf("validateDaemonAddr(%q) error = nil, want rejection", addr)
+		}
+	}
+}
+
 func TestJudgeEvalRunsAllowFixtureAgainstLocalServer(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
