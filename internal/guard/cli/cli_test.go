@@ -196,6 +196,33 @@ func TestUninstallClaudeHooksPreservesNonGuardHookInMixedGroup(t *testing.T) {
 	}
 }
 
+func TestRunDaemonDoesNotInstallHooksWhenStartupFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	binDir := t.TempDir()
+	claudePath := filepath.Join(binDir, "claude")
+	if err := os.WriteFile(claudePath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stdout bytes.Buffer
+	err := runDaemon(context.Background(), []string{
+		"--db", filepath.Join(t.TempDir(), "guard.db"),
+		"--socket", "",
+		"--no-open",
+	}, &stdout)
+	if err == nil {
+		t.Fatal("runDaemon() error = nil, want startup error")
+	}
+	if !strings.Contains(err.Error(), "local runtime service requires socket path") {
+		t.Fatalf("runDaemon() error = %v, want runtime setup error", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("Claude settings were modified on startup failure; stat error = %v", err)
+	}
+}
+
 func TestPrintHookStatusReportsGuardAndHostedConflict(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

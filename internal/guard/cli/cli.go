@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -123,9 +124,6 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 		if err := verifyClaudeCode(); err != nil {
 			return err
 		}
-		if err := installClaudeHooks(out, *socketPath); err != nil {
-			return err
-		}
 	}
 	ui := startupui.New(out)
 	localJudge, closeJudge, _, err := judgeruntime.Configure(ctx, judgeruntime.Config{
@@ -176,6 +174,16 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("local runtime start: %w", err)
 	}
 	defer runtimeService.Stop()
+	listener, err := net.Listen("tcp", *addr)
+	if err != nil {
+		return fmt.Errorf("local daemon listen: %w", err)
+	}
+	defer listener.Close()
+	if !*skipHookInstall {
+		if err := installClaudeHooks(out, *socketPath); err != nil {
+			return err
+		}
+	}
 	fmt.Fprintf(out, "Kontext Guard local daemon listening on http://%s\n", *addr)
 	fmt.Fprintf(out, "Hook runtime: unix://%s\n", *socketPath)
 	fmt.Fprintln(out, "Mode: observe (Claude Code runs normally; decisions are recorded as would allow / would deny).")
@@ -184,7 +192,7 @@ func runDaemon(ctx context.Context, args []string, out io.Writer) error {
 	if !*noOpen {
 		_ = browser.OpenURL("http://" + *addr)
 	}
-	return localServer.ListenAndServe(*addr)
+	return http.Serve(listener, localServer.Handler())
 }
 
 func localJudgeStatusLine(localJudge judge.Judge) string {
