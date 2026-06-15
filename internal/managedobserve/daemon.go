@@ -10,6 +10,7 @@ import (
 
 	"github.com/kontext-security/kontext-cli/internal/coworkobserve"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
+	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 	"github.com/kontext-security/kontext-cli/internal/installation"
@@ -19,13 +20,16 @@ import (
 )
 
 type DaemonOptions struct {
-	SocketPath       string
-	DBPath           string
-	IdleTimeout      time.Duration
-	StreamStatePath  string
-	StreamInterval   time.Duration
-	StreamHTTPClient *http.Client
-	Diagnostic       diagnostic.Logger
+	SocketPath            string
+	DBPath                string
+	IdleTimeout           time.Duration
+	StreamStatePath       string
+	StreamInterval        time.Duration
+	StreamHTTPClient      *http.Client
+	GithubPolicyCachePath string
+	GithubPolicyInterval  time.Duration
+	GithubPolicyClient    *http.Client
+	Diagnostic            diagnostic.Logger
 }
 
 func RunDaemon(ctx context.Context, opts DaemonOptions) error {
@@ -67,10 +71,20 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		return fmt.Errorf("parse managed mode: %w", err)
 	}
 
+	policyCachePath := opts.GithubPolicyCachePath
+	if policyCachePath == "" {
+		policyCachePath = githubpolicy.DefaultCachePathForDB(dbPath)
+	}
+	policyCache := githubpolicy.NewCache(policyCachePath)
+	if err := policyCache.LoadPersisted(); err != nil {
+		opts.Diagnostic.Printf("github policy cache load: %v\n", err)
+	}
+
 	host, err := runtimehost.Start(ctx, runtimehost.Options{
 		AgentName:          managedconfig.Agent,
 		DBPath:             dbPath,
 		SocketPath:         socketPath,
+		GithubPolicy:       policyCache,
 		Mode:               mode,
 		Diagnostic:         opts.Diagnostic,
 		SkipInitialSession: true,
@@ -80,6 +94,17 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		return err
 	}
 	defer host.Close(context.Background())
+
+	policyCtx, stopPolicyRefresh := context.WithCancel(ctx)
+	defer stopPolicyRefresh()
+	go githubpolicy.Run(policyCtx, githubpolicy.RunOptions{
+		Cache:        policyCache,
+		CloudURL:     loadedConfig.Config.CloudURL,
+		InstallToken: installToken,
+		Interval:     opts.GithubPolicyInterval,
+		HTTPClient:   opts.GithubPolicyClient,
+		Diagnostic:   opts.Diagnostic,
+	})
 
 	streamCtx, stopStream := context.WithCancel(ctx)
 	defer stopStream()

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
 	"github.com/kontext-security/kontext-cli/internal/guard/policy"
 	"github.com/kontext-security/kontext-cli/internal/guard/policyconfig"
@@ -49,6 +50,7 @@ type Options struct {
 	Judge                judge.Judge
 	PolicyConfig         policy.Config
 	PolicyConfigProvider PolicyConfigProvider
+	GithubPolicy         githubpolicy.SnapshotProvider
 	CurrentSessionID     string
 	Mode                 string
 }
@@ -90,6 +92,7 @@ func NewServerWithOptions(store *sqlite.Store, opts Options) (*Server, error) {
 	return NewServerWithPolicyConfigAndOptions(store, NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
 		Judge:                opts.Judge,
 		PolicyConfigProvider: configProvider,
+		GithubPolicy:         opts.GithubPolicy,
 	}), policyStore, opts)
 }
 

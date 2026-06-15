@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
 	guardpolicy "github.com/kontext-security/kontext-cli/internal/guard/policy"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
@@ -22,6 +23,7 @@ type RiskPolicyProvider struct {
 	judge        judge.Judge
 	policyEngine guardpolicy.Engine
 	policyConfig PolicyConfigProvider
+	githubPolicy githubpolicy.SnapshotProvider
 }
 
 type RiskPolicyProviderOptions struct {
@@ -29,6 +31,7 @@ type RiskPolicyProviderOptions struct {
 	PolicyEngine         guardpolicy.Engine
 	PolicyConfig         guardpolicy.Config
 	PolicyConfigProvider PolicyConfigProvider
+	GithubPolicy         githubpolicy.SnapshotProvider
 }
 
 type staticPolicyConfigProvider struct {
@@ -58,6 +61,7 @@ func NewRiskPolicyProviderWithOptions(opts RiskPolicyProviderOptions) RiskPolicy
 		judge:        opts.Judge,
 		policyEngine: opts.PolicyEngine,
 		policyConfig: configProvider,
+		githubPolicy: opts.GithubPolicy,
 	}
 }
 
@@ -68,18 +72,99 @@ func (p RiskPolicyProvider) DecideHook(ctx context.Context, event risk.HookEvent
 	riskEvent := risk.NormalizeHookEvent(event)
 	policyResult := p.policyEngine.Evaluate(riskEvent, p.activePolicyConfig(ctx))
 	applyPolicyMetadata(&riskEvent, policyResult)
+	// Local layering: deterministic guardrails > synced GitHub policy >
+	// probabilistic signals. A guardrail deny stands regardless of what the
+	// synced policy would have said; the synced policy (when enforcing)
+	// pre-empts the judge.
+	githubEvaluations, githubEnforce := p.evaluateGithubPolicy(event)
 	if policyResult.Decision == guardpolicy.DecisionDeny {
-		return deterministicDenyDecision(riskEvent, policyResult), nil
+		return withGithubPolicy(deterministicDenyDecision(riskEvent, policyResult), githubEvaluations), nil
+	}
+	if githubEnforce && len(githubEvaluations) > 0 {
+		return withGithubPolicy(githubPolicyDecision(riskEvent, githubEvaluations), githubEvaluations), nil
 	}
 	if p.judge == nil {
-		return deterministicAllowDecision(riskEvent, policyResult), nil
+		return withGithubPolicy(deterministicAllowDecision(riskEvent, policyResult), githubEvaluations), nil
 	}
 
 	result, err := p.judge.Decide(ctx, judgeInputFromRiskEvent(event, riskEvent))
 	if err != nil {
-		return judgeFailOpenDecision(riskEvent, p.judge, err), nil
+		return withGithubPolicy(judgeFailOpenDecision(riskEvent, p.judge, err), githubEvaluations), nil
 	}
-	return judgeDecision(riskEvent, result), nil
+	return withGithubPolicy(judgeDecision(riskEvent, result), githubEvaluations), nil
+}
+
+// evaluateGithubPolicy classifies the event into canonical GitHub actions and
+// evaluates each against the synced policy snapshot. The managed endpoint's
+// trusted identity is the service account + installation — Claude hook
+// payloads are not trusted human identity — so requests carry no Kontext
+// user/application subject and user/agent-layer rules cannot match their
+// subject (the evaluation flags this via SubjectsResolved).
+//
+// The boolean result reports whether the snapshot explicitly directs
+// enforcement; anything else is observe and never influences the decision.
+func (p RiskPolicyProvider) evaluateGithubPolicy(event risk.HookEvent) ([]githubpolicy.Evaluation, bool) {
+	if p.githubPolicy == nil {
+		return nil, false
+	}
+	snapshot, status, ok := p.githubPolicy.CurrentSnapshot()
+	if !ok || len(snapshot.Rules) == 0 {
+		return nil, false
+	}
+	actions := githubpolicy.ClassifyProviderActionsWithCWD(event.ToolName, event.ToolInput, event.CWD, func(cwd string) githubpolicy.GitContext {
+		return githubpolicy.GitContextFromCWD(cwd)
+	})
+	if len(actions) == 0 {
+		return nil, false
+	}
+	evaluations := make([]githubpolicy.Evaluation, 0, len(actions))
+	for _, action := range actions {
+		evaluation, ok := githubpolicy.Evaluate(snapshot, status, githubpolicy.Request{
+			Action:      action.Action,
+			Resource:    action.Resource,
+			BranchOrRef: action.BranchOrRef,
+		})
+		if ok {
+			evaluations = append(evaluations, evaluation)
+		}
+	}
+	return evaluations, snapshot.Enforce()
+}
+
+func withGithubPolicy(decision risk.RiskDecision, evaluations []githubpolicy.Evaluation) risk.RiskDecision {
+	decision.GithubPolicy = evaluations
+	return decision
+}
+
+// githubPolicyDecision is the enforce-mode path, reserved for after the
+// observer pilot: the synced policy outranks probabilistic signals, so its
+// verdict decides instead of the judge. Any denied action denies the event.
+func githubPolicyDecision(riskEvent risk.RiskEvent, evaluations []githubpolicy.Evaluation) risk.RiskDecision {
+	for _, evaluation := range evaluations {
+		if evaluation.Result == githubpolicy.EffectDeny {
+			riskEvent.Decision = risk.DecisionDeny
+			riskEvent.ReasonCode = evaluation.ReasonCode
+			riskEvent.DecisionStage = "github_policy_deny"
+			return risk.RiskDecision{
+				Decision:   risk.DecisionDeny,
+				Reason:     evaluation.Reason,
+				ReasonCode: evaluation.ReasonCode,
+				GuardID:    evaluation.DecidingRuleID,
+				RiskEvent:  riskEvent,
+			}
+		}
+	}
+	allowed := evaluations[0]
+	riskEvent.Decision = risk.DecisionAllow
+	riskEvent.ReasonCode = allowed.ReasonCode
+	riskEvent.DecisionStage = "github_policy_allow"
+	return risk.RiskDecision{
+		Decision:   risk.DecisionAllow,
+		Reason:     allowed.Reason,
+		ReasonCode: allowed.ReasonCode,
+		GuardID:    allowed.DecidingRuleID,
+		RiskEvent:  riskEvent,
+	}
 }
 
 func (p RiskPolicyProvider) asyncTelemetryDecision(event risk.HookEvent) risk.RiskDecision {

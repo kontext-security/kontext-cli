@@ -733,6 +733,9 @@ on conflict(id) do update set
 		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventRequestDecided, "decision", now.Add(time.Millisecond)); err != nil {
 			return DecisionRecord{}, err
 		}
+		if err := s.insertGithubDryRunActions(ctx, tx, sessionID, event, decision, now.Add(2*time.Millisecond)); err != nil {
+			return DecisionRecord{}, err
+		}
 	} else {
 		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventType(event.HookEventName), "outcome", now); err != nil {
 			return DecisionRecord{}, err
@@ -765,6 +768,10 @@ func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionI
 	if err != nil {
 		return err
 	}
+	return s.insertActionRecord(ctx, tx, action, receiptType, now)
+}
+
+func (s *Store) insertActionRecord(ctx context.Context, tx *sql.Tx, action map[string]any, receiptType string, now time.Time) error {
 	columns := []string{
 		"id", "session_id", "tool_use_id", "canonical_event_type", "adapter_event_name", "correlation_key",
 		"tool_name", "provider", "operation", "operation_class", "resource_class", "resource_id", "parameters_redacted_json", "parameters_hash",
@@ -1417,6 +1424,7 @@ select
 	  select case when decision_result = 'deny' then 1 else 0 end as critical, 1 as actions
 	  from authorization_actions
 	  where canonical_event_type <> 'request.proposed'
+	    and coalesce(decision_category, '') <> 'dry_run'
 	)
 	`)
 	if err := row.Scan(&summary.Critical, &summary.Warnings, &summary.Actions, &summary.Sessions); err != nil {
@@ -1441,6 +1449,7 @@ select actions.session_id,
 	  select session_id, case when decision_result = 'deny' then 1 else 0 end as critical, updated_at as latest_at
 	  from authorization_actions
 	  where canonical_event_type <> 'request.proposed'
+	    and coalesce(decision_category, '') <> 'dry_run'
 		) actions
 left join agent_sessions on agent_sessions.id = actions.session_id
 group by actions.session_id, agent_sessions.mode, agent_sessions.status, agent_sessions.created_at, agent_sessions.updated_at, agent_sessions.closed_at
@@ -1485,6 +1494,7 @@ select actions.session_id,
 	  select session_id, case when decision_result = 'deny' then 1 else 0 end as critical, updated_at as latest_at
 	  from authorization_actions
 	  where session_id = ? and canonical_event_type <> 'request.proposed'
+	    and coalesce(decision_category, '') <> 'dry_run'
 		) actions
 left join agent_sessions on agent_sessions.id = actions.session_id
 group by actions.session_id, agent_sessions.mode, agent_sessions.status, agent_sessions.created_at, agent_sessions.updated_at, agent_sessions.closed_at
@@ -1509,8 +1519,9 @@ select id, session_id, coalesce(tool_use_id, ''), hook_event_name, coalesce(tool
 	    coalesce(reason_code, '') as reason_code, coalesce(reason, '') as reason, risk_score, risk_threshold as threshold, model_version, risk_event_json, updated_at as created_at
 	  from authorization_actions
 	  where canonical_event_type = 'request.decided'
-	)
-where session_id = ?
+	    and coalesce(decision_category, '') <> 'dry_run'
+		)
+	where session_id = ?
 order by created_at desc
 	`, sessionID)
 	if err != nil {
