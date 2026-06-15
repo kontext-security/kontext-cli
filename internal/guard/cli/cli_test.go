@@ -196,6 +196,56 @@ func TestUninstallClaudeHooksPreservesNonGuardHookInMixedGroup(t *testing.T) {
 	}
 }
 
+func TestInstallClaudeHooksKeepsSettingsArtifactsPrivate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(`{"hooks":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	if err := installClaudeHooks(&stdout, filepath.Join(home, "kontext.sock")); err != nil {
+		t.Fatal(err)
+	}
+
+	assertPrivateFileMode(t, settingsPath)
+	backups, err := filepath.Glob(settingsPath + ".kontext-guard-backup-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("backup count = %d, want 1", len(backups))
+	}
+	assertPrivateFileMode(t, backups[0])
+}
+
+func TestInstallClaudeHooksCreatesNewSettingsFilePrivate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	var stdout bytes.Buffer
+	if err := installClaudeHooks(&stdout, filepath.Join(home, "kontext.sock")); err != nil {
+		t.Fatal(err)
+	}
+
+	assertPrivateFileMode(t, filepath.Join(home, ".claude", "settings.json"))
+}
+
+func assertPrivateFileMode(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got&0o077 != 0 {
+		t.Fatalf("%s mode = %04o, want no group/world permissions", path, got)
+	}
+}
+
 func TestPrintHookStatusReportsGuardAndHostedConflict(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
