@@ -67,6 +67,23 @@ func TestResolveLoginScopesDeduplicatesDefaultScopes(t *testing.T) {
 	}
 }
 
+func TestResolveLoginScopesDeduplicatesRepeatedCustomScopes(t *testing.T) {
+	t.Parallel()
+
+	input := []string{"gateway:access", "gateway:access", "repo:read", "repo:read"}
+	got := resolveLoginScopes(input)
+	want := []string{
+		"openid",
+		"email",
+		"profile",
+		"gateway:access",
+		"repo:read",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolveLoginScopes(%#v) = %#v, want %#v", input, got, want)
+	}
+}
+
 func TestDecodeJWTClaims(t *testing.T) {
 	t.Parallel()
 
