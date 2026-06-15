@@ -1,9 +1,11 @@
 package localruntime
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 func DefaultSocketPath() string {
@@ -14,5 +16,31 @@ func DefaultSocketPath() string {
 }
 
 func EnsureSocketDir(socketPath string) error {
-	return os.MkdirAll(filepath.Dir(socketPath), 0o700)
+	dir := filepath.Dir(socketPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink", dir)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return errors.New("socket directory ownership is unavailable")
+	}
+	if int(stat.Uid) != os.Getuid() {
+		return fmt.Errorf("socket directory %s is owned by uid %d, want %d", dir, stat.Uid, os.Getuid())
+	}
+	if info.Mode().Perm() != 0o700 {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return err
+		}
+	}
+	return nil
 }
