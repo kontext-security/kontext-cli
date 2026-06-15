@@ -673,6 +673,30 @@ func TestResolveCredentialsUsesInjectedProvider(t *testing.T) {
 	}
 }
 
+func TestSortedConnectableEntriesOrdersByEnvVar(t *testing.T) {
+	t.Parallel()
+
+	got := sortedConnectableEntries(map[string]credential.Entry{
+		"LINEAR_API_KEY": {
+			EnvVar:   "LINEAR_API_KEY",
+			Provider: "linear",
+		},
+		"GITHUB_TOKEN": {
+			EnvVar:   "GITHUB_TOKEN",
+			Provider: "github",
+		},
+	})
+	if len(got) != 2 {
+		t.Fatalf("len(sortedConnectableEntries()) = %d, want 2", len(got))
+	}
+	if got[0].EnvVar != "GITHUB_TOKEN" {
+		t.Fatalf("got[0].EnvVar = %q, want %q", got[0].EnvVar, "GITHUB_TOKEN")
+	}
+	if got[1].EnvVar != "LINEAR_API_KEY" {
+		t.Fatalf("got[1].EnvVar = %q, want %q", got[1].EnvVar, "LINEAR_API_KEY")
+	}
+}
+
 func TestHostedCredentialProviderConnectURLUsesOwnSessionAndClientID(t *testing.T) {
 	t.Parallel()
 
