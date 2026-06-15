@@ -111,8 +111,8 @@ func (p RiskPolicyProvider) evaluateGithubPolicy(event risk.HookEvent) ([]github
 	if !ok || len(snapshot.Rules) == 0 {
 		return nil, false
 	}
-	actions := githubpolicy.ClassifyProviderActions(event.ToolName, event.ToolInput, func() githubpolicy.GitContext {
-		return githubpolicy.GitContextFromCWD(event.CWD)
+	actions := githubpolicy.ClassifyProviderActionsWithCWD(event.ToolName, event.ToolInput, event.CWD, func(cwd string) githubpolicy.GitContext {
+		return githubpolicy.GitContextFromCWD(cwd)
 	})
 	if len(actions) == 0 {
 		return nil, false

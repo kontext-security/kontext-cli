@@ -1519,8 +1519,9 @@ select id, session_id, coalesce(tool_use_id, ''), hook_event_name, coalesce(tool
 	    coalesce(reason_code, '') as reason_code, coalesce(reason, '') as reason, risk_score, risk_threshold as threshold, model_version, risk_event_json, updated_at as created_at
 	  from authorization_actions
 	  where canonical_event_type = 'request.decided'
-	)
-where session_id = ?
+	    and coalesce(decision_category, '') <> 'dry_run'
+		)
+	where session_id = ?
 order by created_at desc
 	`, sessionID)
 	if err != nil {

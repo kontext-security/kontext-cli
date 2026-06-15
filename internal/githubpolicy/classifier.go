@@ -1,6 +1,7 @@
 package githubpolicy
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -57,39 +58,61 @@ var githubHostRE = regexp.MustCompile(`(?i)(^|[\s"'(<])((https?://)?(api\.)?gith
 // branch resolution — because deriving it shells out to git.
 func ClassifyProviderActions(toolName string, toolInput map[string]any, gitContext func() GitContext) []ProviderAction {
 	if gitContext == nil {
-		gitContext = func() GitContext { return GitContext{} }
+		return ClassifyProviderActionsWithCWD(toolName, toolInput, "", nil)
 	}
+	return ClassifyProviderActionsWithCWD(toolName, toolInput, "", func(string) GitContext {
+		return gitContext()
+	})
+}
+
+// ClassifyProviderActionsWithCWD maps a tool invocation to canonical GitHub
+// actions, using cwd as the base for git -C context resolution.
+func ClassifyProviderActionsWithCWD(toolName string, toolInput map[string]any, cwd string, gitContext func(string) GitContext) []ProviderAction {
+	if gitContext == nil {
+		gitContext = func(string) GitContext { return GitContext{} }
+	}
+	loadGitContext := memoizedGitContext(gitContext)
 	switch strings.ToLower(toolName) {
 	case "bash", "shell":
-		command, _ := stringField(toolInput, "command")
-		if command == "" {
-			command, _ = stringField(toolInput, "cmd")
-		}
+		command := commandFromToolInput(toolInput)
 		if command == "" {
 			return nil
 		}
-		return classifyCommand(command, memoizedGitContext(gitContext))
+		return classifyCommand(command, cwd, loadGitContext)
 	case "webfetch", "web_fetch":
 		url, _ := stringField(toolInput, "url")
 		if url != "" && isGithubURL(url) {
 			return []ProviderAction{{Action: "github.api.read", Resource: normalizeGithubRepo(url)}}
 		}
 	}
+	if action, ok := classifyGithubMCPTool(toolName, toolInput); ok {
+		return []ProviderAction{action}
+	}
 	return nil
 }
 
-func memoizedGitContext(load func() GitContext) func() GitContext {
-	var cached *GitContext
-	return func() GitContext {
-		if cached == nil {
-			context := load()
-			cached = &context
+func commandFromToolInput(input map[string]any) string {
+	for _, key := range []string{"command", "cmd", "script"} {
+		if value, _ := stringField(input, key); value != "" {
+			return value
 		}
-		return *cached
+	}
+	return ""
+}
+
+func memoizedGitContext(load func(string) GitContext) func(string) GitContext {
+	cached := map[string]GitContext{}
+	return func(cwd string) GitContext {
+		if context, ok := cached[cwd]; ok {
+			return context
+		}
+		context := load(cwd)
+		cached[cwd] = context
+		return context
 	}
 }
 
-func classifyCommand(command string, gitContext func() GitContext) []ProviderAction {
+func classifyCommand(command string, cwd string, gitContext func(string) GitContext) []ProviderAction {
 	trimmed := strings.TrimSpace(command)
 	if trimmed == "" {
 		return nil
@@ -98,15 +121,17 @@ func classifyCommand(command string, gitContext func() GitContext) []ProviderAct
 	for _, segment := range splitCommandSegments(trimmed) {
 		invocation, args := commandInvocation(segment)
 		if unwrapped, ok := unwrapShellLauncher(invocation, args); ok {
-			actions = append(actions, classifyCommand(unwrapped, gitContext)...)
+			actions = append(actions, classifyCommand(unwrapped, cwd, gitContext)...)
 			continue
 		}
 		switch invocation {
 		case "gh":
-			actions = append(actions, classifyGhCommand(args, segment, gitContext))
+			actions = append(actions, classifyGhCommand(args, segment, func() GitContext {
+				return gitContext(cwd)
+			}))
 			continue
 		case "git":
-			actions = append(actions, classifyGitCommand(args, segment, gitContext)...)
+			actions = append(actions, classifyGitCommand(args, segment, cwd, gitContext)...)
 			continue
 		case "curl", "wget", "http", "https", "httpie":
 			if isGithubURL(segment) {
@@ -173,8 +198,10 @@ func classifyGhCommand(args []string, raw string, gitContext func() GitContext) 
 	case "workflow":
 		mutating := verb == "run" || verb == "enable" || verb == "disable"
 		return ProviderAction{Action: apiAction(mutating), Resource: resource}
+	case "release", "secret", "gist":
+		return ProviderAction{Action: readWriteAction("github.api", isReadVerb(verb)), Resource: resource}
 	}
-	return ProviderAction{Action: apiAction(commandLooksMutating(raw)), Resource: resource}
+	return ProviderAction{Action: apiAction(commandLooksMutating(raw) || !isKnownReadOnlyGhCommand(area, verb)), Resource: resource}
 }
 
 func readWriteAction(prefix string, read bool) string {
@@ -184,18 +211,82 @@ func readWriteAction(prefix string, read bool) string {
 	return prefix + ".write"
 }
 
-func classifyGitCommand(args []string, raw string, gitContext func() GitContext) []ProviderAction {
+func isKnownReadOnlyGhCommand(area, verb string) bool {
+	switch area {
+	case "auth":
+		return verb == "status" || verb == "token"
+	case "config", "alias", "extension":
+		return verb == "get" || verb == "list"
+	}
+	return false
+}
+
+func classifyGithubMCPTool(toolName string, toolInput map[string]any) (ProviderAction, bool) {
+	name := strings.ToLower(toolName)
+	const prefix = "mcp__github__"
+	if !strings.HasPrefix(name, prefix) {
+		return ProviderAction{}, false
+	}
+	operation := strings.TrimPrefix(name, prefix)
+	read := githubMCPOperationLooksRead(operation)
+	actionPrefix := "github.api"
+	if strings.Contains(operation, "pull_request") {
+		actionPrefix = "github.pr"
+	} else if strings.Contains(operation, "issue") {
+		actionPrefix = "github.issue"
+	} else if strings.Contains(operation, "repo") || strings.Contains(operation, "repository") {
+		actionPrefix = "github.repo"
+	}
+	return ProviderAction{
+		Action:   readWriteAction(actionPrefix, read),
+		Resource: githubRepoFromMCPInput(toolInput),
+	}, true
+}
+
+func githubMCPOperationLooksRead(operation string) bool {
+	verb := operation
+	if index := strings.IndexByte(operation, '_'); index >= 0 {
+		verb = operation[:index]
+	}
+	switch verb {
+	case "get", "list", "read", "search", "view":
+		return true
+	}
+	return false
+}
+
+func githubRepoFromMCPInput(input map[string]any) string {
+	for _, key := range []string{"repository", "nameWithOwner", "name_with_owner"} {
+		if value, _ := stringField(input, key); value != "" {
+			if repo := normalizeGithubRepo(value); repo != "" {
+				return repo
+			}
+		}
+	}
+	repo, _ := stringField(input, "repo")
+	if repo == "" {
+		repo, _ = stringField(input, "repository_name")
+	}
+	owner, _ := stringField(input, "owner")
+	if owner != "" && repo != "" {
+		return normalizeGithubRepo(owner + "/" + repo)
+	}
+	return normalizeGithubRepo(repo)
+}
+
+func classifyGitCommand(args []string, raw string, cwd string, gitContext func(string) GitContext) []ProviderAction {
 	positionals := gitPositionals(args)
 	if len(positionals) == 0 {
 		return nil
 	}
 	verb := positionals[0]
+	targetCWD := gitContextCWD(args, cwd)
 
 	var context GitContext
 	contextLoaded := false
 	loadContext := func() GitContext {
 		if !contextLoaded {
-			context = gitContext()
+			context = gitContext(targetCWD)
 			contextLoaded = true
 		}
 		return context
@@ -397,7 +488,7 @@ func githubRepoFromGhArgs(args []string) string {
 
 var ghValueOptions = map[string]bool{
 	"-R": true, "--repo": true, "--hostname": true, "--jq": true, "-q": true,
-	"--template": true, "-t": true, "--paginate": true, "--cache": true, "--preview": true,
+	"--template": true, "-t": true, "--cache": true, "--preview": true,
 	"--limit": true, "--state": true, "--base": true, "--head": true,
 	"--label": true, "--author": true, "--assignee": true, "--milestone": true,
 	"--search": true, "--json": true, "--field": true, "-F": true,
@@ -497,6 +588,44 @@ func gitBranchFallback(verb string, args []string, gitContext func() GitContext)
 		return gitFlagValue(args, "-b", "--branch")
 	}
 	return gitContext().Branch
+}
+
+func gitContextCWD(args []string, base string) string {
+	cwd := strings.TrimSpace(base)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		if arg == "-C" {
+			if i+1 < len(args) {
+				cwd = joinGitCWD(cwd, args[i+1])
+				i++
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-C") && arg != "-c" {
+			if value := strings.TrimPrefix(arg, "-C"); value != "" {
+				cwd = joinGitCWD(cwd, value)
+			}
+			continue
+		}
+		if !strings.HasPrefix(arg, "-") {
+			break
+		}
+	}
+	return cwd
+}
+
+func joinGitCWD(base, next string) string {
+	next = strings.TrimSpace(next)
+	if next == "" {
+		return base
+	}
+	if filepath.IsAbs(next) || strings.TrimSpace(base) == "" {
+		return filepath.Clean(next)
+	}
+	return filepath.Clean(filepath.Join(base, next))
 }
 
 func gitFlagValue(args []string, flags ...string) string {

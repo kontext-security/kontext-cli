@@ -181,6 +181,13 @@ func TestDryRunRowsDoNotCountAsCriticalActions(t *testing.T) {
 	if summary.Actions != 1 {
 		t.Fatalf("Summary.Actions = %d, want only the runtime decision", summary.Actions)
 	}
+	events, err := store.Events(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("Events() error = %v", err)
+	}
+	if len(events) != 1 || events[0].Decision != risk.DecisionAllow {
+		t.Fatalf("Events() = %+v, want only the runtime allow decision", events)
+	}
 
 	sessions, err := store.Sessions(context.Background())
 	if err != nil {

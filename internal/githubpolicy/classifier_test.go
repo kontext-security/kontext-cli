@@ -91,6 +91,11 @@ func TestClassifyGhCommands(t *testing.T) {
 		{"gh repo delete acme/api", []ProviderAction{{Action: "github.repo.write", Resource: "acme/api"}}},
 		{"gh workflow run deploy.yml", []ProviderAction{{Action: "github.api.write", Resource: "acme/api"}}},
 		{"gh workflow view deploy.yml", []ProviderAction{{Action: "github.api.read", Resource: "acme/api"}}},
+		{"gh release create v1.0.0", []ProviderAction{{Action: "github.api.write", Resource: "acme/api"}}},
+		{"gh release view v1.0.0", []ProviderAction{{Action: "github.api.read", Resource: "acme/api"}}},
+		{"gh secret set TOKEN --body x", []ProviderAction{{Action: "github.api.write", Resource: "acme/api"}}},
+		{"gh auth status", []ProviderAction{{Action: "github.api.read", Resource: "acme/api"}}},
+		{"gh unknown subcommand", []ProviderAction{{Action: "github.api.write", Resource: "acme/api"}}},
 	}
 	for _, testCase := range cases {
 		got := classifyBash(t, testCase.command, projectContext())
@@ -274,6 +279,10 @@ func TestClassifyGhAPIEndpointRepo(t *testing.T) {
 			command: "gh api --input payload.json repos/acme/admin/issues",
 			want:    ProviderAction{Action: "github.api.write", Resource: "acme/admin"},
 		},
+		{
+			command: "gh api --paginate repos/acme/admin/pulls",
+			want:    ProviderAction{Action: "github.api.read", Resource: "acme/admin"},
+		},
 	}
 	for _, testCase := range cases {
 		got := classifyBash(t, testCase.command, projectContext())
@@ -308,5 +317,52 @@ func TestClassifyGitCommitDoesNotReachGithub(t *testing.T) {
 	// classify as provider actions.
 	if got := classifyBash(t, "git commit -m 'msg'", projectContext()); got != nil {
 		t.Fatalf("git commit = %+v, want nil", got)
+	}
+}
+
+func TestClassifyScriptInput(t *testing.T) {
+	got := ClassifyProviderActions("Bash", map[string]any{"script": "git push origin main"}, func() GitContext {
+		return projectContext()
+	})
+	want := []ProviderAction{{Action: "github.repo.write", Resource: "acme/api", BranchOrRef: "main"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("script input = %+v, want %+v", got, want)
+	}
+}
+
+func TestClassifyGithubMCPTool(t *testing.T) {
+	got := ClassifyProviderActions("mcp__github__get_pull_request", map[string]any{
+		"owner":       "acme",
+		"repo":        "admin",
+		"pull_number": 42,
+	}, nil)
+	want := []ProviderAction{{Action: "github.pr.read", Resource: "acme/admin"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("github mcp get_pull_request = %+v, want %+v", got, want)
+	}
+
+	got = ClassifyProviderActions("mcp__github__merge_pull_request", map[string]any{"repository": "acme/admin"}, nil)
+	want = []ProviderAction{{Action: "github.pr.write", Resource: "acme/admin"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("github mcp merge_pull_request = %+v, want %+v", got, want)
+	}
+}
+
+func TestClassifyGitDashCUsesTargetContext(t *testing.T) {
+	contexts := map[string]GitContext{
+		"/work/current": projectContext(),
+		"/work/other-repo": {
+			Branch: "main",
+			RemoteByName: map[string]string{
+				"origin": "git@github.com:acme/admin.git",
+			},
+		},
+	}
+	got := ClassifyProviderActionsWithCWD("Bash", map[string]any{"command": "git -C ../other-repo push"}, "/work/current", func(cwd string) GitContext {
+		return contexts[cwd]
+	})
+	want := []ProviderAction{{Action: "github.repo.write", Resource: "acme/admin", BranchOrRef: "main"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("git -C push = %+v, want %+v", got, want)
 	}
 }
