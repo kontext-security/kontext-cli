@@ -354,15 +354,15 @@ func TestEvaluateViaSidecarFailsOpenOnMarshalErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := evaluateViaSidecar(socketPath, tt.event)
+			result, err := evaluateViaSidecarForMode(socketPath, tt.event, "")
 			if err != nil {
-				t.Fatalf("evaluateViaSidecar() error = %v", err)
+				t.Fatalf("evaluateViaSidecarForMode() error = %v", err)
 			}
 			if !result.Allowed() {
-				t.Fatal("evaluateViaSidecar() allowed = false, want true")
+				t.Fatal("evaluateViaSidecarForMode() allowed = false, want true")
 			}
 			if result.Reason != "sidecar marshal error" {
-				t.Fatalf("evaluateViaSidecar() reason = %q, want sidecar marshal error", result.Reason)
+				t.Fatalf("evaluateViaSidecarForMode() reason = %q, want sidecar marshal error", result.Reason)
 			}
 		})
 	}
@@ -372,13 +372,13 @@ func TestEvaluateViaSidecarFailsClosedWhenEnforceSidecarUnavailable(t *testing.T
 	t.Setenv("KONTEXT_ACCESS_MODE", "enforce")
 
 	socketPath := fmt.Sprintf("/tmp/kontext-missing-%d.sock", time.Now().UnixNano())
-	result, err := evaluateViaSidecar(socketPath, hook.Event{
+	result, err := evaluateViaSidecarForMode(socketPath, hook.Event{
 		Agent:    "claude",
 		HookName: hook.HookPreToolUse,
 		ToolName: "Bash",
-	})
+	}, "")
 	if err != nil {
-		t.Fatalf("evaluateViaSidecar() error = %v", err)
+		t.Fatalf("evaluateViaSidecarForMode() error = %v", err)
 	}
 	if result.Decision != hook.DecisionDeny {
 		t.Fatalf("decision = %q, want DENY", result.Decision)
@@ -412,13 +412,13 @@ func TestEvaluateViaSidecarFailsClosedWhenAccessModePathSet(t *testing.T) {
 	t.Setenv("KONTEXT_ACCESS_MODE_PATH", "/tmp/kontext-missing-mode")
 
 	socketPath := fmt.Sprintf("/tmp/kontext-missing-%d.sock", time.Now().UnixNano())
-	result, err := evaluateViaSidecar(socketPath, hook.Event{
+	result, err := evaluateViaSidecarForMode(socketPath, hook.Event{
 		Agent:    "claude",
 		HookName: hook.HookPreToolUse,
 		ToolName: "Bash",
-	})
+	}, "")
 	if err != nil {
-		t.Fatalf("evaluateViaSidecar() error = %v", err)
+		t.Fatalf("evaluateViaSidecarForMode() error = %v", err)
 	}
 	if result.Decision != hook.DecisionDeny {
 		t.Fatalf("decision = %q, want DENY", result.Decision)
@@ -441,13 +441,13 @@ func TestEvaluateViaSidecarFailsOpenWhenNoPolicyModePathSet(t *testing.T) {
 	t.Setenv("KONTEXT_ACCESS_MODE_PATH", modePath)
 
 	socketPath := fmt.Sprintf("/tmp/kontext-missing-%d.sock", time.Now().UnixNano())
-	result, err := evaluateViaSidecar(socketPath, hook.Event{
+	result, err := evaluateViaSidecarForMode(socketPath, hook.Event{
 		Agent:    "claude",
 		HookName: hook.HookPreToolUse,
 		ToolName: "Bash",
-	})
+	}, "")
 	if err != nil {
-		t.Fatalf("evaluateViaSidecar() error = %v", err)
+		t.Fatalf("evaluateViaSidecarForMode() error = %v", err)
 	}
 	if result.Decision != hook.DecisionAllow {
 		t.Fatalf("decision = %q, want ALLOW", result.Decision)
@@ -464,13 +464,13 @@ func TestEvaluateViaSidecarUsesRefreshedEnforceModeFromPath(t *testing.T) {
 	t.Setenv("KONTEXT_ACCESS_MODE_PATH", modePath)
 
 	socketPath := fmt.Sprintf("/tmp/kontext-missing-%d.sock", time.Now().UnixNano())
-	result, err := evaluateViaSidecar(socketPath, hook.Event{
+	result, err := evaluateViaSidecarForMode(socketPath, hook.Event{
 		Agent:    "claude",
 		HookName: hook.HookPreToolUse,
 		ToolName: "Bash",
-	})
+	}, "")
 	if err != nil {
-		t.Fatalf("evaluateViaSidecar() error = %v", err)
+		t.Fatalf("evaluateViaSidecarForMode() error = %v", err)
 	}
 	if result.Decision != hook.DecisionDeny {
 		t.Fatalf("decision = %q, want DENY", result.Decision)
@@ -548,13 +548,13 @@ func TestEvaluateViaSidecarUsesRefreshedNoPolicyModeFromPath(t *testing.T) {
 	t.Setenv("KONTEXT_ACCESS_MODE_PATH", modePath)
 
 	socketPath := fmt.Sprintf("/tmp/kontext-missing-%d.sock", time.Now().UnixNano())
-	result, err := evaluateViaSidecar(socketPath, hook.Event{
+	result, err := evaluateViaSidecarForMode(socketPath, hook.Event{
 		Agent:    "claude",
 		HookName: hook.HookPreToolUse,
 		ToolName: "Bash",
-	})
+	}, "")
 	if err != nil {
-		t.Fatalf("evaluateViaSidecar() error = %v", err)
+		t.Fatalf("evaluateViaSidecarForMode() error = %v", err)
 	}
 	if result.Decision != hook.DecisionAllow {
 		t.Fatalf("decision = %q, want ALLOW", result.Decision)
@@ -565,13 +565,13 @@ func TestEvaluateViaSidecarFailsOpenWhenObserveSidecarUnavailable(t *testing.T) 
 	t.Setenv("KONTEXT_ACCESS_MODE", "no_policy")
 
 	socketPath := fmt.Sprintf("/tmp/kontext-missing-%d.sock", time.Now().UnixNano())
-	result, err := evaluateViaSidecar(socketPath, hook.Event{
+	result, err := evaluateViaSidecarForMode(socketPath, hook.Event{
 		Agent:    "claude",
 		HookName: hook.HookPreToolUse,
 		ToolName: "Bash",
-	})
+	}, "")
 	if err != nil {
-		t.Fatalf("evaluateViaSidecar() error = %v", err)
+		t.Fatalf("evaluateViaSidecarForMode() error = %v", err)
 	}
 	if result.Decision != hook.DecisionAllow {
 		t.Fatalf("decision = %q, want ALLOW", result.Decision)

@@ -424,10 +424,6 @@ func evaluateHookWithSidecarForMode(socketPath string, event hook.Event, mode st
 	return evaluateViaSidecarForMode(socketPath, event, mode)
 }
 
-func evaluateViaSidecar(socketPath string, event hook.Event) (hook.Result, error) {
-	return evaluateViaSidecarForMode(socketPath, event, "")
-}
-
 func evaluateViaSidecarForMode(socketPath string, event hook.Event, mode string) (hook.Result, error) {
 	conn, err := net.DialTimeout("unix", socketPath, 5*time.Second)
 	if err != nil {
