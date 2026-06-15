@@ -3,6 +3,7 @@ package policy
 import (
 	"testing"
 
+	"github.com/kontext-security/kontext-cli/internal/guard/decision"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 )
 
@@ -11,7 +12,7 @@ func TestEngineEvaluateProfileBehavior(t *testing.T) {
 		name     string
 		event    risk.RiskEvent
 		profile  Profile
-		decision Decision
+		decision decision.Decision
 		category RuleCategory
 		reason   string
 	}{

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/guard/decision"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 	"github.com/kontext-security/kontext-cli/internal/hook"
@@ -137,7 +138,7 @@ func riskDecisionFromHookResult(result hook.Result) risk.RiskDecision {
 		return decision
 	}
 	return risk.RiskDecision{
-		Decision:   risk.Decision(result.Decision),
+		Decision:   decision.Decision(result.Decision),
 		Reason:     result.Reason,
 		ReasonCode: result.ReasonCode,
 		EventID:    result.EventID,

@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
+	"github.com/kontext-security/kontext-cli/internal/guard/decision"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 )
 
@@ -25,19 +26,19 @@ type Store struct {
 }
 
 type DecisionRecord struct {
-	ID            string         `json:"id"`
-	SessionID     string         `json:"session_id"`
-	ToolUseID     string         `json:"tool_use_id,omitempty"`
-	HookEventName string         `json:"hook_event_name"`
-	ToolName      string         `json:"tool_name,omitempty"`
-	Decision      risk.Decision  `json:"decision"`
-	ReasonCode    string         `json:"reason_code"`
-	Reason        string         `json:"reason"`
-	RiskScore     *float64       `json:"risk_score,omitempty"`
-	Threshold     *float64       `json:"threshold,omitempty"`
-	ModelVersion  string         `json:"model_version,omitempty"`
-	RiskEvent     risk.RiskEvent `json:"risk_event"`
-	CreatedAt     time.Time      `json:"created_at"`
+	ID            string            `json:"id"`
+	SessionID     string            `json:"session_id"`
+	ToolUseID     string            `json:"tool_use_id,omitempty"`
+	HookEventName string            `json:"hook_event_name"`
+	ToolName      string            `json:"tool_name,omitempty"`
+	Decision      decision.Decision `json:"decision"`
+	ReasonCode    string            `json:"reason_code"`
+	Reason        string            `json:"reason"`
+	RiskScore     *float64          `json:"risk_score,omitempty"`
+	Threshold     *float64          `json:"threshold,omitempty"`
+	ModelVersion  string            `json:"model_version,omitempty"`
+	RiskEvent     risk.RiskEvent    `json:"risk_event"`
+	CreatedAt     time.Time         `json:"created_at"`
 }
 
 type Summary struct {
@@ -1178,7 +1179,7 @@ func canonicalEventType(hookEventName string) string {
 	}
 }
 
-func canonicalDecisionResult(decision risk.Decision) string {
+func canonicalDecisionResult(decision decision.Decision) string {
 	switch strings.ToLower(strings.TrimSpace(string(decision))) {
 	case "allow":
 		return "allow"
@@ -1210,7 +1211,7 @@ func actionStatus(canonicalEvent, decisionResult string) string {
 	}
 }
 
-func adapterDecision(decision risk.Decision) string {
+func adapterDecision(decision decision.Decision) string {
 	normalized := strings.ToLower(strings.TrimSpace(string(decision)))
 	switch normalized {
 	case "allow", "deny":

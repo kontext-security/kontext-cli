@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
+	"github.com/kontext-security/kontext-cli/internal/guard/decision"
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
 	"github.com/kontext-security/kontext-cli/internal/guard/policy"
 	"github.com/kontext-security/kontext-cli/internal/guard/policyconfig"
@@ -40,10 +41,10 @@ type Server struct {
 }
 
 type ProcessResponse struct {
-	Decision   risk.Decision `json:"decision"`
-	Reason     string        `json:"reason"`
-	ReasonCode string        `json:"reason_code"`
-	EventID    string        `json:"event_id"`
+	Decision   decision.Decision `json:"decision"`
+	Reason     string            `json:"reason"`
+	ReasonCode string            `json:"reason_code"`
+	EventID    string            `json:"event_id"`
 }
 
 type Options struct {

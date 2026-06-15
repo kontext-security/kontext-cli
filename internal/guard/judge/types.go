@@ -14,8 +14,6 @@ const (
 	DecisionDeny  = decision.Deny
 )
 
-type Decision = decision.Decision
-
 type RiskLevel string
 
 const (
@@ -37,10 +35,10 @@ type ToolInput struct {
 }
 
 type Output struct {
-	Decision   Decision  `json:"decision"`
-	RiskLevel  RiskLevel `json:"risk_level"`
-	Categories []string  `json:"categories"`
-	Reason     string    `json:"reason"`
+	Decision   decision.Decision `json:"decision"`
+	RiskLevel  RiskLevel         `json:"risk_level"`
+	Categories []string          `json:"categories"`
+	Reason     string            `json:"reason"`
 }
 
 type Metadata struct {

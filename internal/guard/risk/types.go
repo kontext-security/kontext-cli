@@ -36,8 +36,6 @@ const (
 	DecisionDeny  = decision.Deny
 )
 
-type Decision = decision.Decision
-
 type AuthorizationDecision string
 
 const (
@@ -56,53 +54,53 @@ const (
 )
 
 type RiskEvent struct {
-	Type               EventType `json:"type"`
-	Provider           string    `json:"provider,omitempty"`
-	ProviderCategory   string    `json:"provider_category,omitempty"`
-	Operation          string    `json:"operation,omitempty"`
-	OperationClass     string    `json:"operation_class,omitempty"`
-	ResourceClass      string    `json:"resource_class,omitempty"`
-	Environment        string    `json:"environment,omitempty"`
-	CredentialObserved bool      `json:"credential_observed"`
-	CredentialSource   string    `json:"credential_source,omitempty"`
-	DirectAPICall      bool      `json:"direct_api_call"`
-	ExplicitUserIntent bool      `json:"explicit_user_intent"`
-	PathClass          string    `json:"path_class,omitempty"`
-	CommandSummary     string    `json:"command_summary,omitempty"`
-	RequestSummary     string    `json:"request_summary,omitempty"`
-	Decision           Decision  `json:"decision,omitempty"`
-	ReasonCode         string    `json:"reason_code,omitempty"`
-	ModelVersion       string    `json:"model_version,omitempty"`
-	GuardID            string    `json:"guard_id,omitempty"`
-	RiskScore          *float64  `json:"risk_score,omitempty"`
-	Confidence         float64   `json:"confidence,omitempty"`
-	Signals            []string  `json:"signals,omitempty"`
-	DecisionStage      string    `json:"decision_stage,omitempty"`
-	PolicyVersion      string    `json:"policy_version,omitempty"`
-	PolicyHash         string    `json:"policy_hash,omitempty"`
-	PolicyProfile      string    `json:"policy_profile,omitempty"`
-	PolicyRulePack     string    `json:"policy_rule_pack,omitempty"`
-	PolicyRuleID       string    `json:"policy_rule_id,omitempty"`
-	PolicyRuleCategory string    `json:"policy_rule_category,omitempty"`
-	PolicySignals      []string  `json:"policy_signals,omitempty"`
-	JudgeRuntime       string    `json:"judge_runtime,omitempty"`
-	JudgeModel         string    `json:"judge_model,omitempty"`
-	JudgeDurationMs    *int64    `json:"judge_duration_ms,omitempty"`
-	JudgeFailureKind   string    `json:"judge_failure_kind,omitempty"`
-	JudgeRiskLevel     string    `json:"judge_risk_level,omitempty"`
-	JudgeCategories    []string  `json:"judge_categories,omitempty"`
+	Type               EventType         `json:"type"`
+	Provider           string            `json:"provider,omitempty"`
+	ProviderCategory   string            `json:"provider_category,omitempty"`
+	Operation          string            `json:"operation,omitempty"`
+	OperationClass     string            `json:"operation_class,omitempty"`
+	ResourceClass      string            `json:"resource_class,omitempty"`
+	Environment        string            `json:"environment,omitempty"`
+	CredentialObserved bool              `json:"credential_observed"`
+	CredentialSource   string            `json:"credential_source,omitempty"`
+	DirectAPICall      bool              `json:"direct_api_call"`
+	ExplicitUserIntent bool              `json:"explicit_user_intent"`
+	PathClass          string            `json:"path_class,omitempty"`
+	CommandSummary     string            `json:"command_summary,omitempty"`
+	RequestSummary     string            `json:"request_summary,omitempty"`
+	Decision           decision.Decision `json:"decision,omitempty"`
+	ReasonCode         string            `json:"reason_code,omitempty"`
+	ModelVersion       string            `json:"model_version,omitempty"`
+	GuardID            string            `json:"guard_id,omitempty"`
+	RiskScore          *float64          `json:"risk_score,omitempty"`
+	Confidence         float64           `json:"confidence,omitempty"`
+	Signals            []string          `json:"signals,omitempty"`
+	DecisionStage      string            `json:"decision_stage,omitempty"`
+	PolicyVersion      string            `json:"policy_version,omitempty"`
+	PolicyHash         string            `json:"policy_hash,omitempty"`
+	PolicyProfile      string            `json:"policy_profile,omitempty"`
+	PolicyRulePack     string            `json:"policy_rule_pack,omitempty"`
+	PolicyRuleID       string            `json:"policy_rule_id,omitempty"`
+	PolicyRuleCategory string            `json:"policy_rule_category,omitempty"`
+	PolicySignals      []string          `json:"policy_signals,omitempty"`
+	JudgeRuntime       string            `json:"judge_runtime,omitempty"`
+	JudgeModel         string            `json:"judge_model,omitempty"`
+	JudgeDurationMs    *int64            `json:"judge_duration_ms,omitempty"`
+	JudgeFailureKind   string            `json:"judge_failure_kind,omitempty"`
+	JudgeRiskLevel     string            `json:"judge_risk_level,omitempty"`
+	JudgeCategories    []string          `json:"judge_categories,omitempty"`
 }
 
 type RiskDecision struct {
-	Decision     Decision  `json:"decision"`
-	Reason       string    `json:"reason"`
-	ReasonCode   string    `json:"reason_code"`
-	EventID      string    `json:"event_id,omitempty"`
-	RiskScore    *float64  `json:"risk_score,omitempty"`
-	Threshold    *float64  `json:"threshold,omitempty"`
-	ModelVersion string    `json:"model_version,omitempty"`
-	GuardID      string    `json:"guard_id,omitempty"`
-	RiskEvent    RiskEvent `json:"risk_event"`
+	Decision     decision.Decision `json:"decision"`
+	Reason       string            `json:"reason"`
+	ReasonCode   string            `json:"reason_code"`
+	EventID      string            `json:"event_id,omitempty"`
+	RiskScore    *float64          `json:"risk_score,omitempty"`
+	Threshold    *float64          `json:"threshold,omitempty"`
+	ModelVersion string            `json:"model_version,omitempty"`
+	GuardID      string            `json:"guard_id,omitempty"`
+	RiskEvent    RiskEvent         `json:"risk_event"`
 	// GithubPolicy carries the synced-policy dry-run evaluations for this
 	// event; each one is recorded as a separate request.decided ledger row.
 	GithubPolicy []githubpolicy.Evaluation `json:"github_policy,omitempty"`

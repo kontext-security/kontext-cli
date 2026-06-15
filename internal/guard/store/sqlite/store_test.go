@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/guard/decision"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 )
 
@@ -716,7 +717,7 @@ func TestUnsupportedCanonicalDecisionFailsClosedInLedger(t *testing.T) {
 		HookEventName: "PreToolUse",
 		ToolName:      "Bash",
 	}, risk.RiskDecision{
-		Decision:   risk.Decision("step_up"),
+		Decision:   decision.Decision("step_up"),
 		Reason:     "approval required",
 		ReasonCode: "approval_required",
 		RiskEvent:  risk.RiskEvent{Type: risk.EventNormalToolCall},
@@ -742,7 +743,7 @@ where id = ?
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].Decision != risk.Decision("deny") {
+	if len(events) != 1 || events[0].Decision != decision.Decision("deny") {
 		t.Fatalf("events = %+v, want step-up fail-closed as deny", events)
 	}
 

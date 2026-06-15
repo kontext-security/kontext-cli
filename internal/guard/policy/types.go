@@ -14,8 +14,6 @@ const (
 	DecisionDeny  = decision.Deny
 )
 
-type Decision = decision.Decision
-
 type Stage string
 
 const (
@@ -96,19 +94,19 @@ func (c Config) Validate() error {
 }
 
 type Result struct {
-	Decision       Decision     `json:"decision"`
-	Stage          Stage        `json:"stage"`
-	Matched        bool         `json:"matched"`
-	RuleID         string       `json:"rule_id,omitempty"`
-	Category       RuleCategory `json:"category,omitempty"`
-	Profile        Profile      `json:"profile"`
-	PolicyVersion  string       `json:"policy_version"`
-	PolicyHash     string       `json:"policy_hash"`
-	RulePack       string       `json:"rule_pack"`
-	ReasonCode     string       `json:"reason_code"`
-	Reason         string       `json:"reason"`
-	NonBypassable  bool         `json:"non_bypassable"`
-	MatchedSignals []string     `json:"matched_signals,omitempty"`
+	Decision       decision.Decision `json:"decision"`
+	Stage          Stage             `json:"stage"`
+	Matched        bool              `json:"matched"`
+	RuleID         string            `json:"rule_id,omitempty"`
+	Category       RuleCategory      `json:"category,omitempty"`
+	Profile        Profile           `json:"profile"`
+	PolicyVersion  string            `json:"policy_version"`
+	PolicyHash     string            `json:"policy_hash"`
+	RulePack       string            `json:"rule_pack"`
+	ReasonCode     string            `json:"reason_code"`
+	Reason         string            `json:"reason"`
+	NonBypassable  bool              `json:"non_bypassable"`
+	MatchedSignals []string          `json:"matched_signals,omitempty"`
 }
 
 func PolicyHash(cfg Config, rulePack string) string {

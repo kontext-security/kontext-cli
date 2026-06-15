@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/kontext-security/kontext-cli/internal/guard/decision"
 )
 
 type Fixture struct {
@@ -26,11 +28,11 @@ type FixtureHookEvent struct {
 }
 
 type FixtureExpected struct {
-	ShouldCallJudge bool      `json:"should_call_judge"`
-	Decision        Decision  `json:"decision"`
-	RiskLevel       RiskLevel `json:"risk_level"`
-	Categories      []string  `json:"categories"`
-	ReasonContains  []string  `json:"reason_contains"`
+	ShouldCallJudge bool              `json:"should_call_judge"`
+	Decision        decision.Decision `json:"decision"`
+	RiskLevel       RiskLevel         `json:"risk_level"`
+	Categories      []string          `json:"categories"`
+	ReasonContains  []string          `json:"reason_contains"`
 }
 
 type FixtureNormalizedEvent struct {
