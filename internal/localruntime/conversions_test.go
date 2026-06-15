@@ -126,6 +126,19 @@ func TestEventFromEvaluateRequestPreservesLargeJSONNumbers(t *testing.T) {
 	}
 }
 
+func TestEvaluateResultFromResultPreservesDecision(t *testing.T) {
+	t.Parallel()
+
+	result := EvaluateResultFromResult(hook.Result{
+		Decision: hook.DecisionDeny,
+		Reason:   "blocked",
+	})
+
+	if result.Decision != hook.DecisionDeny {
+		t.Fatalf("decision = %q, want deny", result.Decision)
+	}
+}
+
 func TestResultFromEvaluateResultNormalizesLegacyDecision(t *testing.T) {
 	t.Parallel()
 

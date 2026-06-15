@@ -251,7 +251,7 @@ func buildHookEventRequestFromEvent(event hook.Event) *agentv1.ProcessHookEventR
 		hookEvent.ToolInput = enrichToolInput(event)
 	}
 	if event.ToolResponse != nil {
-		hookEvent.ToolResponse, _ = marshalMap(event.ToolResponse)
+		hookEvent.ToolResponse, _ = hook.MarshalMapJSON(event.ToolResponse)
 	}
 
 	return hookEvent
@@ -259,7 +259,7 @@ func buildHookEventRequestFromEvent(event hook.Event) *agentv1.ProcessHookEventR
 
 func enrichToolInput(event hook.Event) []byte {
 	input := cloneMap(event.ToolInput)
-	data, err := marshalMap(input)
+	data, err := hook.MarshalMapJSON(input)
 	if err != nil {
 		return nil
 	}

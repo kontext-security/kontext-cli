@@ -98,23 +98,15 @@ func normalizeToolResponse(values ...json.RawMessage) map[string]any {
 			continue
 		}
 		var obj map[string]any
-		if err := decodeUseNumber(trimmed, &obj); err == nil {
+		if err := hook.UnmarshalJSONUseNumber(trimmed, &obj); err == nil {
 			return obj
 		}
 		var v any
-		if err := decodeUseNumber(trimmed, &v); err == nil {
+		if err := hook.UnmarshalJSONUseNumber(trimmed, &v); err == nil {
 			return map[string]any{"content": v}
 		}
 	}
 	return nil
-}
-
-// decodeUseNumber unmarshals JSON while preserving numeric precision, so large
-// integer IDs beyond float64's exact range survive recording and hashing.
-func decodeUseNumber(data []byte, dst any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	return decoder.Decode(dst)
 }
 
 func EncodeClaudeResult(hookEventName string, result hook.Result) ([]byte, error) {

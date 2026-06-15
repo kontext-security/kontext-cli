@@ -1,8 +1,6 @@
 package sidecar
 
 import (
-	"encoding/json"
-
 	agentv1 "github.com/kontext-security/kontext-cli/gen/kontext/agent/v1"
 	"github.com/kontext-security/kontext-cli/internal/backend"
 	"github.com/kontext-security/kontext-cli/internal/hook"
@@ -37,11 +35,4 @@ func HookResultFromHostedResult(result *backend.ProcessHookEventResult, accessMo
 		out.Decision = hook.DecisionDeny
 	}
 	return out
-}
-
-func marshalMap(value map[string]any) (json.RawMessage, error) {
-	if value == nil {
-		return nil, nil
-	}
-	return json.Marshal(value)
 }
