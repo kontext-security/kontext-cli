@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestParseTemplate(t *testing.T) {
+func TestLoadTemplateFileEntries(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -27,13 +27,14 @@ STRIPE_KEY={{kontext:stripe}}
 		t.Fatalf("write template: %v", err)
 	}
 
-	entries, err := ParseTemplate(path)
+	doc, err := LoadTemplateFile(path)
 	if err != nil {
-		t.Fatalf("ParseTemplate() error = %v", err)
+		t.Fatalf("LoadTemplateFile() error = %v", err)
 	}
+	entries := doc.Entries
 
 	if got, want := len(entries), 3; got != want {
-		t.Fatalf("ParseTemplate() len = %d, want %d", got, want)
+		t.Fatalf("LoadTemplateFile() entries len = %d, want %d", got, want)
 	}
 
 	if got, want := entries[0].EnvVar, "GITHUB_TOKEN"; got != want {

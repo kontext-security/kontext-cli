@@ -104,15 +104,6 @@ type Resolved struct {
 	Value string // The resolved credential value
 }
 
-// ParseTemplate reads an env template file and extracts credential placeholders.
-func ParseTemplate(path string) ([]Entry, error) {
-	doc, err := LoadTemplateFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("parse template: %w", err)
-	}
-	return doc.Entries, nil
-}
-
 // BuildEnv converts resolved credentials into environment variable assignments.
 func BuildEnv(resolved []Resolved, base []string) []string {
 	env := make([]string, len(base))
