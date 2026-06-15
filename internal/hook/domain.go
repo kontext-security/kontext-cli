@@ -18,16 +18,21 @@ func (h HookName) String() string {
 }
 
 func (h HookName) IsKnown() bool {
-	switch h {
-	case HookSessionStart, HookPreToolUse, HookPostToolUse, HookPostToolUseFailed, HookSessionEnd, HookUserPromptSubmit:
-		return true
-	default:
-		return false
-	}
+	_, ok := ParseHookName(string(h))
+	return ok
 }
 
 func (h HookName) CanBlock() bool {
 	return h == HookPreToolUse
+}
+
+func ParseHookName(value string) (HookName, bool) {
+	switch hookName := HookName(strings.TrimSpace(value)); hookName {
+	case HookSessionStart, HookPreToolUse, HookPostToolUse, HookPostToolUseFailed, HookSessionEnd, HookUserPromptSubmit:
+		return hookName, true
+	default:
+		return "", false
+	}
 }
 
 type Decision string

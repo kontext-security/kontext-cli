@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/kontext-security/kontext-cli/internal/hook"
 )
@@ -49,7 +48,7 @@ func EventFromEvaluateRequest(sessionID, fallbackAgent string, req *EvaluateRequ
 	if req.HookEvent == "" {
 		return hook.Event{}, errors.New("hook event missing")
 	}
-	hookName, ok := normalizeHookName(req.HookEvent)
+	hookName, ok := hook.ParseHookName(req.HookEvent)
 	if !ok {
 		return hook.Event{}, fmt.Errorf("unknown hook event %q", req.HookEvent)
 	}
@@ -140,13 +139,4 @@ func rawMap(data json.RawMessage) (map[string]any, error) {
 		return nil, err
 	}
 	return value, nil
-}
-
-func normalizeHookName(value string) (hook.HookName, bool) {
-	switch hookName := hook.HookName(strings.TrimSpace(value)); hookName {
-	case hook.HookSessionStart, hook.HookPreToolUse, hook.HookPostToolUse, hook.HookPostToolUseFailed, hook.HookSessionEnd, hook.HookUserPromptSubmit:
-		return hookName, true
-	default:
-		return "", false
-	}
 }
