@@ -46,11 +46,6 @@ type Options struct {
 	Args         []string
 }
 
-// Start preserves the historical managed-session entry point.
-func Start(ctx context.Context, opts Options) error {
-	return StartManaged(ctx, opts)
-}
-
 // StartManaged launches an agent with a hosted managed Kontext session.
 func StartManaged(ctx context.Context, opts Options) error {
 	diagnostics := diagnostic.New(os.Stderr, opts.Verbose || diagnostic.EnabledFromEnv())
