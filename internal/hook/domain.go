@@ -1,6 +1,10 @@
 package hook
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/kontext-security/kontext-cli/internal/guard/decision"
+)
 
 type HookName string
 
@@ -30,11 +34,11 @@ func (h HookName) CanBlock() bool {
 	return h == HookPreToolUse
 }
 
-type Decision string
+type Decision = decision.Decision
 
 const (
-	DecisionAllow Decision = "allow"
-	DecisionDeny  Decision = "deny"
+	DecisionAllow = decision.Allow
+	DecisionDeny  = decision.Deny
 )
 
 func NormalizeDecision(value string) (Decision, bool) {
