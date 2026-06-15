@@ -193,7 +193,7 @@ func Flush(ctx context.Context, opts Options) error {
 			var hostedErr *hostedIngestError
 			if errors.As(err, &hostedErr) && shouldRetryWithSmallerBatch(hostedErr.StatusCode) {
 				if limit == 1 {
-					return err
+					return advancePastMinimumBatch(statePath, batch, fmt.Sprintf("hosted status %d", hostedErr.StatusCode), err)
 				}
 				nextLimit := reducedBatchLimit(limit)
 				opts.Diagnostic.Printf(
@@ -282,9 +282,7 @@ func reducedBatchLimit(limit int) int {
 }
 
 func shouldRetryWithSmallerBatch(statusCode int) bool {
-	return statusCode == http.StatusBadRequest ||
-		statusCode == http.StatusRequestEntityTooLarge ||
-		statusCode == http.StatusUnprocessableEntity
+	return statusCode == http.StatusRequestEntityTooLarge
 }
 
 func payloadLimitViolation(payload Payload, bodyBytes int) string {

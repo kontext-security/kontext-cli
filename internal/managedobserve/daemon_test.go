@@ -192,6 +192,97 @@ func TestDaemonStreamsLedgerBatches(t *testing.T) {
 	}
 }
 
+func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
+	policyTokens := make(chan string, 8)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/policy/github/snapshot":
+			token := r.Header.Get("Authorization")
+			select {
+			case policyTokens <- token:
+			default:
+			}
+			if token != "Bearer refreshed-install-token" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"schemaVersion":  "github-policy-snapshot-v1",
+				"organizationId": "org_123",
+				"providerKey":    "github",
+				"mode":           "observe",
+				"epoch":          1,
+				"hash":           "hash-1",
+				"rules":          []any{},
+				"generatedAt":    "2026-06-15T00:00:00.000Z",
+			})
+		case "/api/v1/authorization-ledger/batches":
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	dir := t.TempDir()
+	socketDir, err := os.MkdirTemp("/tmp", "kontext-managedobserve-policy-refresh-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "kontext.sock")
+	dbPath := filepath.Join(dir, "guard.db")
+	writeTestManagedConfigWithCloudURL(t, filepath.Join(dir, "managed.json"), server.URL)
+	t.Setenv("KONTEXT_INSTALL_TOKEN", "stale-install-token")
+	writeTestInstallation(t, filepath.Join(dir, "installation.json"))
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunDaemon(ctx, DaemonOptions{
+			SocketPath:           socketPath,
+			DBPath:               dbPath,
+			IdleTimeout:          time.Hour,
+			StreamInterval:       time.Hour,
+			StreamHTTPClient:     server.Client(),
+			GithubPolicyInterval: 20 * time.Millisecond,
+			GithubPolicyClient:   server.Client(),
+		})
+	}()
+	stopped := false
+	stop := func() {
+		if stopped {
+			return
+		}
+		stopped = true
+		cancel()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("RunDaemon() error = %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("RunDaemon did not stop")
+		}
+	}
+	t.Cleanup(stop)
+	waitForSocket(t, socketPath, errCh)
+	t.Setenv("KONTEXT_INSTALL_TOKEN", "refreshed-install-token")
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case token := <-policyTokens:
+			if token == "Bearer refreshed-install-token" {
+				stop()
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for refreshed policy token")
+		}
+	}
+}
+
 func TestCleanupIntervalNeverReturnsZero(t *testing.T) {
 	if got := cleanupInterval(time.Nanosecond); got != time.Nanosecond {
 		t.Fatalf("cleanupInterval(1ns) = %s, want 1ns", got)

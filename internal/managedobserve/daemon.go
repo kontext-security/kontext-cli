@@ -33,20 +33,13 @@ type DaemonOptions struct {
 }
 
 func RunDaemon(ctx context.Context, opts DaemonOptions) error {
-	loadedConfig, err := managedconfig.Load()
+	runtimeConfig, err := loadManagedRuntimeConfig(ctx)
 	if err != nil {
-		if errors.Is(err, managedconfig.ErrNotManaged) {
-			return err
-		}
-		return fmt.Errorf("load managed config: %w", err)
+		return err
 	}
 	installationState, err := installation.Ensure()
 	if err != nil {
 		return fmt.Errorf("ensure installation identity: %w", err)
-	}
-	installToken, err := managedconfig.ResolveInstallToken(ctx, loadedConfig.Config.Credentials.InstallTokenRef)
-	if err != nil {
-		return fmt.Errorf("resolve install token: %w", err)
 	}
 
 	socketPath := opts.SocketPath
@@ -66,7 +59,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 
 	// The deployment-level mode from managed.json drives every hook edge:
 	// observe records would-decisions, enforce returns real denies.
-	mode, err := guardhookruntime.ParseMode(loadedConfig.Config.Mode)
+	mode, err := guardhookruntime.ParseMode(runtimeConfig.Mode)
 	if err != nil {
 		return fmt.Errorf("parse managed mode: %w", err)
 	}
@@ -97,38 +90,19 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 
 	policyCtx, stopPolicyRefresh := context.WithCancel(ctx)
 	defer stopPolicyRefresh()
-	go githubpolicy.Run(policyCtx, githubpolicy.RunOptions{
-		Cache:        policyCache,
-		CloudURL:     loadedConfig.Config.CloudURL,
-		InstallToken: installToken,
-		Interval:     opts.GithubPolicyInterval,
-		HTTPClient:   opts.GithubPolicyClient,
-		Diagnostic:   opts.Diagnostic,
-	})
+	go runGithubPolicyRefresh(policyCtx, opts, policyCache)
 
 	streamCtx, stopStream := context.WithCancel(ctx)
 	defer stopStream()
 	streamErr := make(chan error, 1)
 	go func() {
-		streamErr <- managedstream.Run(streamCtx, managedstream.Options{
-			DBPath:            dbPath,
-			StatePath:         opts.StreamStatePath,
-			CloudURL:          loadedConfig.Config.CloudURL,
-			OrganizationID:    loadedConfig.Config.OrganizationID,
-			InstallationID:    installationState.InstallationID,
-			InstallToken:      installToken,
-			DeviceLabel:       loadedConfig.Config.Device.Label,
-			DeploymentVersion: managedconfig.DeploymentVersion,
-			Interval:          opts.StreamInterval,
-			HTTPClient:        opts.StreamHTTPClient,
-			Diagnostic:        opts.Diagnostic,
-		})
+		streamErr <- runManagedStream(streamCtx, opts, dbPath, installationState.InstallationID)
 	}()
 
 	// Cowork observation runs alongside Claude Code in the same daemon, replaying
 	// in-VM Cowork tool events into the same localruntime socket as agent "cowork".
 	// Enabled via managed.json (cowork_enabled) or the env var override.
-	if loadedConfig.Config.CoworkEnabled || coworkobserve.Enabled() {
+	if runtimeConfig.CoworkEnabled || coworkobserve.Enabled() {
 		go coworkobserve.Run(ctx, coworkobserve.Options{
 			SocketPath: socketPath,
 			StatePath:  filepath.Join(filepath.Dir(dbPath), "cowork-spool-offsets.json"),
@@ -162,6 +136,37 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	}
 }
 
+type managedRuntimeConfig struct {
+	CloudURL       string
+	OrganizationID string
+	InstallToken   string
+	DeviceLabel    string
+	Mode           string
+	CoworkEnabled  bool
+}
+
+func loadManagedRuntimeConfig(ctx context.Context) (managedRuntimeConfig, error) {
+	loadedConfig, err := managedconfig.Load()
+	if err != nil {
+		if errors.Is(err, managedconfig.ErrNotManaged) {
+			return managedRuntimeConfig{}, err
+		}
+		return managedRuntimeConfig{}, fmt.Errorf("load managed config: %w", err)
+	}
+	installToken, err := managedconfig.ResolveInstallToken(ctx, loadedConfig.Config.Credentials.InstallTokenRef)
+	if err != nil {
+		return managedRuntimeConfig{}, fmt.Errorf("resolve install token: %w", err)
+	}
+	return managedRuntimeConfig{
+		CloudURL:       loadedConfig.Config.CloudURL,
+		OrganizationID: loadedConfig.Config.OrganizationID,
+		InstallToken:   installToken,
+		DeviceLabel:    loadedConfig.Config.Device.Label,
+		Mode:           loadedConfig.Config.Mode,
+		CoworkEnabled:  loadedConfig.Config.CoworkEnabled,
+	}, nil
+}
+
 func idleTimeoutOrDefault(idleTimeout time.Duration) time.Duration {
 	if idleTimeout == 0 {
 		return DefaultIdleTimeout()
@@ -176,6 +181,90 @@ func cleanupStaleSessions(ctx context.Context, dbPath string, idleTimeout time.D
 	}
 	defer store.Close()
 	return store.CloseStaleDaemonObservedSessions(ctx, time.Now().UTC().Add(-idleTimeout))
+}
+
+func runGithubPolicyRefresh(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache) {
+	interval := opts.GithubPolicyInterval
+	if interval == 0 {
+		interval = githubpolicy.DefaultIntervalFromEnv()
+	}
+	refreshGithubPolicy(ctx, opts, cache)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refreshGithubPolicy(ctx, opts, cache)
+		}
+	}
+}
+
+func refreshGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache) {
+	runtimeConfig, err := loadManagedRuntimeConfig(ctx)
+	if err != nil {
+		cache.MarkFetchFailed(err)
+		opts.Diagnostic.Printf("github policy config reload: %v\n", err)
+		return
+	}
+	snapshot, err := githubpolicy.FetchSnapshot(ctx, opts.GithubPolicyClient, runtimeConfig.CloudURL, runtimeConfig.InstallToken)
+	if err != nil {
+		cache.MarkFetchFailed(err)
+		opts.Diagnostic.Printf("github policy refresh: %v\n", err)
+		return
+	}
+	if err := cache.Apply(snapshot, time.Now().UTC()); err != nil {
+		opts.Diagnostic.Printf("github policy persist: %v\n", err)
+	}
+}
+
+func runManagedStream(ctx context.Context, opts DaemonOptions, dbPath, installationID string) error {
+	interval := opts.StreamInterval
+	if interval == 0 {
+		interval = managedstream.DefaultIntervalFromEnv()
+	}
+	flushManagedStream(ctx, opts, dbPath, installationID)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			flushManagedStream(ctx, opts, dbPath, installationID)
+		}
+	}
+}
+
+func flushManagedStream(ctx context.Context, opts DaemonOptions, dbPath, installationID string) {
+	streamOpts, err := managedStreamOptions(ctx, opts, dbPath, installationID)
+	if err != nil {
+		opts.Diagnostic.Printf("managed stream config reload: %v\n", err)
+		return
+	}
+	if err := managedstream.Flush(ctx, streamOpts); err != nil {
+		opts.Diagnostic.Printf("managed stream flush: %v\n", err)
+	}
+}
+
+func managedStreamOptions(ctx context.Context, opts DaemonOptions, dbPath, installationID string) (managedstream.Options, error) {
+	runtimeConfig, err := loadManagedRuntimeConfig(ctx)
+	if err != nil {
+		return managedstream.Options{}, err
+	}
+	return managedstream.Options{
+		DBPath:            dbPath,
+		StatePath:         opts.StreamStatePath,
+		CloudURL:          runtimeConfig.CloudURL,
+		OrganizationID:    runtimeConfig.OrganizationID,
+		InstallationID:    installationID,
+		InstallToken:      runtimeConfig.InstallToken,
+		DeviceLabel:       runtimeConfig.DeviceLabel,
+		DeploymentVersion: managedconfig.DeploymentVersion,
+		HTTPClient:        opts.StreamHTTPClient,
+		Diagnostic:        opts.Diagnostic,
+	}, nil
 }
 
 func cleanupInterval(idleTimeout time.Duration) time.Duration {
