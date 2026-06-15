@@ -440,7 +440,8 @@ func readClaudeSettings() (string, map[string]any, error) {
 }
 
 func backupFile(path, label string) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	mode, err := fileModeOrDefault(path, 0o600)
+	if os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
 		return err
@@ -450,16 +451,28 @@ func backupFile(path, label string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(backupPath, input, 0o644)
+	return os.WriteFile(backupPath, input, mode)
 }
 
 func writeJSONFile(path string, value any) error {
+	mode, err := fileModeOrDefault(path, 0o600)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	bytes, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
 	bytes = append(bytes, '\n')
-	return os.WriteFile(path, bytes, 0o644)
+	return os.WriteFile(path, bytes, mode)
+}
+
+func fileModeOrDefault(path string, fallback os.FileMode) (os.FileMode, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fallback, err
+	}
+	return info.Mode().Perm(), nil
 }
 
 func mergeHooks(raw any, hookCommand string) map[string]any {

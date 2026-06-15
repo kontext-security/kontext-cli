@@ -194,6 +194,40 @@ func TestUninstallClaudeHooksPreservesNonGuardHookInMixedGroup(t *testing.T) {
 	if command != "/usr/local/bin/custom-hook" {
 		t.Fatalf("preserved command = %v, want custom hook", command)
 	}
+	assertFileMode(t, settingsPath, 0o600)
+	assertBackupMode(t, settingsPath, 0o600)
+}
+
+func TestInstallClaudeHooksPreservesClaudeSettingsPermissions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {"type": "command", "command": "/usr/local/bin/custom-hook"}
+        ]
+      }
+    ]
+  }
+}`
+	if err := os.WriteFile(settingsPath, []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	if err := installClaudeHooks(&stdout, "/tmp/kontext.sock"); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFileMode(t, settingsPath, 0o600)
+	assertBackupMode(t, settingsPath, 0o600)
 }
 
 func TestPrintHookStatusReportsGuardAndHostedConflict(t *testing.T) {
@@ -238,6 +272,31 @@ func TestPrintHookStatusReportsGuardAndHostedConflict(t *testing.T) {
 	if !strings.Contains(got, "Claude Code hook mode: conflict (hosted and Guard hooks are both installed)") {
 		t.Fatalf("PrintHookStatus() = %q, want conflict mode", got)
 	}
+}
+
+func assertFileMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("%s mode = %o, want %o", path, got, want)
+	}
+}
+
+func assertBackupMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+
+	matches, err := filepath.Glob(path + ".kontext-guard-backup-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("backup count = %d, want 1", len(matches))
+	}
+	assertFileMode(t, matches[0], want)
 }
 
 func TestValidateLocalJudgeURLRejectsHostedURL(t *testing.T) {
