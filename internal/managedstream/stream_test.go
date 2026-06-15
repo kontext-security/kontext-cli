@@ -240,6 +240,81 @@ func TestFlushRetriesWithSmallerBatchWhenHostedBackendRejectsSize(t *testing.T) 
 	}
 }
 
+func TestFlushDoesNotRetrySmallerBatchForTerminalHostedValidation(t *testing.T) {
+	store, dbPath := testStore(t)
+	for i := 0; i < 4; i++ {
+		saveTestDecision(t, store, fmt.Sprintf("session-%03d", i), fmt.Sprintf("toolu_%03d", i))
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"organization_id does not match installation"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      statePath,
+		CloudURL:       server.URL,
+		OrganizationID: "org_wrong",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     4,
+		HTTPClient:     server.Client(),
+	})
+	if err == nil {
+		t.Fatal("Flush() error = nil, want hosted validation failure")
+	}
+	if requests != 1 {
+		t.Fatalf("request count = %d, want 1 terminal attempt", requests)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("state file error = %v, want not exist", err)
+	}
+}
+
+func TestFlushRetriesWithSmallerBatchForSizeLikeHostedValidation(t *testing.T) {
+	store, dbPath := testStore(t)
+	for i := 0; i < 4; i++ {
+		saveTestDecision(t, store, fmt.Sprintf("session-%03d", i), fmt.Sprintf("toolu_%03d", i))
+	}
+
+	var actionCounts []int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got Payload
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		actionCounts = append(actionCounts, len(got.Actions))
+		if len(actionCounts) == 1 {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"message":"authorization_actions must contain no more than 1000 records"}`))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+
+	if err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      filepath.Join(t.TempDir(), "stream-state.json"),
+		CloudURL:       server.URL,
+		OrganizationID: "org_123",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     4,
+		HTTPClient:     server.Client(),
+	}); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	if len(actionCounts) != 2 || actionCounts[0] <= actionCounts[1] {
+		t.Fatalf("action counts = %v, want one smaller retry", actionCounts)
+	}
+}
+
 func TestFlushReportsHostedValidationBody(t *testing.T) {
 	store, dbPath := testStore(t)
 	saveTestDecision(t, store, "session-1", "toolu_1")

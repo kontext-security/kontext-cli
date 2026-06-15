@@ -191,7 +191,7 @@ func Flush(ctx context.Context, opts Options) error {
 
 		if err := post(ctx, opts, body); err != nil {
 			var hostedErr *hostedIngestError
-			if errors.As(err, &hostedErr) && shouldRetryWithSmallerBatch(hostedErr.StatusCode) {
+			if errors.As(err, &hostedErr) && shouldRetryWithSmallerBatch(hostedErr) {
 				if limit == 1 {
 					return err
 				}
@@ -281,10 +281,28 @@ func reducedBatchLimit(limit int) int {
 	return next
 }
 
-func shouldRetryWithSmallerBatch(statusCode int) bool {
-	return statusCode == http.StatusBadRequest ||
-		statusCode == http.StatusRequestEntityTooLarge ||
-		statusCode == http.StatusUnprocessableEntity
+func shouldRetryWithSmallerBatch(err *hostedIngestError) bool {
+	if err.StatusCode == http.StatusRequestEntityTooLarge {
+		return true
+	}
+	if err.StatusCode != http.StatusBadRequest && err.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	return isHostedPayloadSizeError(err.Body)
+}
+
+func isHostedPayloadSizeError(body string) bool {
+	body = strings.ToLower(body)
+	if strings.Contains(body, "payload too large") || strings.Contains(body, "request entity too large") {
+		return true
+	}
+	if !strings.Contains(body, "must contain no more than") && !strings.Contains(body, "exceeds max") {
+		return false
+	}
+	return strings.Contains(body, "agent_sessions") ||
+		strings.Contains(body, "authorization_actions") ||
+		strings.Contains(body, "authorization_receipts") ||
+		strings.Contains(body, "body_bytes")
 }
 
 func payloadLimitViolation(payload Payload, bodyBytes int) string {

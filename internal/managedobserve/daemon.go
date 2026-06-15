@@ -110,19 +110,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	defer stopStream()
 	streamErr := make(chan error, 1)
 	go func() {
-		streamErr <- managedstream.Run(streamCtx, managedstream.Options{
-			DBPath:            dbPath,
-			StatePath:         opts.StreamStatePath,
-			CloudURL:          loadedConfig.Config.CloudURL,
-			OrganizationID:    loadedConfig.Config.OrganizationID,
-			InstallationID:    installationState.InstallationID,
-			InstallToken:      installToken,
-			DeviceLabel:       loadedConfig.Config.Device.Label,
-			DeploymentVersion: managedconfig.DeploymentVersion,
-			Interval:          opts.StreamInterval,
-			HTTPClient:        opts.StreamHTTPClient,
-			Diagnostic:        opts.Diagnostic,
-		})
+		streamErr <- runManagedStream(streamCtx, opts, dbPath, installationState.InstallationID)
 	}()
 
 	// Cowork observation runs alongside Claude Code in the same daemon, replaying
@@ -176,6 +164,56 @@ func cleanupStaleSessions(ctx context.Context, dbPath string, idleTimeout time.D
 	}
 	defer store.Close()
 	return store.CloseStaleDaemonObservedSessions(ctx, time.Now().UTC().Add(-idleTimeout))
+}
+
+func runManagedStream(ctx context.Context, opts DaemonOptions, dbPath, installationID string) error {
+	interval := opts.StreamInterval
+	if interval == 0 {
+		interval = managedstream.DefaultIntervalFromEnv()
+	}
+	flush := func() {
+		if err := managedstream.Flush(ctx, managedStreamOptions(ctx, opts, dbPath, installationID)); err != nil {
+			opts.Diagnostic.Printf("managed stream flush: %v\n", err)
+		}
+	}
+
+	flush()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			flush()
+		}
+	}
+}
+
+func managedStreamOptions(ctx context.Context, opts DaemonOptions, dbPath, installationID string) managedstream.Options {
+	streamOpts := managedstream.Options{
+		DBPath:            dbPath,
+		StatePath:         opts.StreamStatePath,
+		InstallationID:    installationID,
+		DeploymentVersion: managedconfig.DeploymentVersion,
+		HTTPClient:        opts.StreamHTTPClient,
+		Diagnostic:        opts.Diagnostic,
+	}
+	loadedConfig, err := managedconfig.Load()
+	if err != nil {
+		opts.Diagnostic.Printf("managed stream config reload: %v\n", err)
+		return streamOpts
+	}
+	installToken, err := managedconfig.ResolveInstallToken(ctx, loadedConfig.Config.Credentials.InstallTokenRef)
+	if err != nil {
+		opts.Diagnostic.Printf("managed stream token reload: %v\n", err)
+		return streamOpts
+	}
+	streamOpts.CloudURL = loadedConfig.Config.CloudURL
+	streamOpts.OrganizationID = loadedConfig.Config.OrganizationID
+	streamOpts.InstallToken = installToken
+	streamOpts.DeviceLabel = loadedConfig.Config.Device.Label
+	return streamOpts
 }
 
 func cleanupInterval(idleTimeout time.Duration) time.Duration {

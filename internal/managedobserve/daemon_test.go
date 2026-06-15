@@ -192,6 +192,101 @@ func TestDaemonStreamsLedgerBatches(t *testing.T) {
 	}
 }
 
+func TestDaemonStreamsWithRefreshedInstallToken(t *testing.T) {
+	type ledgerBatchRequest struct {
+		Actions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"authorization_actions"`
+	}
+
+	requests := make(chan string, 4)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := r.Header.Get("Authorization")
+		requests <- token
+		if token != "Bearer refreshed-install-token" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"message":"install token is stale"}`))
+			return
+		}
+		var body ledgerBatchRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	dir := t.TempDir()
+	socketDir, err := os.MkdirTemp("/tmp", "kontext-managedobserve-stream-refresh-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "kontext.sock")
+	dbPath := filepath.Join(dir, "guard.db")
+	writeTestManagedConfigWithCloudURL(t, filepath.Join(dir, "managed.json"), server.URL)
+	t.Setenv("KONTEXT_INSTALL_TOKEN", "stale-install-token")
+	writeTestInstallation(t, filepath.Join(dir, "installation.json"))
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunDaemon(ctx, DaemonOptions{
+			SocketPath:       socketPath,
+			DBPath:           dbPath,
+			IdleTimeout:      time.Hour,
+			StreamStatePath:  filepath.Join(dir, "stream-state.json"),
+			StreamInterval:   20 * time.Millisecond,
+			StreamHTTPClient: server.Client(),
+		})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("RunDaemon() error = %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("RunDaemon did not stop")
+		}
+	})
+	waitForSocket(t, socketPath, errCh)
+
+	client := localruntime.NewClient(socketPath)
+	client.Timeout = time.Second
+	if _, err := client.Process(context.Background(), hook.Event{
+		SessionID: "claude-stream-refresh-session",
+		Agent:     "claude",
+		HookName:  hook.HookPreToolUse,
+		ToolName:  "Read",
+		CWD:       "/tmp/project",
+	}); err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	select {
+	case token := <-requests:
+		if token != "Bearer stale-install-token" {
+			t.Fatalf("first token = %q, want stale token", token)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for stale token request")
+	}
+	if err := os.Setenv("KONTEXT_INSTALL_TOKEN", "refreshed-install-token"); err != nil {
+		t.Fatalf("Setenv() error = %v", err)
+	}
+
+	select {
+	case token := <-requests:
+		if token != "Bearer refreshed-install-token" {
+			t.Fatalf("second token = %q, want refreshed token", token)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for refreshed token request")
+	}
+}
+
 func TestCleanupIntervalNeverReturnsZero(t *testing.T) {
 	if got := cleanupInterval(time.Nanosecond); got != time.Nanosecond {
 		t.Fatalf("cleanupInterval(1ns) = %s, want 1ns", got)
