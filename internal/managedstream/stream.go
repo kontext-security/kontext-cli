@@ -25,9 +25,10 @@ const (
 	SchemaVersion   = "authorization-ledger-v1"
 	DefaultEndpoint = "/api/v1/authorization-ledger/batches"
 
-	DefaultBatchLimit = 100
-	MaxPayloadBytes   = 192 * 1024
-	DefaultInterval   = 10 * time.Second
+	DefaultBatchLimit        = 100
+	MaxPayloadBytes          = 192 * 1024
+	DefaultInterval          = 10 * time.Second
+	DefaultHeartbeatInterval = 60 * time.Second
 
 	maxPayloadSessions = 100
 	maxPayloadActions  = 1000
@@ -50,6 +51,7 @@ type Options struct {
 	DeviceLabel       string
 	DeploymentVersion func() string
 	Interval          time.Duration
+	HeartbeatInterval time.Duration
 	BatchLimit        int
 	HTTPClient        *http.Client
 	Diagnostic        diagnostic.Logger
@@ -96,13 +98,17 @@ type Device struct {
 }
 
 type State struct {
-	UpdatedAfter *time.Time
-	ActionID     string
+	UpdatedAfter           *time.Time
+	ActionID               string
+	LastHeartbeatAttemptAt string
+	LastHeartbeatAt        string
 }
 
 type persistedState struct {
-	UpdatedAfter string `json:"updated_after,omitempty"`
-	ActionID     string `json:"action_id,omitempty"`
+	UpdatedAfter           string `json:"updated_after,omitempty"`
+	ActionID               string `json:"action_id,omitempty"`
+	LastHeartbeatAttemptAt string `json:"last_heartbeat_attempt_at,omitempty"`
+	LastHeartbeatAt        string `json:"last_heartbeat_at,omitempty"`
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -175,6 +181,7 @@ func Flush(ctx context.Context, opts Options) error {
 	}
 
 	limit := batchLimit(opts.BatchLimit)
+	now := time.Now().UTC()
 	for {
 		batch, err := store.LedgerBatch(ctx, sqlite.LedgerExportOptions{
 			UpdatedAfter:   state.UpdatedAfter,
@@ -185,29 +192,10 @@ func Flush(ctx context.Context, opts Options) error {
 			return err
 		}
 		if len(batch.Actions) == 0 {
-			return nil
+			return postHeartbeatIfDue(ctx, opts, statePath, state, now)
 		}
 
-		payload := Payload{
-			SchemaVersion:      SchemaVersion,
-			InstallationID:     opts.InstallationID,
-			BatchID:            "batch_" + uuid.NewString(),
-			SentAt:             time.Now().UTC().Format(time.RFC3339Nano),
-			Sessions:           batch.Sessions,
-			Actions:            batch.Actions,
-			Receipts:           batch.Receipts,
-			ReceiptChainAnchor: batch.ReceiptChainAnchor,
-		}
-		// Resolve the deployment version per flush so an in-place package upgrade
-		// is reflected without restarting the daemon.
-		label := strings.TrimSpace(opts.DeviceLabel)
-		deploymentVersion := ""
-		if opts.DeploymentVersion != nil {
-			deploymentVersion = strings.TrimSpace(opts.DeploymentVersion())
-		}
-		if label != "" || deploymentVersion != "" {
-			payload.Device = &Device{Label: label, DeploymentVersion: deploymentVersion}
-		}
+		payload := newPayload(opts, batch.Sessions, batch.Actions, batch.Receipts, batch.ReceiptChainAnchor, now)
 
 		body, err := json.Marshal(payload)
 		if err != nil {
@@ -215,7 +203,7 @@ func Flush(ctx context.Context, opts Options) error {
 		}
 		if reason := payloadLimitViolation(payload, len(body)); reason != "" {
 			if limit == 1 {
-				return advancePastMinimumBatch(statePath, batch, reason, nil)
+				return advancePastMinimumBatch(statePath, batch, state, reason, nil)
 			}
 			nextLimit := reducedBatchLimit(limit)
 			opts.Diagnostic.Printf(
@@ -254,10 +242,76 @@ func Flush(ctx context.Context, opts Options) error {
 		}
 
 		if batch.Cursor != nil {
-			return saveCursor(statePath, batch)
+			state.LastHeartbeatAttemptAt = now.Format(time.RFC3339Nano)
+			state.LastHeartbeatAt = now.Format(time.RFC3339Nano)
+			return saveCursor(statePath, batch, state)
 		}
 		return nil
 	}
+}
+
+func postHeartbeatIfDue(ctx context.Context, opts Options, statePath string, state State, now time.Time) error {
+	if !heartbeatDue(state.LastHeartbeatAttemptAt, heartbeatInterval(opts.HeartbeatInterval), now) {
+		return nil
+	}
+
+	state.LastHeartbeatAttemptAt = now.Format(time.RFC3339Nano)
+	if err := SaveState(statePath, state); err != nil {
+		return err
+	}
+
+	payload := newPayload(opts, nil, nil, nil, nil, now)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if err := post(ctx, opts, body); err != nil {
+		return err
+	}
+
+	if opts.OnFlushSuccess != nil {
+		opts.OnFlushSuccess()
+	}
+	state.LastHeartbeatAt = now.Format(time.RFC3339Nano)
+	return SaveState(statePath, state)
+}
+
+func newPayload(
+	opts Options,
+	sessions []sqlite.LedgerRecord,
+	actions []sqlite.LedgerRecord,
+	receipts []sqlite.LedgerRecord,
+	receiptChainAnchor *sqlite.LedgerReceiptChainAnchor,
+	now time.Time,
+) Payload {
+	payload := Payload{
+		SchemaVersion:      SchemaVersion,
+		InstallationID:     opts.InstallationID,
+		BatchID:            "batch_" + uuid.NewString(),
+		SentAt:             now.Format(time.RFC3339Nano),
+		Sessions:           nonNilRecords(sessions),
+		Actions:            nonNilRecords(actions),
+		Receipts:           nonNilRecords(receipts),
+		ReceiptChainAnchor: receiptChainAnchor,
+	}
+	// Resolve the deployment version per flush so an in-place package upgrade
+	// is reflected without restarting the daemon.
+	label := strings.TrimSpace(opts.DeviceLabel)
+	deploymentVersion := ""
+	if opts.DeploymentVersion != nil {
+		deploymentVersion = strings.TrimSpace(opts.DeploymentVersion())
+	}
+	if label != "" || deploymentVersion != "" {
+		payload.Device = &Device{Label: label, DeploymentVersion: deploymentVersion}
+	}
+	return payload
+}
+
+func nonNilRecords(records []sqlite.LedgerRecord) []sqlite.LedgerRecord {
+	if records != nil {
+		return records
+	}
+	return []sqlite.LedgerRecord{}
 }
 
 func post(ctx context.Context, opts Options, body []byte) error {
@@ -327,9 +381,7 @@ func reducedBatchLimit(limit int) int {
 }
 
 func shouldRetryWithSmallerBatch(statusCode int) bool {
-	return statusCode == http.StatusBadRequest ||
-		statusCode == http.StatusRequestEntityTooLarge ||
-		statusCode == http.StatusUnprocessableEntity
+	return statusCode == http.StatusRequestEntityTooLarge
 }
 
 func payloadLimitViolation(payload Payload, bodyBytes int) string {
@@ -347,14 +399,14 @@ func payloadLimitViolation(payload Payload, bodyBytes int) string {
 	}
 }
 
-func advancePastMinimumBatch(statePath string, batch sqlite.LedgerBatch, reason string, cause error) error {
+func advancePastMinimumBatch(statePath string, batch sqlite.LedgerBatch, state State, reason string, cause error) error {
 	if batch.Cursor == nil {
 		if cause != nil {
 			return cause
 		}
 		return fmt.Errorf("managed stream minimum batch rejected: %s", reason)
 	}
-	if err := saveCursor(statePath, batch); err != nil {
+	if err := saveCursor(statePath, batch, state); err != nil {
 		return err
 	}
 	if cause != nil {
@@ -363,12 +415,11 @@ func advancePastMinimumBatch(statePath string, batch sqlite.LedgerBatch, reason 
 	return fmt.Errorf("managed stream advanced cursor past oversized minimum batch: %s", reason)
 }
 
-func saveCursor(statePath string, batch sqlite.LedgerBatch) error {
+func saveCursor(statePath string, batch sqlite.LedgerBatch, state State) error {
 	updatedAfter := batch.Cursor.UpdatedAt.UTC()
-	return SaveState(statePath, State{
-		UpdatedAfter: &updatedAfter,
-		ActionID:     batch.Cursor.ActionID,
-	})
+	state.UpdatedAfter = &updatedAfter
+	state.ActionID = batch.Cursor.ActionID
+	return SaveState(statePath, state)
 }
 
 func parseStateUpdatedAfter(value string) (time.Time, error) {
@@ -444,6 +495,24 @@ func DefaultIntervalFromEnv() time.Duration {
 	return DefaultInterval
 }
 
+func heartbeatInterval(value time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return DefaultHeartbeatInterval
+}
+
+func heartbeatDue(lastAttemptAt string, interval time.Duration, now time.Time) bool {
+	if strings.TrimSpace(lastAttemptAt) == "" {
+		return true
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(lastAttemptAt))
+	if err != nil {
+		return true
+	}
+	return !parsed.Add(interval).After(now)
+}
+
 func LoadState(path string) (State, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -465,6 +534,8 @@ func LoadState(path string) (State, error) {
 		state.UpdatedAfter = &parsed
 	}
 	state.ActionID = strings.TrimSpace(persisted.ActionID)
+	state.LastHeartbeatAttemptAt = strings.TrimSpace(persisted.LastHeartbeatAttemptAt)
+	state.LastHeartbeatAt = strings.TrimSpace(persisted.LastHeartbeatAt)
 	return state, nil
 }
 
@@ -472,7 +543,11 @@ func SaveState(path string, state State) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	persisted := persistedState{ActionID: strings.TrimSpace(state.ActionID)}
+	persisted := persistedState{
+		ActionID:               strings.TrimSpace(state.ActionID),
+		LastHeartbeatAttemptAt: strings.TrimSpace(state.LastHeartbeatAttemptAt),
+		LastHeartbeatAt:        strings.TrimSpace(state.LastHeartbeatAt),
+	}
 	if state.UpdatedAfter != nil {
 		persisted.UpdatedAfter = state.UpdatedAfter.UTC().Format(time.RFC3339Nano)
 	}

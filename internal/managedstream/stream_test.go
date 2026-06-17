@@ -63,6 +63,9 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	if state.UpdatedAfter == nil {
 		t.Fatal("updated_after was not persisted")
 	}
+	if state.LastHeartbeatAttemptAt == "" || state.LastHeartbeatAt == "" {
+		t.Fatalf("heartbeat state = %+v, want ledger success to count as heartbeat", state)
+	}
 }
 
 func TestFlushOmitsBlankDeviceLabel(t *testing.T) {
@@ -367,6 +370,50 @@ func TestFlushAdvancesCursorPastOversizedMinimumBatch(t *testing.T) {
 	}
 }
 
+func TestFlushPreservesHeartbeatStatePastOversizedMinimumBatch(t *testing.T) {
+	store, dbPath := testStore(t)
+	saveLargeTestDecision(t, store, "session-1", "toolu_1")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	lastAttempt := time.Now().Add(-30 * time.Second).UTC().Format(time.RFC3339Nano)
+	lastSuccess := time.Now().Add(-90 * time.Second).UTC().Format(time.RFC3339Nano)
+	if err := SaveState(statePath, State{
+		LastHeartbeatAttemptAt: lastAttempt,
+		LastHeartbeatAt:        lastSuccess,
+	}); err != nil {
+		t.Fatalf("SaveState() error = %v", err)
+	}
+
+	err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      statePath,
+		CloudURL:       server.URL,
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     1,
+		HTTPClient:     server.Client(),
+	})
+	if err == nil {
+		t.Fatal("Flush() error = nil, want oversized minimum batch diagnostic")
+	}
+
+	state, err := LoadState(statePath)
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if state.UpdatedAfter == nil || state.ActionID == "" {
+		t.Fatalf("state = %+v, want cursor advanced", state)
+	}
+	if state.LastHeartbeatAttemptAt != lastAttempt || state.LastHeartbeatAt != lastSuccess {
+		t.Fatalf("heartbeat state = %+v, want attempt %q success %q", state, lastAttempt, lastSuccess)
+	}
+}
+
 func TestFlushDefaultsStatePathBesideLedgerDB(t *testing.T) {
 	t.Setenv(envStatePath, "")
 	store, dbPath := testStore(t)
@@ -403,7 +450,10 @@ func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 
 	statePath := filepath.Join(t.TempDir(), "stream-state.json")
 	updatedAfter := time.Now().Add(time.Hour).UTC()
-	if err := SaveState(statePath, State{UpdatedAfter: &updatedAfter}); err != nil {
+	if err := SaveState(statePath, State{
+		UpdatedAfter:           &updatedAfter,
+		LastHeartbeatAttemptAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}); err != nil {
 		t.Fatalf("SaveState() error = %v", err)
 	}
 
@@ -426,6 +476,131 @@ func TestFlushUsesUpdatedAfterCursor(t *testing.T) {
 	}
 	if called {
 		t.Fatal("server was called despite cursor being newer than action")
+	}
+}
+
+func TestFlushPostsHeartbeatWhenNoActionsArePending(t *testing.T) {
+	_, dbPath := testStore(t)
+
+	var got Payload
+	server := capturePayloadServer(t, &got)
+	t.Cleanup(server.Close)
+
+	onFlushSuccessCalled := false
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	if err := Flush(context.Background(), Options{
+		DBPath:            dbPath,
+		StatePath:         statePath,
+		CloudURL:          server.URL,
+		InstallationID:    "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:      "test-install-token",
+		DeviceLabel:       "michel-macbook",
+		HeartbeatInterval: time.Minute,
+		HTTPClient:        server.Client(),
+		OnFlushSuccess:    func() { onFlushSuccessCalled = true },
+	}); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	if got.SchemaVersion != SchemaVersion {
+		t.Fatalf("schema_version = %q, want %q", got.SchemaVersion, SchemaVersion)
+	}
+	if got.InstallationID != "ins_0123456789abcdefghijklmnopqrstuv" {
+		t.Fatalf("installation_id = %q", got.InstallationID)
+	}
+	if got.Device == nil || got.Device.Label != "michel-macbook" {
+		t.Fatalf("device = %+v", got.Device)
+	}
+	if len(got.Sessions) != 0 || len(got.Actions) != 0 || len(got.Receipts) != 0 {
+		t.Fatalf("heartbeat counts = sessions %d actions %d receipts %d, want all zero", len(got.Sessions), len(got.Actions), len(got.Receipts))
+	}
+	if !onFlushSuccessCalled {
+		t.Fatal("OnFlushSuccess was not called for accepted heartbeat")
+	}
+
+	state, err := LoadState(statePath)
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if state.UpdatedAfter != nil || state.ActionID != "" {
+		t.Fatalf("state = %+v, want heartbeat not to advance ledger cursor", state)
+	}
+	if state.LastHeartbeatAttemptAt == "" || state.LastHeartbeatAt == "" {
+		t.Fatalf("heartbeat state = %+v, want attempt and success persisted", state)
+	}
+}
+
+func TestFlushSkipsHeartbeatBeforeInterval(t *testing.T) {
+	_, dbPath := testStore(t)
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	if err := SaveState(statePath, State{
+		LastHeartbeatAttemptAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveState() error = %v", err)
+	}
+
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+
+	if err := Flush(context.Background(), Options{
+		DBPath:            dbPath,
+		StatePath:         statePath,
+		CloudURL:          server.URL,
+		InstallationID:    "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:      "test-install-token",
+		HeartbeatInterval: time.Minute,
+		HTTPClient:        server.Client(),
+	}); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	if called {
+		t.Fatal("server was called before heartbeat interval elapsed")
+	}
+}
+
+func TestFlushPersistsHeartbeatAttemptWhenHostedBackendFails(t *testing.T) {
+	_, dbPath := testStore(t)
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	opts := Options{
+		DBPath:            dbPath,
+		StatePath:         statePath,
+		CloudURL:          server.URL,
+		InstallationID:    "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:      "test-install-token",
+		HeartbeatInterval: time.Minute,
+		HTTPClient:        server.Client(),
+	}
+	if err := Flush(context.Background(), opts); err == nil {
+		t.Fatal("Flush() error = nil, want hosted failure")
+	}
+	state, err := LoadState(statePath)
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if state.LastHeartbeatAttemptAt == "" {
+		t.Fatalf("state = %+v, want failed attempt persisted", state)
+	}
+	if state.LastHeartbeatAt != "" {
+		t.Fatalf("state = %+v, want no successful heartbeat", state)
+	}
+
+	if err := Flush(context.Background(), opts); err != nil {
+		t.Fatalf("second Flush() error = %v, want throttled no-op", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want failed heartbeat throttled", requests)
 	}
 }
 

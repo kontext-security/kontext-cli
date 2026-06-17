@@ -28,11 +28,17 @@ func TestFlushDoesNotFireOnFlushSuccessWithoutPosting(t *testing.T) {
 	// about the token — it must not clear a "token rejected" breadcrumb on an
 	// idle machine whose token is still revoked.
 	_, dbPath := testStore(t)
+	statePath := filepath.Join(filepath.Dir(dbPath), "state.json")
+	if err := SaveState(statePath, State{
+		LastHeartbeatAttemptAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveState() error = %v", err)
+	}
 
 	fired := false
 	err := Flush(context.Background(), Options{
 		DBPath:         dbPath,
-		StatePath:      filepath.Join(filepath.Dir(dbPath), "state.json"),
+		StatePath:      statePath,
 		CloudURL:       "https://unreachable.invalid",
 		InstallationID: "ins_test",
 		InstallToken:   "any",
