@@ -550,6 +550,98 @@ func TestInstallLaunchAgentSurfacesBootstrapFailure(t *testing.T) {
 	}
 }
 
+func TestInstallLaunchAgentAcceptsKickstartTimeoutWhenServiceIsLoaded(t *testing.T) {
+	h := newHarness(t)
+	overrideVar(t, &execCommand, func(ctx context.Context, stdin, name string, args ...string) (string, error) {
+		h.calls = append(h.calls, execCall{stdin: stdin, name: name, args: args})
+		if name != "launchctl" {
+			return "", nil
+		}
+		switch args[0] {
+		case "kickstart":
+			return "", context.DeadlineExceeded
+		case "print":
+			if _, ok := ctx.Deadline(); !ok {
+				t.Fatal("install service-state check must use the install timeout")
+			}
+			return "", nil
+		default:
+			return "", nil
+		}
+	})
+
+	if _, _, err := installLaunchAgent(context.Background(), "/opt/homebrew/bin/kontext"); err != nil {
+		t.Fatalf("installLaunchAgent() error = %v, want nil", err)
+	}
+
+	var sawKickstart, sawPrint bool
+	for _, call := range h.calls {
+		if call.name != "launchctl" {
+			continue
+		}
+		if call.args[0] == "kickstart" {
+			sawKickstart = true
+		}
+		if sawKickstart && call.args[0] == "print" {
+			sawPrint = true
+		}
+	}
+	if !sawPrint {
+		t.Fatalf("launchctl calls = %v, want print after failed kickstart", h.calls)
+	}
+}
+
+func TestInstallLaunchAgentSurfacesKickstartFailureWhenServiceIsNotLoaded(t *testing.T) {
+	h := newHarness(t)
+	overrideVar(t, &execCommand, func(_ context.Context, stdin, name string, args ...string) (string, error) {
+		h.calls = append(h.calls, execCall{stdin: stdin, name: name, args: args})
+		if name != "launchctl" {
+			return "", nil
+		}
+		switch args[0] {
+		case "kickstart":
+			return "", context.DeadlineExceeded
+		case "print":
+			return "Could not find service", errors.New("exit status 113")
+		default:
+			return "", nil
+		}
+	})
+
+	_, _, err := installLaunchAgent(context.Background(), "/opt/homebrew/bin/kontext")
+	if err == nil || !strings.Contains(err.Error(), "launchctl kickstart failed") {
+		t.Fatalf("installLaunchAgent() error = %v, want kickstart failure", err)
+	}
+}
+
+func TestInstallLaunchAgentSurfacesNonTimeoutKickstartFailureWhenServiceIsLoaded(t *testing.T) {
+	h := newHarness(t)
+	overrideVar(t, &execCommand, func(_ context.Context, stdin, name string, args ...string) (string, error) {
+		h.calls = append(h.calls, execCall{stdin: stdin, name: name, args: args})
+		if name != "launchctl" {
+			return "", nil
+		}
+		switch args[0] {
+		case "kickstart":
+			return "operation not permitted", errors.New("exit status 1")
+		case "print":
+			return "", nil
+		default:
+			return "", nil
+		}
+	})
+
+	_, _, err := installLaunchAgent(context.Background(), "/opt/homebrew/bin/kontext")
+	if err == nil || !strings.Contains(err.Error(), "launchctl kickstart failed") {
+		t.Fatalf("installLaunchAgent() error = %v, want kickstart failure", err)
+	}
+	for _, call := range h.calls {
+		if call.name == "launchctl" && call.args[0] == "print" {
+			t.Fatalf("launchctl calls = %v, non-timeout kickstart failure should not probe loaded state", h.calls)
+		}
+	}
+}
+
 func TestRemoveLaunchAgentDoesNotTreatUnknownServiceStateAsAbsent(t *testing.T) {
 	h := newHarness(t)
 	overrideVar(t, &execCommand, func(ctx context.Context, stdin, name string, args ...string) (string, error) {
