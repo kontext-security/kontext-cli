@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.3](https://github.com/kontext-security/kontext-cli/compare/v0.10.2...v0.10.3) (2026-06-18)
+
+
+### Bug Fixes
+
+* **setup:** tolerate loaded agent after kickstart timeout ([#311](https://github.com/kontext-security/kontext-cli/issues/311)) ([195bb2a](https://github.com/kontext-security/kontext-cli/commit/195bb2a552aa1273d0696fe3dc6d92be4c87ca52))
+
 ## [0.10.2](https://github.com/kontext-security/kontext-cli/compare/v0.10.1...v0.10.2) (2026-06-18)
 
 
