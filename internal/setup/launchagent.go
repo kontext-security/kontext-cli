@@ -130,6 +130,12 @@ func installLaunchAgent(ctx context.Context, binary string) (plistPath, logPath 
 	// -k restarts a running agent: a re-run with a rotated token must not
 	// leave the old process flushing with the old credential.
 	if out, err := runLaunchctl(ctx, "kickstart", "-k", serviceTarget); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			loaded, printErr := launchAgentLoaded(ctx, serviceTarget, true)
+			if printErr == nil && loaded {
+				return plistPath, logPath, nil
+			}
+		}
 		return "", "", fmt.Errorf("launchctl kickstart failed: %w (%s)", err, strings.TrimSpace(out))
 	}
 	return plistPath, logPath, nil
