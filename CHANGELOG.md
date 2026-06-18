@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.2](https://github.com/kontext-security/kontext-cli/compare/v0.10.1...v0.10.2) (2026-06-18)
+
+
+### Bug Fixes
+
+* **setup:** bound launch agent install safely ([#309](https://github.com/kontext-security/kontext-cli/issues/309)) ([d5d34b2](https://github.com/kontext-security/kontext-cli/commit/d5d34b26cfc691c7f5e0081c2666743eb2bd942f))
+
 ## [0.10.1](https://github.com/kontext-security/kontext-cli/compare/v0.10.0...v0.10.1) (2026-06-18)
 
 
