@@ -175,7 +175,12 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	fmt.Fprintln(opts.Stdout, "  ✓ Claude Code hooks installed")
 
-	plistPath, logPath, err := installLaunchAgent(ctx, binary)
+	var plistPath, logPath string
+	err = runWithStatus(opts.Stdout, "Installing background agent", func() error {
+		var err error
+		plistPath, logPath, err = installLaunchAgent(ctx, binary)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -405,14 +410,18 @@ func installUserHooks(binary string) ([]string, error) {
 }
 
 func waitForDaemon(out io.Writer) error {
+	return runWithStatus(out, "Waiting for background agent", probeDaemon)
+}
+
+func runWithStatus(out io.Writer, label string, fn func() error) error {
 	if !isTerminalWriter(out) {
-		fmt.Fprintln(out, "  • Waiting for background agent...")
-		return probeDaemon()
+		fmt.Fprintf(out, "  • %s...\n", label)
+		return fn()
 	}
 
 	done := make(chan error, 1)
 	go func() {
-		done <- probeDaemon()
+		done <- fn()
 	}()
 
 	frames := []string{"◐", "◓", "◑", "◒"}
@@ -421,7 +430,7 @@ func waitForDaemon(out io.Writer) error {
 
 	frame := 0
 	for {
-		fmt.Fprintf(out, "\r  %s Waiting for background agent...", frames[frame%len(frames)])
+		fmt.Fprintf(out, "\r  %s %s...", frames[frame%len(frames)], label)
 		frame++
 		select {
 		case err := <-done:

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/managedobserve"
 )
@@ -17,6 +18,8 @@ import (
 // kickstart (managedobserve.Lifecycle) works identically for both install
 // kinds. The refusal gate in Run keeps the two from coexisting on one Mac.
 const LaunchAgentLabel = managedobserve.DefaultLaunchdLabel
+
+const launchctlCommandTimeout = 15 * time.Second
 
 func launchAgentPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -107,13 +110,17 @@ func installLaunchAgent(ctx context.Context, binary string) (plistPath, logPath 
 	// self-serve plist setup owns before bootstrapping the replacement. This
 	// keeps a machine linked to an older workspace from keeping the old job
 	// loaded while setup writes the new config.
-	if out, err := execCommand(ctx, "", "launchctl", "bootout", domainTarget, plistPath); err != nil {
-		if _, printErr := execCommand(ctx, "", "launchctl", "print", serviceTarget); printErr == nil {
+	if out, err := runLaunchctl(ctx, "bootout", domainTarget, plistPath); err != nil {
+		loaded, printErr := launchAgentLoaded(ctx, serviceTarget, true)
+		if printErr != nil {
+			return "", "", fmt.Errorf("launchctl bootout failed before reload and service state is unknown: %w (%s)", err, strings.TrimSpace(out))
+		}
+		if loaded {
 			return "", "", fmt.Errorf("launchctl bootout failed before reload: %w (%s)", err, strings.TrimSpace(out))
 		}
 	}
 
-	if out, err := execCommand(ctx, "", "launchctl", "bootstrap", domainTarget, plistPath); err != nil {
+	if out, err := runLaunchctl(ctx, "bootstrap", domainTarget, plistPath); err != nil {
 		detail := strings.TrimSpace(out)
 		if strings.Contains(detail, "Input/output error") {
 			return "", "", fmt.Errorf("launchctl bootstrap failed (%s) — this usually means no GUI login session; run `kontext setup` from a logged-in desktop session, not SSH", detail)
@@ -122,10 +129,50 @@ func installLaunchAgent(ctx context.Context, binary string) (plistPath, logPath 
 	}
 	// -k restarts a running agent: a re-run with a rotated token must not
 	// leave the old process flushing with the old credential.
-	if out, err := execCommand(ctx, "", "launchctl", "kickstart", "-k", serviceTarget); err != nil {
+	if out, err := runLaunchctl(ctx, "kickstart", "-k", serviceTarget); err != nil {
 		return "", "", fmt.Errorf("launchctl kickstart failed: %w (%s)", err, strings.TrimSpace(out))
 	}
 	return plistPath, logPath, nil
+}
+
+func runLaunchctl(ctx context.Context, args ...string) (string, error) {
+	launchCtx, cancel := context.WithTimeout(ctx, launchctlCommandTimeout)
+	defer cancel()
+
+	out, err := execCommand(launchCtx, "", "launchctl", args...)
+	if launchCtx.Err() != nil {
+		return out, launchCtx.Err()
+	}
+	return out, err
+}
+
+func launchAgentLoaded(ctx context.Context, serviceTarget string, bounded bool) (bool, error) {
+	var (
+		out string
+		err error
+	)
+	if bounded {
+		out, err = runLaunchctl(ctx, "print", serviceTarget)
+	} else {
+		out, err = execCommand(ctx, "", "launchctl", "print", serviceTarget)
+	}
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false, fmt.Errorf("launchctl print failed: %w (%s)", err, strings.TrimSpace(out))
+	}
+	if launchctlPrintMeansAbsent(out) {
+		return false, nil
+	}
+	return false, fmt.Errorf("launchctl print failed: %w (%s)", err, strings.TrimSpace(out))
+}
+
+func launchctlPrintMeansAbsent(output string) bool {
+	normalized := strings.ToLower(output)
+	return strings.Contains(normalized, "could not find service") ||
+		strings.Contains(normalized, "service is not loaded") ||
+		strings.Contains(normalized, "no such service")
 }
 
 // removeLaunchAgent reverses installLaunchAgent; both steps tolerate
@@ -150,7 +197,11 @@ func removeLaunchAgent(ctx context.Context) (string, error) {
 		if plistExists {
 			return "", fmt.Errorf("launchctl bootout failed: %w (%s)", err, strings.TrimSpace(out))
 		}
-		if _, printErr := execCommand(ctx, "", "launchctl", "print", serviceTarget); printErr == nil {
+		loaded, printErr := launchAgentLoaded(ctx, serviceTarget, false)
+		if printErr != nil {
+			return "", fmt.Errorf("launchctl bootout failed and %s state is unknown: %w", LaunchAgentLabel, printErr)
+		}
+		if loaded {
 			return "", fmt.Errorf("launchctl bootout failed and %s is still loaded: %w (%s)", LaunchAgentLabel, err, strings.TrimSpace(out))
 		}
 	}
