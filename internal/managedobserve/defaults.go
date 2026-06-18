@@ -13,6 +13,12 @@ import (
 const (
 	DefaultLaunchdLabel = "security.kontext.managed-observe"
 
+	// EnvExpectedConfigScope marks which managed-config scope a daemon was
+	// installed for. The self-serve LaunchAgent sets it to "user"; the daemon
+	// parks instead of running when the resolved scope differs, so an MDM
+	// config appearing later is never served by the leftover self-serve agent.
+	EnvExpectedConfigScope = "KONTEXT_EXPECTED_CONFIG_SCOPE"
+
 	envSocketPath     = "KONTEXT_MANAGED_OBSERVE_SOCKET"
 	envDBPath         = "KONTEXT_MANAGED_OBSERVE_DB"
 	envIdleTimeout    = "KONTEXT_MANAGED_OBSERVE_IDLE_TIMEOUT"
