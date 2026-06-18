@@ -216,6 +216,7 @@ func TestRunFullFlow(t *testing.T) {
 		"Kontext setup",
 		"Workspace\n  ✓ Acme (org_test)",
 		"Mac\n  ✓ Config written",
+		"  • Installing background agent...",
 		"  • Waiting for background agent...",
 		"  ✓ Background agent running",
 		"Next\n  Return to the Kontext dashboard.",
@@ -480,6 +481,59 @@ func TestInstallLaunchAgentBootsOutOwnedPlistBeforeBootstrap(t *testing.T) {
 	}
 }
 
+func TestInstallLaunchAgentIgnoresBootoutWhenServiceIsAbsent(t *testing.T) {
+	h := newHarness(t)
+	overrideVar(t, &execCommand, func(_ context.Context, stdin, name string, args ...string) (string, error) {
+		h.calls = append(h.calls, execCall{stdin: stdin, name: name, args: args})
+		if name != "launchctl" {
+			return "", nil
+		}
+		switch args[0] {
+		case "bootout":
+			return "No such process", errors.New("exit status 113")
+		case "print":
+			return "Could not find service", errors.New("exit status 113")
+		default:
+			return "", nil
+		}
+	})
+
+	if _, _, err := installLaunchAgent(context.Background(), "/opt/homebrew/bin/kontext"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInstallLaunchAgentBoundsMutatingLaunchctlCalls(t *testing.T) {
+	h := newHarness(t)
+	checked := 0
+	overrideVar(t, &execCommand, func(ctx context.Context, stdin, name string, args ...string) (string, error) {
+		h.calls = append(h.calls, execCall{stdin: stdin, name: name, args: args})
+		if name != "launchctl" {
+			return "", nil
+		}
+		switch args[0] {
+		case "bootout", "bootstrap", "kickstart":
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatalf("launchctl %v ran without a deadline", args)
+			}
+			remaining := time.Until(deadline)
+			if remaining <= 0 || remaining > launchctlCommandTimeout {
+				t.Fatalf("launchctl deadline remaining = %s, want within %s", remaining, launchctlCommandTimeout)
+			}
+			checked++
+		}
+		return "", nil
+	})
+
+	if _, _, err := installLaunchAgent(context.Background(), "/opt/homebrew/bin/kontext"); err != nil {
+		t.Fatal(err)
+	}
+	if checked != 3 {
+		t.Fatalf("bounded launchctl calls = %d, want 3", checked)
+	}
+}
+
 func TestInstallLaunchAgentSurfacesBootstrapFailure(t *testing.T) {
 	h := newHarness(t)
 	overrideVar(t, &execCommand, func(_ context.Context, stdin, name string, args ...string) (string, error) {
@@ -493,6 +547,54 @@ func TestInstallLaunchAgentSurfacesBootstrapFailure(t *testing.T) {
 	_, _, err := installLaunchAgent(context.Background(), "/opt/homebrew/bin/kontext")
 	if err == nil || !strings.Contains(err.Error(), "launchctl bootstrap failed") {
 		t.Fatalf("installLaunchAgent() error = %v, want bootstrap failure", err)
+	}
+}
+
+func TestRemoveLaunchAgentDoesNotTreatUnknownServiceStateAsAbsent(t *testing.T) {
+	h := newHarness(t)
+	overrideVar(t, &execCommand, func(ctx context.Context, stdin, name string, args ...string) (string, error) {
+		h.calls = append(h.calls, execCall{stdin: stdin, name: name, args: args})
+		if name != "launchctl" {
+			return "", nil
+		}
+		switch args[0] {
+		case "bootout":
+			return "No such process", errors.New("exit status 113")
+		case "print":
+			if _, ok := ctx.Deadline(); ok {
+				t.Fatal("uninstall service-state check must not use the install timeout")
+			}
+			return "timed out", context.DeadlineExceeded
+		default:
+			return "", nil
+		}
+	})
+
+	_, err := removeLaunchAgent(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "state is unknown") {
+		t.Fatalf("removeLaunchAgent() error = %v, want unknown-state failure", err)
+	}
+}
+
+func TestRemoveLaunchAgentAcceptsKnownAbsentServiceState(t *testing.T) {
+	h := newHarness(t)
+	overrideVar(t, &execCommand, func(_ context.Context, stdin, name string, args ...string) (string, error) {
+		h.calls = append(h.calls, execCall{stdin: stdin, name: name, args: args})
+		if name != "launchctl" {
+			return "", nil
+		}
+		switch args[0] {
+		case "bootout":
+			return "No such process", errors.New("exit status 113")
+		case "print":
+			return "Could not find service", errors.New("exit status 113")
+		default:
+			return "", nil
+		}
+	})
+
+	if _, err := removeLaunchAgent(context.Background()); err != nil {
+		t.Fatalf("removeLaunchAgent() error = %v, want known absent service accepted", err)
 	}
 }
 
