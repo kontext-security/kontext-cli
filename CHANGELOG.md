@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.9.0](https://github.com/kontext-security/kontext-cli/compare/v0.8.1...v0.9.0) (2026-06-18)
+
+
+### Features
+
+* **cowork:** observe Claude Cowork tool calls via per-session settings injection ([#283](https://github.com/kontext-security/kontext-cli/issues/283)) ([0751807](https://github.com/kontext-security/kontext-cli/commit/0751807868fff89c07d5b5ca0f75971bb7c5a280))
+* **githubpolicy:** evaluate synced GitHub policy locally in observer mode (ENG-426) ([#279](https://github.com/kontext-security/kontext-cli/issues/279)) ([ab2010f](https://github.com/kontext-security/kontext-cli/commit/ab2010f53cf5f37dfd33a706608e79152af1e09b))
+* **managedobserve:** add daemon lifecycle ([#193](https://github.com/kontext-security/kontext-cli/issues/193)) ([a8dfd0e](https://github.com/kontext-security/kontext-cli/commit/a8dfd0ebba4d04dfc2fe98d13e85838a09ce913b))
+* **managed:** report deployed package version to ledger ([#232](https://github.com/kontext-security/kontext-cli/issues/232)) ([6a8c3b1](https://github.com/kontext-security/kontext-cli/commit/6a8c3b174d3f675c2216514fb1044676bf710921))
+* **managed:** stream ledger batches to hosted backend ([#196](https://github.com/kontext-security/kontext-cli/issues/196)) ([2696a62](https://github.com/kontext-security/kontext-cli/commit/2696a62b30d11a779f904ef15dced1c09a26c84c))
+* **observe:** surface revoked install tokens; doctor managed-observe section ([#278](https://github.com/kontext-security/kontext-cli/issues/278)) ([7c9b80a](https://github.com/kontext-security/kontext-cli/commit/7c9b80a34fc8ffe0571a22d83d9353104d091fc4))
+* **selfserve:** scope-aware config/identity paths, user settings merge, version fallback ([#276](https://github.com/kontext-security/kontext-cli/issues/276)) ([5476754](https://github.com/kontext-security/kontext-cli/commit/547675444d906d031a2238b7a6c3eb4f8f5f01be))
+* **setup:** kontext setup / --uninstall for self-serve managed observe ([#277](https://github.com/kontext-security/kontext-cli/issues/277)) ([7963e30](https://github.com/kontext-security/kontext-cli/commit/7963e302fa214a3189014abe4eb7d330af251915))
+
+
+### Bug Fixes
+
+* **clawpatch:** address daily finding ([#199](https://github.com/kontext-security/kontext-cli/issues/199)) ([fe9631c](https://github.com/kontext-security/kontext-cli/commit/fe9631c53fbfbaf71c4e12d647d3b940d3623a73))
+* **clawpatch:** address daily finding ([#215](https://github.com/kontext-security/kontext-cli/issues/215)) ([a407b1d](https://github.com/kontext-security/kontext-cli/commit/a407b1d47fa536b79fc490ebca65193f69093ce6))
+* **cli:** emit canonical access control events ([#223](https://github.com/kontext-security/kontext-cli/issues/223)) ([261f238](https://github.com/kontext-security/kontext-cli/commit/261f238eee169e5ac68404baf4dc43a628b3ae71))
+* **hook:** decode array tool_response from MCP tools ([#246](https://github.com/kontext-security/kontext-cli/issues/246)) ([53974e7](https://github.com/kontext-security/kontext-cli/commit/53974e7808c4a28e52a03b3bcfb0987795065acb))
+* **managed:** gate managed loopback HTTP config ([#233](https://github.com/kontext-security/kontext-cli/issues/233)) ([fb3fb85](https://github.com/kontext-security/kontext-cli/commit/fb3fb85198ac56e050fd34ea601449640511fbda))
+* **managedobserve:** avoid startup db lock ([#195](https://github.com/kontext-security/kontext-cli/issues/195)) ([aa5cffa](https://github.com/kontext-security/kontext-cli/commit/aa5cffaec5b65d0e1a630f7e4c030bb47ddaa8dc))
+* **managedstream:** split hosted ingest batches ([#260](https://github.com/kontext-security/kontext-cli/issues/260)) ([a78e44a](https://github.com/kontext-security/kontext-cli/commit/a78e44aa7b7140bf27d16b5b48880d4e47c63101))
+* **managedstream:** use fixed ledger timestamp cursors ([#267](https://github.com/kontext-security/kontext-cli/issues/267)) ([2378437](https://github.com/kontext-security/kontext-cli/commit/237843747ea98179fdd0f404a1d4551ff1be005e))
+* optimize guard risk provider classification ([#221](https://github.com/kontext-security/kontext-cli/issues/221)) ([3350778](https://github.com/kontext-security/kontext-cli/commit/33507786704c0d9aba49923cd3e6bbd25f4485e9))
+* optimize internal/guard/risk signal deduping ([#198](https://github.com/kontext-security/kontext-cli/issues/198)) ([0ba34ea](https://github.com/kontext-security/kontext-cli/commit/0ba34ea63f6a4975d445cf7944b0d78c97b10300))
+* optimize managed settings validation scan ([#214](https://github.com/kontext-security/kontext-cli/issues/214)) ([ddff856](https://github.com/kontext-security/kontext-cli/commit/ddff8567876c84d01b7d408085eb7e070f7e393e))
+* **selfserve:** harden managed observe cli readiness ([#286](https://github.com/kontext-security/kontext-cli/issues/286)) ([3befe3e](https://github.com/kontext-security/kontext-cli/commit/3befe3eb6565507a28c336b70dfa2378ed27e893))
+
 ## [0.8.1](https://github.com/kontext-security/kontext-cli/compare/v0.8.0...v0.8.1) (2026-05-20)
 
 
