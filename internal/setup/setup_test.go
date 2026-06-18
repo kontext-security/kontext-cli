@@ -207,6 +207,9 @@ func TestRunFullFlow(t *testing.T) {
 	if len(launchctl) != 3 || launchctl[0][0] != "bootout" || launchctl[1][0] != "bootstrap" || launchctl[2][0] != "kickstart" {
 		t.Fatalf("launchctl order = %v", launchctl)
 	}
+	if len(launchctl[0]) != 3 || !strings.HasSuffix(launchctl[0][2], ".plist") {
+		t.Fatalf("bootout args = %v, want domain + plist path", launchctl[0])
+	}
 
 	stdout := h.out.String()
 	for _, want := range []string{
@@ -450,6 +453,30 @@ func TestInstallLaunchAgentRejectsLoadedStaleJob(t *testing.T) {
 	_, _, err := installLaunchAgent(context.Background(), "/opt/homebrew/bin/kontext")
 	if err == nil || !strings.Contains(err.Error(), "launchctl bootout failed") {
 		t.Fatalf("installLaunchAgent() error = %v, want stale loaded job failure", err)
+	}
+}
+
+func TestInstallLaunchAgentBootsOutOwnedPlistBeforeBootstrap(t *testing.T) {
+	h := newHarness(t)
+
+	_, _, err := installLaunchAgent(context.Background(), "/opt/homebrew/bin/kontext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var launchctl [][]string
+	for _, call := range h.calls {
+		if call.name == "launchctl" {
+			launchctl = append(launchctl, call.args)
+		}
+	}
+	if len(launchctl) < 2 {
+		t.Fatalf("launchctl calls = %v, want bootout then bootstrap", launchctl)
+	}
+	if launchctl[0][0] != "bootout" || len(launchctl[0]) != 3 || !strings.HasSuffix(launchctl[0][2], ".plist") {
+		t.Fatalf("bootout args = %v, want domain + plist path", launchctl[0])
+	}
+	if launchctl[1][0] != "bootstrap" {
+		t.Fatalf("second launchctl call = %v, want bootstrap", launchctl[1])
 	}
 }
 

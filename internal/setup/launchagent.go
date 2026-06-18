@@ -103,10 +103,11 @@ func installLaunchAgent(ctx context.Context, binary string) (plistPath, logPath 
 	domainTarget := "gui/" + strconv.Itoa(os.Getuid())
 	serviceTarget := domainTarget + "/" + LaunchAgentLabel
 
-	// Not loaded on first install is fine. A failed bootout while the service
-	// is still loaded is not fine: bootstrap can then leave launchd running the
-	// old plist definition while setup reports success.
-	if out, err := execCommand(ctx, "", "launchctl", "bootout", serviceTarget); err != nil {
+	// Not loaded on first install is fine. For re-runs, unload the exact
+	// self-serve plist setup owns before bootstrapping the replacement. This
+	// keeps a machine linked to an older workspace from keeping the old job
+	// loaded while setup writes the new config.
+	if out, err := execCommand(ctx, "", "launchctl", "bootout", domainTarget, plistPath); err != nil {
 		if _, printErr := execCommand(ctx, "", "launchctl", "print", serviceTarget); printErr == nil {
 			return "", "", fmt.Errorf("launchctl bootout failed before reload: %w (%s)", err, strings.TrimSpace(out))
 		}
