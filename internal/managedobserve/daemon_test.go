@@ -167,28 +167,35 @@ func TestDaemonStreamsLedgerBatches(t *testing.T) {
 		t.Fatalf("Process() error = %v", err)
 	}
 
-	select {
-	case body := <-requests:
-		if body.OrganizationID != "" {
-			t.Fatalf("organization_id sent = %q, want omitted (token binds the org)", body.OrganizationID)
-		}
-		if body.InstallationID != "ins_0123456789abcdefghijklmnopqrstuv" {
-			t.Fatalf("installation_id = %q", body.InstallationID)
-		}
-		if body.Device == nil || body.Device.Label != "test-mac" {
-			t.Fatalf("device = %+v, want label from managed config", body.Device)
-		}
-		found := false
-		for _, action := range body.Actions {
-			if action.SessionID == "claude-stream-session" {
-				found = true
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case body := <-requests:
+			if len(body.Actions) == 0 {
+				continue
 			}
+			if body.OrganizationID != "" {
+				t.Fatalf("organization_id sent = %q, want omitted (token binds the org)", body.OrganizationID)
+			}
+			if body.InstallationID != "ins_0123456789abcdefghijklmnopqrstuv" {
+				t.Fatalf("installation_id = %q", body.InstallationID)
+			}
+			if body.Device == nil || body.Device.Label != "test-mac" {
+				t.Fatalf("device = %+v, want label from managed config", body.Device)
+			}
+			found := false
+			for _, action := range body.Actions {
+				if action.SessionID == "claude-stream-session" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("authorization_actions = %+v, want claude stream session action", body.Actions)
+			}
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for hosted ledger batch")
 		}
-		if !found {
-			t.Fatalf("authorization_actions = %+v, want claude stream session action", body.Actions)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for hosted ledger batch")
 	}
 }
 
