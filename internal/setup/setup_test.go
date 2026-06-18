@@ -166,14 +166,18 @@ func TestRunFullFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFile(user path) after setup: %v", err)
 	}
-	if loaded.Config.OrganizationID != "org_test" {
-		t.Fatalf("org = %q", loaded.Config.OrganizationID)
-	}
 	if loaded.Config.Credentials.InstallTokenRef.String() != "keychain:"+KeychainItemName {
 		t.Fatalf("token ref = %q", loaded.Config.Credentials.InstallTokenRef)
 	}
 	if loaded.Config.Device.Label != "Test MacBook" {
 		t.Fatalf("device label = %q", loaded.Config.Device.Label)
+	}
+	data, err := os.ReadFile(managedconfig.UserPath())
+	if err != nil {
+		t.Fatalf("ReadFile(user managed config) error = %v", err)
+	}
+	if strings.Contains(string(data), "organization_id") {
+		t.Fatalf("managed config contains organization_id:\n%s", data)
 	}
 
 	// Installation identity created at the user path.

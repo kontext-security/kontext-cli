@@ -33,4 +33,7 @@ func TestPrintStatusReportsInstallationLoadError(t *testing.T) {
 	if strings.Contains(output, "installation: not created yet") {
 		t.Fatalf("PrintStatus() output = %q, must not hide invalid state as missing", output)
 	}
+	if strings.Contains(output, "\n  organization:") {
+		t.Fatalf("PrintStatus() output = %q, must not print local organization", output)
+	}
 }

@@ -105,9 +105,6 @@ func TestLoadResolvesUserScopeConfig(t *testing.T) {
 	if loaded.Scope != ScopeUser {
 		t.Fatalf("Load() scope = %q, want %q", loaded.Scope, ScopeUser)
 	}
-	if loaded.Config.OrganizationID != "org_123" {
-		t.Fatalf("Load() org = %q", loaded.Config.OrganizationID)
-	}
 }
 
 func TestLoadInvalidSystemConfigDoesNotFallThroughToUser(t *testing.T) {

@@ -614,7 +614,6 @@ func writeTestManagedConfigWithCloudURL(t *testing.T, path, cloudURL string) {
 	t.Setenv("KONTEXT_INSTALL_TOKEN", "test-install-token")
 	if err := os.WriteFile(path, []byte(`{
   "version": "managed-install-v1",
-  "organization_id": "org_123",
   "cloud_url": "`+cloudURL+`",
   "mode": "observe",
   "agent": "claude",

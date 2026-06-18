@@ -66,7 +66,6 @@ func TestRunDaemonParksOnScopeMismatch(t *testing.T) {
 	config := filepath.Join(dir, "managed.json")
 	if err := os.WriteFile(config, []byte(`{
   "version": "managed-install-v1",
-  "organization_id": "org_x",
   "cloud_url": "https://api.kontext.dev",
   "mode": "observe",
   "agent": "claude",
