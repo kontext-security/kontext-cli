@@ -115,6 +115,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		DBPath:             dbPath,
 		SocketPath:         socketPath,
 		GithubPolicy:       policyCache,
+		EndpointID:         installationState.InstallationID,
 		Mode:               mode,
 		Diagnostic:         opts.Diagnostic,
 		SkipInitialSession: true,

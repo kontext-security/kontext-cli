@@ -52,7 +52,22 @@ func TestEvaluateOrgAllowAloneAllowsOrgWide(t *testing.T) {
 	}
 }
 
-func TestEvaluateDenyBeatsAllowRegardlessOfSpecificity(t *testing.T) {
+func TestEvaluateNoMatchingRuleDefaultsToDeny(t *testing.T) {
+	// Rules exist but none cover this repo: default deny.
+	snapshot := snapshotWithRules(Rule{
+		ID: "rule-other", Layer: LayerOrg, SubjectID: testOrgID,
+		ResourceID: ptr("acme/api"), Effect: EffectAllow,
+	})
+	evaluation, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", Resource: "acme/web"})
+	if !ok || evaluation.Result != EffectDeny || evaluation.ReasonCode != ReasonCodeDeny {
+		t.Fatalf("Evaluate() = %+v, want default deny for unmatched request", evaluation)
+	}
+	if evaluation.DecidingRuleID != "" {
+		t.Fatalf("DecidingRuleID = %q, want empty when no rule matched", evaluation.DecidingRuleID)
+	}
+}
+
+func TestEvaluateMoreSpecificDenyBeatsBroaderAllow(t *testing.T) {
 	snapshot := snapshotWithRules(
 		Rule{
 			ID: "rule-deny", Layer: LayerOrg, SubjectID: testOrgID,
@@ -78,74 +93,225 @@ func TestEvaluateDenyBeatsAllowRegardlessOfSpecificity(t *testing.T) {
 		t.Fatalf("MatchedRules = %+v, want rule-deny marked decided", denied.MatchedRules)
 	}
 
-	// The deny is scoped: everything off-target still allows.
+	// The deny is scoped: everything off-target still allows via the broad allow.
 	allowed, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", Resource: "acme/web"})
 	if !ok || allowed.Result != EffectAllow {
 		t.Fatalf("off-target request = %+v, want allow", allowed)
 	}
 }
 
-func TestEvaluateOrgLayerIsStrict(t *testing.T) {
-	// A user-layer rule alone activates nothing for the org layer: zero org
-	// rules deny everything.
+func TestEvaluateMoreSpecificAllowBeatsBroaderDeny(t *testing.T) {
+	// A broad org deny is overridden by a more specific user allow: the user is
+	// carved out of an otherwise org-wide block.
 	snapshot := snapshotWithRules(
-		Rule{ID: "rule-user", Layer: LayerUser, SubjectID: "user-1", Effect: EffectAllow},
+		Rule{ID: "rule-org-deny", Layer: LayerOrg, SubjectID: testOrgID, ResourceID: ptr("acme/api"), Effect: EffectDeny},
+		Rule{ID: "rule-user-allow", Layer: LayerUser, SubjectID: "user-1", ResourceID: ptr("acme/api"), Effect: EffectAllow},
 	)
-	evaluation, ok := Evaluate(snapshot, Status{}, Request{Action: "github.repo.read", UserID: "user-1"})
-	if !ok || evaluation.Result != EffectDeny {
-		t.Fatalf("Evaluate() = %+v, want deny from strict org layer", evaluation)
+
+	allowed, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", Resource: "acme/api", UserID: "user-1"})
+	if !ok || allowed.Result != EffectAllow {
+		t.Fatalf("carved-out user = %+v, want allow", allowed)
+	}
+	if allowed.DecidingRuleID != "rule-user-allow" {
+		t.Fatalf("DecidingRuleID = %q, want rule-user-allow", allowed.DecidingRuleID)
+	}
+
+	// Everyone else still hits the org deny.
+	denied, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", Resource: "acme/api", UserID: "user-2"})
+	if !ok || denied.Result != EffectDeny {
+		t.Fatalf("other user = %+v, want deny", denied)
 	}
 }
 
-func TestEvaluateUserLayerAbstainsUntilItHasRulesThenSilenceVetoes(t *testing.T) {
-	// No user rules: layer abstains, org allow carries the decision.
-	abstaining := snapshotWithRules(orgAllowAll("rule-org"))
-	evaluation, ok := Evaluate(abstaining, Status{}, Request{Action: "github.pr.write", UserID: "user-1"})
-	if !ok || evaluation.Result != EffectAllow {
-		t.Fatalf("abstaining user layer = %+v, want allow", evaluation)
+func TestEvaluateCarveOutScenario(t *testing.T) {
+	// The reported scenario:
+	//   1. org deny  — any action on acme/api
+	//   2. user allow — user-1 on acme/api (exception to the org block)
+	//   3. user deny  — user-1, github.issue.read on acme/api (exception to the
+	//      exception)
+	snapshot := snapshotWithRules(
+		Rule{ID: "r1-org-deny", Layer: LayerOrg, SubjectID: testOrgID, ResourceID: ptr("acme/api"), Effect: EffectDeny},
+		Rule{ID: "r2-user-allow", Layer: LayerUser, SubjectID: "user-1", ResourceID: ptr("acme/api"), Effect: EffectAllow},
+		Rule{ID: "r3-user-deny", Layer: LayerUser, SubjectID: "user-1", ResourceID: ptr("acme/api"), ActionName: ptr("github.issue.read"), Effect: EffectDeny},
+	)
+
+	cases := []struct {
+		name    string
+		request Request
+		want    string
+		ruleID  string
+	}{
+		{"user-1 allowed for a normal action", Request{Action: "github.pr.write", Resource: "acme/api", UserID: "user-1"}, EffectAllow, "r2-user-allow"},
+		{"user-1 denied for the carved-out action", Request{Action: "github.issue.read", Resource: "acme/api", UserID: "user-1"}, EffectDeny, "r3-user-deny"},
+		{"another user denied org-wide", Request{Action: "github.pr.write", Resource: "acme/api", UserID: "user-2"}, EffectDeny, "r1-org-deny"},
+		{"another user also denied for issue.read", Request{Action: "github.issue.read", Resource: "acme/api", UserID: "user-2"}, EffectDeny, "r1-org-deny"},
+	}
+	for _, testCase := range cases {
+		evaluation, ok := Evaluate(snapshot, Status{}, testCase.request)
+		if !ok || evaluation.Result != testCase.want {
+			t.Fatalf("%s: Evaluate(%+v) = %+v, want %s", testCase.name, testCase.request, evaluation, testCase.want)
+		}
+		if evaluation.DecidingRuleID != testCase.ruleID {
+			t.Fatalf("%s: DecidingRuleID = %q, want %q", testCase.name, evaluation.DecidingRuleID, testCase.ruleID)
+		}
+	}
+}
+
+func TestEvaluateUserAllowGrantsThatUserWithoutAnOrgRule(t *testing.T) {
+	// Org is no longer a mandatory ceiling: a user allow alone grants that user,
+	// while an unrelated user falls through to default deny.
+	snapshot := snapshotWithRules(
+		Rule{ID: "rule-user", Layer: LayerUser, SubjectID: "user-1", Effect: EffectAllow},
+	)
+
+	allowed, ok := Evaluate(snapshot, Status{}, Request{Action: "github.repo.read", UserID: "user-1"})
+	if !ok || allowed.Result != EffectAllow {
+		t.Fatalf("covered user = %+v, want allow", allowed)
 	}
 
-	// One user rule for someone else: the layer is active, silence vetoes.
-	active := snapshotWithRules(
+	denied, ok := Evaluate(snapshot, Status{}, Request{Action: "github.repo.read", UserID: "user-2"})
+	if !ok || denied.Result != EffectDeny {
+		t.Fatalf("uncovered user = %+v, want default deny", denied)
+	}
+}
+
+func TestEvaluateUnrelatedSubjectRuleDoesNotRestrictOthers(t *testing.T) {
+	// A rule bound to user-2 is irrelevant to user-1; the broad org allow still
+	// governs user-1. (Under the old layered-AND model this denied user-1.)
+	snapshot := snapshotWithRules(
 		orgAllowAll("rule-org"),
 		Rule{ID: "rule-user", Layer: LayerUser, SubjectID: "user-2", Effect: EffectAllow},
 	)
-	evaluation, ok = Evaluate(active, Status{}, Request{Action: "github.pr.write", UserID: "user-1"})
-	if !ok || evaluation.Result != EffectDeny {
-		t.Fatalf("active user layer without matching allow = %+v, want deny", evaluation)
+
+	for _, userID := range []string{"user-1", "user-2"} {
+		evaluation, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", UserID: userID})
+		if !ok || evaluation.Result != EffectAllow {
+			t.Fatalf("user %q = %+v, want allow", userID, evaluation)
+		}
+	}
+}
+
+func TestEvaluateUserDenyCarvesAnExceptionOutOfOrgAllow(t *testing.T) {
+	snapshot := snapshotWithRules(
+		orgAllowAll("rule-org"),
+		Rule{ID: "rule-user-deny", Layer: LayerUser, SubjectID: "user-1", Effect: EffectDeny},
+	)
+
+	denied, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", UserID: "user-1"})
+	if !ok || denied.Result != EffectDeny || denied.DecidingRuleID != "rule-user-deny" {
+		t.Fatalf("user-1 = %+v, want deny by rule-user-deny", denied)
 	}
 
-	// The covered user is allowed.
-	evaluation, ok = Evaluate(active, Status{}, Request{Action: "github.pr.write", UserID: "user-2"})
-	if !ok || evaluation.Result != EffectAllow {
-		t.Fatalf("active user layer with matching allow = %+v, want allow", evaluation)
+	allowed, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", UserID: "user-2"})
+	if !ok || allowed.Result != EffectAllow {
+		t.Fatalf("user-2 = %+v, want allow", allowed)
 	}
 }
 
 func TestEvaluateAgentLayerMirrorsUserLayer(t *testing.T) {
+	// Agent-layer rules behave like user-layer rules: a rule for app-1 carves an
+	// exception for app-1 only; app-2 follows the broad org allow.
 	snapshot := snapshotWithRules(
 		orgAllowAll("rule-org"),
-		Rule{ID: "rule-agent", Layer: LayerAgent, SubjectID: "app-1", Effect: EffectAllow},
+		Rule{ID: "rule-agent-deny", Layer: LayerAgent, SubjectID: "app-1", Effect: EffectDeny},
 	)
-	evaluation, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", ApplicationID: "app-2"})
-	if !ok || evaluation.Result != EffectDeny {
-		t.Fatalf("agent layer veto = %+v, want deny", evaluation)
+
+	denied, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", ApplicationID: "app-1"})
+	if !ok || denied.Result != EffectDeny {
+		t.Fatalf("app-1 = %+v, want deny", denied)
+	}
+
+	allowed, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", ApplicationID: "app-2"})
+	if !ok || allowed.Result != EffectAllow {
+		t.Fatalf("app-2 = %+v, want allow", allowed)
 	}
 }
 
 func TestEvaluateUnresolvedSubjectsCannotMatchUserOrAgentRules(t *testing.T) {
-	snapshot := snapshotWithRules(
+	// The managed endpoint resolves no Kontext user/app: user and agent rules
+	// cannot match their subject, so org rules govern and the evaluation is
+	// flagged as unresolved.
+	allowSnapshot := snapshotWithRules(
 		orgAllowAll("rule-org"),
 		Rule{ID: "rule-user", Layer: LayerUser, SubjectID: "user-1", Effect: EffectAllow},
 	)
-	// The managed endpoint resolves no Kontext user: the user layer is active
-	// and silence vetoes, flagged as unresolved subject on the evaluation.
-	evaluation, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write"})
-	if !ok || evaluation.Result != EffectDeny {
-		t.Fatalf("unresolved user subject = %+v, want deny", evaluation)
+	evaluation, ok := Evaluate(allowSnapshot, Status{}, Request{Action: "github.pr.write"})
+	if !ok || evaluation.Result != EffectAllow {
+		t.Fatalf("unresolved subject with org allow = %+v, want allow from org rule", evaluation)
 	}
 	if evaluation.SubjectsResolved {
 		t.Fatal("SubjectsResolved = true, want false for unresolved identity")
+	}
+
+	// A user allow cannot unlock anything when the subject is unresolved: the
+	// org deny still governs.
+	denySnapshot := snapshotWithRules(
+		Rule{ID: "rule-org-deny", Layer: LayerOrg, SubjectID: testOrgID, Effect: EffectDeny},
+		Rule{ID: "rule-user-allow", Layer: LayerUser, SubjectID: "user-1", Effect: EffectAllow},
+	)
+	denied, ok := Evaluate(denySnapshot, Status{}, Request{Action: "github.pr.write"})
+	if !ok || denied.Result != EffectDeny {
+		t.Fatalf("unresolved subject with org deny = %+v, want deny", denied)
+	}
+}
+
+func TestEvaluateEndpointLayerMatchesInstallationId(t *testing.T) {
+	// The managed endpoint resolves no user/app, but it always knows its own
+	// installation id, so endpoint-layer rules are matchable locally.
+	snapshot := snapshotWithRules(
+		Rule{ID: "rule-org-deny", Layer: LayerOrg, SubjectID: testOrgID, ResourceID: ptr("acme/api"), Effect: EffectDeny},
+		Rule{ID: "rule-endpoint-allow", Layer: LayerEndpoint, SubjectID: "ins_device1", ResourceID: ptr("acme/api"), Effect: EffectAllow},
+	)
+
+	// This endpoint is carved out of the org-wide deny.
+	allowed, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", Resource: "acme/api", EndpointID: "ins_device1"})
+	if !ok || allowed.Result != EffectAllow || allowed.DecidingRuleID != "rule-endpoint-allow" {
+		t.Fatalf("matching endpoint = %+v, want allow by rule-endpoint-allow", allowed)
+	}
+
+	// A different endpoint still hits the org deny.
+	denied, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", Resource: "acme/api", EndpointID: "ins_device2"})
+	if !ok || denied.Result != EffectDeny {
+		t.Fatalf("other endpoint = %+v, want deny", denied)
+	}
+
+	// An unresolved endpoint (empty id) cannot match the endpoint rule either.
+	unresolved, ok := Evaluate(snapshot, Status{}, Request{Action: "github.pr.write", Resource: "acme/api"})
+	if !ok || unresolved.Result != EffectDeny {
+		t.Fatalf("empty endpoint = %+v, want deny", unresolved)
+	}
+}
+
+func TestEvaluateEndpointCarveOutScenario(t *testing.T) {
+	// The reported carve-out, expressed with an endpoint subject (the trusted
+	// identity on the managed path):
+	//   1. org deny — any action on acme/api
+	//   2. endpoint allow — ins_device1 on acme/api
+	//   3. endpoint deny — ins_device1, github.issue.read on acme/api
+	snapshot := snapshotWithRules(
+		Rule{ID: "r1-org-deny", Layer: LayerOrg, SubjectID: testOrgID, ResourceID: ptr("acme/api"), Effect: EffectDeny},
+		Rule{ID: "r2-endpoint-allow", Layer: LayerEndpoint, SubjectID: "ins_device1", ResourceID: ptr("acme/api"), Effect: EffectAllow},
+		Rule{ID: "r3-endpoint-deny", Layer: LayerEndpoint, SubjectID: "ins_device1", ResourceID: ptr("acme/api"), ActionName: ptr("github.issue.read"), Effect: EffectDeny},
+	)
+
+	cases := []struct {
+		name    string
+		request Request
+		want    string
+		ruleID  string
+	}{
+		{"endpoint allowed for a normal action", Request{Action: "github.pr.write", Resource: "acme/api", EndpointID: "ins_device1"}, EffectAllow, "r2-endpoint-allow"},
+		{"endpoint denied for the carved-out action", Request{Action: "github.issue.read", Resource: "acme/api", EndpointID: "ins_device1"}, EffectDeny, "r3-endpoint-deny"},
+		{"other endpoint denied org-wide", Request{Action: "github.pr.write", Resource: "acme/api", EndpointID: "ins_device2"}, EffectDeny, "r1-org-deny"},
+	}
+	for _, testCase := range cases {
+		evaluation, ok := Evaluate(snapshot, Status{}, testCase.request)
+		if !ok || evaluation.Result != testCase.want {
+			t.Fatalf("%s: Evaluate(%+v) = %+v, want %s", testCase.name, testCase.request, evaluation, testCase.want)
+		}
+		if evaluation.DecidingRuleID != testCase.ruleID {
+			t.Fatalf("%s: DecidingRuleID = %q, want %q", testCase.name, evaluation.DecidingRuleID, testCase.ruleID)
+		}
 	}
 }
 
