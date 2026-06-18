@@ -208,6 +208,24 @@ func TestRunFullFlow(t *testing.T) {
 		t.Fatalf("launchctl order = %v", launchctl)
 	}
 
+	stdout := h.out.String()
+	for _, want := range []string{
+		"Kontext setup",
+		"Workspace\n  ✓ Acme (org_test)",
+		"Mac\n  ✓ Config written",
+		"  • Waiting for background agent...",
+		"  ✓ Background agent running",
+		"Next\n  Return to the Kontext dashboard.",
+		"  Run the hello command shown there to confirm this Mac is connected.",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "Start a Claude Code session") {
+		t.Fatalf("stdout still uses old ending:\n%s", stdout)
+	}
+
 	// The raw token never travels in argv — only via `security -i` stdin.
 	for _, call := range h.calls {
 		for _, arg := range call.args {
@@ -283,6 +301,15 @@ func TestRunRefusesMDMManagedMac(t *testing.T) {
 	err := Run(context.Background(), h.options("tok", server))
 	if err == nil || !strings.Contains(err.Error(), "organization-managed") {
 		t.Fatalf("Run() error = %v, want MDM refusal", err)
+	}
+	for _, want := range []string{
+		"System config\n  " + system,
+		"system config wins over user config",
+		"Nothing changed.",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Run() error = %v, missing %q", err, want)
+		}
 	}
 }
 

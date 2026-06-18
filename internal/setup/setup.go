@@ -101,6 +101,8 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
+	fmt.Fprintln(opts.Stdout, "Kontext setup")
+
 	cloudURL := strings.TrimSpace(opts.CloudURL)
 	if cloudURL == "" {
 		cloudURL = DefaultCloudURL
@@ -124,7 +126,8 @@ func Run(ctx context.Context, opts Options) error {
 	if ping.OrganizationName != "" {
 		orgLabel = fmt.Sprintf("%s (%s)", ping.OrganizationName, ping.OrganizationID)
 	}
-	fmt.Fprintf(opts.Stdout, "✓ Token accepted — organization %s\n", orgLabel)
+	fmt.Fprintln(opts.Stdout, "\nWorkspace")
+	fmt.Fprintf(opts.Stdout, "  ✓ %s\n", orgLabel)
 
 	if err := writeKeychainToken(ctx, token); err != nil {
 		return err
@@ -138,13 +141,15 @@ func Run(ctx context.Context, opts Options) error {
 	if stored != token {
 		return errors.New("keychain read-back returned a different token; remove stale 'kontext-install-token' keychain items and retry")
 	}
-	fmt.Fprintf(opts.Stdout, "✓ Install token stored in your login keychain (%s)\n", KeychainItemName)
+	fmt.Fprintf(opts.Stdout, "  ✓ Token saved to Keychain (%s)\n", KeychainItemName)
+
+	fmt.Fprintln(opts.Stdout, "\nMac")
 
 	configPath, err := writeUserManagedConfig(cloudURL, ping.OrganizationID, deviceLabel(ctx))
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(opts.Stdout, "✓ Managed config written to %s\n", configPath)
+	fmt.Fprintf(opts.Stdout, "  ✓ Config written (%s)\n", configPath)
 
 	identityPath := installation.UserPath()
 	if identityPath == "" {
@@ -154,7 +159,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("ensure installation identity: %w", err)
 	}
-	fmt.Fprintf(opts.Stdout, "✓ Installation identity %s\n", identity.InstallationID)
+	fmt.Fprintf(opts.Stdout, "  ✓ Installation identity ready (%s)\n", identity.InstallationID)
 
 	binary, binaryNote := stableBinaryPath()
 	if binaryNote != "" {
@@ -168,21 +173,24 @@ func Run(ctx context.Context, opts Options) error {
 	for _, warning := range warnings {
 		fmt.Fprintf(opts.Stderr, "warning: %s\n", warning)
 	}
-	fmt.Fprintln(opts.Stdout, "✓ Claude Code hooks installed in ~/.claude/settings.json")
+	fmt.Fprintln(opts.Stdout, "  ✓ Claude Code hooks installed")
 
 	plistPath, logPath, err := installLaunchAgent(ctx, binary)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(opts.Stdout, "✓ Background agent installed (%s)\n", plistPath)
+	fmt.Fprintf(opts.Stdout, "  ✓ Background agent installed (%s)\n", plistPath)
 
-	if err := probeDaemon(); err != nil {
+	if err := waitForDaemon(opts.Stdout); err != nil {
+		fmt.Fprintln(opts.Stdout, "  ! Background agent is still starting")
 		fmt.Fprintf(opts.Stderr, "warning: the background agent has not come up yet (%v); check `tail -f %s`\n", err, logPath)
 	} else {
-		fmt.Fprintln(opts.Stdout, "✓ Background agent is running")
+		fmt.Fprintln(opts.Stdout, "  ✓ Background agent running")
 	}
 
-	fmt.Fprintf(opts.Stdout, "\nDone. Start a Claude Code session — activity appears in your dashboard within seconds.\n")
+	fmt.Fprintln(opts.Stdout, "\nNext")
+	fmt.Fprintln(opts.Stdout, "  Return to the Kontext dashboard.")
+	fmt.Fprintln(opts.Stdout, "  Run the hello command shown there to confirm this Mac is connected.")
 	return nil
 }
 
@@ -198,7 +206,7 @@ func refuseManagedEnvironments() error {
 		return fmt.Errorf("%s is set; unset it before running setup", managedconfig.EnvPath)
 	}
 	if _, err := os.Lstat(systemConfigPath); err == nil {
-		return errors.New("this Mac already has an organization-managed Kontext install (deployed by your IT admin via MDM); self-serve setup is not needed and would be ignored")
+		return fmt.Errorf("this Mac is organization-managed\n\nSystem config\n  %s\n\nSelf-serve setup cannot continue because system config wins over user config.\nNothing changed.", systemConfigPath)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("cannot determine whether this Mac is organization-managed: %w", err)
 	}
@@ -394,6 +402,39 @@ func installUserHooks(binary string) ([]string, error) {
 		return nil, err
 	}
 	return warnings, nil
+}
+
+func waitForDaemon(out io.Writer) error {
+	if !isTerminalWriter(out) {
+		fmt.Fprintln(out, "  • Waiting for background agent...")
+		return probeDaemon()
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- probeDaemon()
+	}()
+
+	frames := []string{"◐", "◓", "◑", "◒"}
+	ticker := time.NewTicker(120 * time.Millisecond)
+	defer ticker.Stop()
+
+	frame := 0
+	for {
+		fmt.Fprintf(out, "\r  %s Waiting for background agent...", frames[frame%len(frames)])
+		frame++
+		select {
+		case err := <-done:
+			fmt.Fprint(out, "\r\033[2K")
+			return err
+		case <-ticker.C:
+		}
+	}
+}
+
+func isTerminalWriter(w io.Writer) bool {
+	file, ok := w.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
 }
 
 func probeDaemon() error {
