@@ -81,8 +81,12 @@ func writeBreadcrumb(dbPath string, breadcrumb AuthError) error {
 	return nil
 }
 
-func ClearAuthError(dbPath string) {
-	_ = os.Remove(AuthErrorPath(dbPath))
+func ClearAuthError(dbPath string) error {
+	err := os.Remove(AuthErrorPath(dbPath))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 // LoadAuthError returns the breadcrumb, or nil when none exists. Unreadable or

@@ -37,8 +37,10 @@ func PrintStatus(out io.Writer) {
 	identityPath := installationPathForScope(loaded.Scope)
 	if state, err := installation.LoadFile(identityPath); err == nil {
 		fmt.Fprintf(out, "  installation: %s\n", state.InstallationID)
-	} else {
+	} else if errors.Is(err, installation.ErrNotFound) {
 		fmt.Fprintf(out, "  installation: not created yet (%s)\n", identityPath)
+	} else {
+		fmt.Fprintf(out, "  installation: ERROR %v (%s)\n", err, identityPath)
 	}
 
 	// Resolve the token through the daemon's exact read path: a locked or
