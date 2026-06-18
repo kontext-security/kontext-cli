@@ -216,6 +216,7 @@ func TestRunFullFlow(t *testing.T) {
 		"Kontext setup",
 		"Workspace\n  ✓ Acme (org_test)",
 		"Mac\n  ✓ Config written",
+		"  • Installing background agent...",
 		"  • Waiting for background agent...",
 		"  ✓ Background agent running",
 		"Next\n  Return to the Kontext dashboard.",
@@ -477,6 +478,34 @@ func TestInstallLaunchAgentBootsOutOwnedPlistBeforeBootstrap(t *testing.T) {
 	}
 	if launchctl[1][0] != "bootstrap" {
 		t.Fatalf("second launchctl call = %v, want bootstrap", launchctl[1])
+	}
+}
+
+func TestInstallLaunchAgentBoundsLaunchctlCalls(t *testing.T) {
+	h := newHarness(t)
+	checked := 0
+	overrideVar(t, &execCommand, func(ctx context.Context, stdin, name string, args ...string) (string, error) {
+		h.calls = append(h.calls, execCall{stdin: stdin, name: name, args: args})
+		if name != "launchctl" {
+			return "", nil
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatalf("launchctl %v ran without a deadline", args)
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 || remaining > launchctlCommandTimeout {
+			t.Fatalf("launchctl deadline remaining = %s, want within %s", remaining, launchctlCommandTimeout)
+		}
+		checked++
+		return "", nil
+	})
+
+	if _, _, err := installLaunchAgent(context.Background(), "/opt/homebrew/bin/kontext"); err != nil {
+		t.Fatal(err)
+	}
+	if checked != 3 {
+		t.Fatalf("bounded launchctl calls = %d, want 3", checked)
 	}
 }
 
