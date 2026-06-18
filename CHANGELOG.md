@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.0](https://github.com/kontext-security/kontext-cli/compare/v0.9.0...v0.10.0) (2026-06-18)
+
+
+### Features
+
+* **managedstream:** add daemon heartbeats ([#301](https://github.com/kontext-security/kontext-cli/issues/301)) ([0d0ce2e](https://github.com/kontext-security/kontext-cli/commit/0d0ce2eb5c5a201fe476dfe4628e2d8a75e6d367))
+
+
+### Bug Fixes
+
+* **managedobserve:** refresh install token per flush ENG-446 ([ad6a795](https://github.com/kontext-security/kontext-cli/commit/ad6a79554aebac4e873bb2814d1a55e491ce4855))
+* **setup:** clarify daemon wait state ([72164b8](https://github.com/kontext-security/kontext-cli/commit/72164b87aea22cb9bd1ef17c456de5f27620cfda))
+
 ## [0.9.0](https://github.com/kontext-security/kontext-cli/compare/v0.8.1...v0.9.0) (2026-06-18)
 
 
