@@ -60,9 +60,25 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	if err != nil {
 		return fmt.Errorf("ensure installation identity: %w", err)
 	}
+
+	dbPath := opts.DBPath
+	if dbPath == "" {
+		dbPath = DefaultDBPath()
+	}
+
 	installToken, err := managedconfig.ResolveInstallToken(ctx, loadedConfig.Config.Credentials.InstallTokenRef)
 	if err != nil {
+		// Leave a breadcrumb: under launchd this exit is otherwise invisible
+		// (doctor would only see "daemon: not running" with no cause). A
+		// locked login keychain at boot is the typical trigger.
+		if breadcrumbErr := WriteStartupError(dbPath, err.Error()); breadcrumbErr != nil {
+			opts.Diagnostic.Printf("write startup-error breadcrumb: %v\n", breadcrumbErr)
+		}
 		return fmt.Errorf("resolve install token: %w", err)
+	}
+	// Token resolved — clear any stale startup breadcrumb from a prior boot.
+	if previous := LoadAuthError(dbPath); previous != nil && previous.Kind == "startup" {
+		ClearAuthError(dbPath)
 	}
 
 	socketPath := opts.SocketPath
@@ -71,10 +87,6 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	}
 	if err := EnsureSocketDir(socketPath); err != nil {
 		return fmt.Errorf("prepare managed observe socket dir: %w", err)
-	}
-	dbPath := opts.DBPath
-	if dbPath == "" {
-		dbPath = DefaultDBPath()
 	}
 	if err := cleanupStaleSessions(ctx, dbPath, idleTimeoutOrDefault(opts.IdleTimeout)); err != nil {
 		opts.Diagnostic.Printf("managed observe cleanup: %v\n", err)
@@ -130,7 +142,6 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			DBPath:            dbPath,
 			StatePath:         opts.StreamStatePath,
 			CloudURL:          loadedConfig.Config.CloudURL,
-			OrganizationID:    loadedConfig.Config.OrganizationID,
 			InstallationID:    installationState.InstallationID,
 			InstallToken:      installToken,
 			DeviceLabel:       loadedConfig.Config.Device.Label,
@@ -138,6 +149,19 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			Interval:          opts.StreamInterval,
 			HTTPClient:        opts.StreamHTTPClient,
 			Diagnostic:        opts.Diagnostic,
+			OnAuthFailure: func(status int) {
+				// Unconditional stderr (Diagnostic is env-gated and would be
+				// silent under launchd) plus a breadcrumb for `kontext doctor`.
+				fmt.Fprintf(os.Stderr,
+					"Kontext install token rejected by %s (HTTP %d). It may have been revoked — run `kontext setup` with a new token from the dashboard.\n",
+					loadedConfig.Config.CloudURL, status)
+				if err := WriteAuthError(dbPath, status); err != nil {
+					opts.Diagnostic.Printf("write auth-error breadcrumb: %v\n", err)
+				}
+			},
+			OnFlushSuccess: func() {
+				ClearAuthError(dbPath)
+			},
 		})
 	}()
 
