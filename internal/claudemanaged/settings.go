@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/kontext-security/kontext-cli/internal/agenthooks"
 	"github.com/kontext-security/kontext-cli/internal/hook"
 )
 
@@ -213,7 +214,7 @@ func hasManagedObserveHook(groups []MatcherGroup, event Event) bool {
 			if err := validateAsync(event, handler.Async); err != nil {
 				continue
 			}
-			fields, ok := splitHookCommand(handler.Command)
+			fields, ok := agenthooks.SplitCommand(handler.Command)
 			if ok && len(fields) == 3 && filepath.Base(fields[0]) == "kontext" && fields[1] == "hook" && fields[2] == event.Alias {
 				return true
 			}
@@ -233,7 +234,7 @@ func isCanonicalManagedDropInHandler(handler Handler, event Event) bool {
 	} else if handler.Async != nil {
 		return false
 	}
-	fields, ok := splitHookCommand(handler.Command)
+	fields, ok := agenthooks.SplitCommand(handler.Command)
 	return ok && len(fields) == 3 &&
 		filepath.Base(fields[0]) == "kontext" &&
 		fields[1] == "hook" &&

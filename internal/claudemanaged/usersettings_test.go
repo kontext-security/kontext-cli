@@ -9,6 +9,8 @@ import (
 	"testing"
 )
 
+const testBinary = "/opt/homebrew/bin/kontext"
+
 func decode(t *testing.T, raw string) map[string]any {
 	t.Helper()
 	var out map[string]any
@@ -31,33 +33,285 @@ func eventGroups(t *testing.T, settings map[string]any, event string) []any {
 	return groups
 }
 
-func TestRemoveManagedHooksLeavesForeignContent(t *testing.T) {
+func TestMergeManagedHooksIntoEmptySettings(t *testing.T) {
+	settings := map[string]any{}
+	warnings, err := MergeManagedHooks(settings, testBinary)
+	if err != nil {
+		t.Fatalf("MergeManagedHooks() error = %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+
+	for _, event := range SupportedEvents {
+		groups := eventGroups(t, settings, event.Name.String())
+		if len(groups) != 1 {
+			t.Fatalf("%s groups = %d, want 1", event.Name, len(groups))
+		}
+	}
+
+	data, err := json.Marshal(map[string]any{"hooks": settings["hooks"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(data, testBinary); err != nil {
+		t.Fatalf("merged settings fail Validate: %v", err)
+	}
+}
+
+func TestMergeManagedHooksMatchesTemplateShape(t *testing.T) {
+	settings := map[string]any{}
+	if _, err := MergeManagedHooks(settings, testBinary); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := json.Marshal(Template(testBinary).Hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want map[string]any
+	if err := json.Unmarshal(data, &want); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, event := range SupportedEvents {
+		name := event.Name.String()
+		got := eventGroups(t, settings, name)
+		if !reflect.DeepEqual(got, want[name]) {
+			t.Fatalf("%s merged group = %#v, want %#v", name, got, want[name])
+		}
+	}
+}
+
+func TestMergeManagedHooksPreservesForeignContent(t *testing.T) {
 	settings := decode(t, `{
 		"permissions": {"allow": ["Bash(ls:*)"]},
+		"env": {"FOO": "bar"},
 		"hooks": {
-			"SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "'/usr/local/bin/kontext' hook 'session-start'"}]}],
 			"PreToolUse": [
-				{"matcher": "", "hooks": [{"type": "command", "command": "'/usr/local/bin/kontext' hook 'pre-tool-use'"}]},
-				{"matcher": "Edit", "hooks": [{"type": "command", "command": "lint-check"}]}
+				{"matcher": "Bash", "hooks": [{"type": "command", "command": "/usr/local/bin/other-tool check"}]}
 			],
-			"PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "'/usr/local/bin/kontext' hook 'post-tool-use'"}]}],
-			"SessionEnd": [{"matcher": "", "hooks": [{"type": "command", "command": "'/usr/local/bin/kontext' hook 'session-end'"}]}]
+			"Notification": [
+				{"matcher": "", "hooks": [{"type": "command", "command": "say done"}]}
+			]
+		},
+		"unknownKey": 42
+	}`)
+
+	if _, err := MergeManagedHooks(settings, testBinary); err != nil {
+		t.Fatal(err)
+	}
+
+	if settings["unknownKey"] != float64(42) {
+		t.Fatalf("unknownKey clobbered: %v", settings["unknownKey"])
+	}
+	if _, ok := settings["permissions"].(map[string]any); !ok {
+		t.Fatal("permissions clobbered")
+	}
+
+	groups := eventGroups(t, settings, "PreToolUse")
+	if len(groups) != 2 {
+		t.Fatalf("PreToolUse groups = %d, want foreign + ours", len(groups))
+	}
+	foreign := groups[0].(map[string]any)
+	if foreign["matcher"] != "Bash" {
+		t.Fatalf("foreign group reordered or modified: %v", foreign)
+	}
+
+	notification := eventGroups(t, settings, "Notification")
+	if len(notification) != 1 {
+		t.Fatalf("Notification groups = %d, want 1", len(notification))
+	}
+}
+
+func TestMergeManagedHooksPreservesMalformedEventValues(t *testing.T) {
+	settings := decode(t, `{
+		"hooks": {
+			"PreToolUse": "invalid"
 		}
 	}`)
+
+	if _, err := MergeManagedHooks(settings, testBinary); err != nil {
+		t.Fatal(err)
+	}
+
+	groups := eventGroups(t, settings, "PreToolUse")
+	if len(groups) != 2 || groups[0] != "invalid" {
+		t.Fatalf("PreToolUse groups = %#v, want malformed value plus managed group", groups)
+	}
+
+	if err := RemoveManagedHooks(settings); err != nil {
+		t.Fatal(err)
+	}
+	groups = eventGroups(t, settings, "PreToolUse")
+	if len(groups) != 1 || groups[0] != "invalid" {
+		t.Fatalf("PreToolUse groups after remove = %#v, want malformed value preserved", groups)
+	}
+}
+
+func TestMergeManagedHooksReplacesStaleBinaryPath(t *testing.T) {
+	settings := decode(t, `{
+		"hooks": {
+			"PreToolUse": [
+				{"matcher": "", "hooks": [{"type": "command", "command": "'/Applications/Kontext CLI/kontext' hook 'pre-tool-use'", "timeout": 20}]}
+			]
+		}
+	}`)
+
+	if _, err := MergeManagedHooks(settings, testBinary); err != nil {
+		t.Fatal(err)
+	}
+
+	groups := eventGroups(t, settings, "PreToolUse")
+	if len(groups) != 1 {
+		t.Fatalf("PreToolUse groups = %d, want stale entry replaced, not duplicated", len(groups))
+	}
+	handler := groups[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if !strings.Contains(handler["command"].(string), testBinary) {
+		t.Fatalf("stale binary path not replaced: %v", handler["command"])
+	}
+}
+
+func TestMergeManagedHooksReplacesSplitCommandArgs(t *testing.T) {
+	settings := decode(t, `{
+		"hooks": {
+			"PreToolUse": [
+				{"matcher": "", "hooks": [{"type": "command", "command": "/Applications/Kontext CLI/kontext", "args": ["hook", "pre-tool-use"], "timeout": 20}]}
+			]
+		}
+	}`)
+
+	if _, err := MergeManagedHooks(settings, testBinary); err != nil {
+		t.Fatal(err)
+	}
+
+	groups := eventGroups(t, settings, "PreToolUse")
+	if len(groups) != 1 {
+		t.Fatalf("PreToolUse groups = %d, want split command entry replaced, not duplicated", len(groups))
+	}
+	handler := groups[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)
+	if _, present := handler["args"]; present {
+		t.Fatalf("split command args were preserved on canonical handler: %v", handler)
+	}
+	if !strings.Contains(handler["command"].(string), testBinary) {
+		t.Fatalf("split command path not replaced: %v", handler["command"])
+	}
+}
+
+func TestMergeManagedHooksIsIdempotent(t *testing.T) {
+	settings := map[string]any{}
+	if _, err := MergeManagedHooks(settings, testBinary); err != nil {
+		t.Fatal(err)
+	}
+	first, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MergeManagedHooks(settings, testBinary); err != nil {
+		t.Fatal(err)
+	}
+	second, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("double merge is not a fixpoint:\n%s\n%s", first, second)
+	}
+}
+
+func TestMergeManagedHooksWarnsOnDisableAllHooks(t *testing.T) {
+	settings := decode(t, `{"disableAllHooks": true}`)
+	warnings, err := MergeManagedHooks(settings, testBinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "disableAllHooks") {
+		t.Fatalf("warnings = %v, want disableAllHooks warning", warnings)
+	}
+	if settings["disableAllHooks"] != true {
+		t.Fatal("disableAllHooks was mutated")
+	}
+}
+
+func TestMergeManagedHooksWarnsOnGuardHooksAndLeavesThem(t *testing.T) {
+	settings := decode(t, `{
+		"hooks": {
+			"PreToolUse": [
+				{"matcher": "", "hooks": [{"type": "command", "command": "'/usr/local/bin/kontext' hook --agent claude --event pre-tool-use --mode observe"}]}
+			]
+		}
+	}`)
+
+	warnings, err := MergeManagedHooks(settings, testBinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "Guard") {
+		t.Fatalf("warnings = %v, want guard-conflict warning", warnings)
+	}
+
+	groups := eventGroups(t, settings, "PreToolUse")
+	if len(groups) != 2 {
+		t.Fatalf("PreToolUse groups = %d, want guard hook + ours", len(groups))
+	}
+}
+
+func TestMergeManagedHooksWarnsOnSplitArgsGuardHooks(t *testing.T) {
+	settings := decode(t, `{
+		"hooks": {
+			"PreToolUse": [
+				{"matcher": "", "hooks": [{"type": "command", "command": "kontext", "args": ["hook", "--agent", "claude", "--event", "pre-tool-use", "--mode", "observe"]}]}
+			]
+		}
+	}`)
+
+	warnings, err := MergeManagedHooks(settings, testBinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "Guard") {
+		t.Fatalf("warnings = %v, want guard-conflict warning", warnings)
+	}
+
+	groups := eventGroups(t, settings, "PreToolUse")
+	if len(groups) != 2 {
+		t.Fatalf("PreToolUse groups = %d, want guard hook + ours", len(groups))
+	}
+}
+
+func TestMergeManagedHooksRejectsNonObjectHooks(t *testing.T) {
+	settings := decode(t, `{"hooks": ["weird"]}`)
+	if _, err := MergeManagedHooks(settings, testBinary); err == nil {
+		t.Fatal("expected error for non-object hooks, got nil")
+	}
+}
+
+func TestRemoveManagedHooksLeavesForeignContent(t *testing.T) {
+	settings := map[string]any{
+		"permissions": map[string]any{"allow": []any{"Bash(ls:*)"}},
+	}
+	if _, err := MergeManagedHooks(settings, testBinary); err != nil {
+		t.Fatal(err)
+	}
+
+	hooks := settings["hooks"].(map[string]any)
+	pre := hooks["PreToolUse"].([]any)
+	hooks["PreToolUse"] = append(pre, map[string]any{
+		"matcher": "Edit",
+		"hooks":   []any{map[string]any{"type": "command", "command": "lint-check"}},
+	})
 
 	if err := RemoveManagedHooks(settings); err != nil {
 		t.Fatal(err)
 	}
 
-	hooks := settings["hooks"].(map[string]any)
-	// Events that only held our hooks are pruned entirely.
+	hooks = settings["hooks"].(map[string]any)
 	for _, event := range []string{"SessionStart", "PostToolUse", "SessionEnd"} {
 		if _, present := hooks[event]; present {
 			t.Fatalf("%s not pruned after removal", event)
 		}
 	}
-	// The foreign PreToolUse hook survives alone.
-	pre := hooks["PreToolUse"].([]any)
+	pre = hooks["PreToolUse"].([]any)
 	if len(pre) != 1 || pre[0].(map[string]any)["matcher"] != "Edit" {
 		t.Fatalf("foreign PreToolUse hook lost: %v", pre)
 	}
@@ -66,8 +320,37 @@ func TestRemoveManagedHooksLeavesForeignContent(t *testing.T) {
 	}
 }
 
+func TestRemoveManagedHooksRemovesSplitCommandArgs(t *testing.T) {
+	settings := decode(t, `{
+		"hooks": {
+			"PreToolUse": [
+				{"matcher": "", "hooks": [
+					{"type": "command", "command": "kontext", "args": ["hook", "pre-tool-use"]},
+					{"type": "command", "command": "lint-check"}
+				]}
+			]
+		}
+	}`)
+
+	if err := RemoveManagedHooks(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	groups := eventGroups(t, settings, "PreToolUse")
+	if len(groups) != 1 {
+		t.Fatalf("PreToolUse groups = %d, want one foreign group", len(groups))
+	}
+	handlers := groups[0].(map[string]any)["hooks"].([]any)
+	if len(handlers) != 1 || handlers[0].(map[string]any)["command"] != "lint-check" {
+		t.Fatalf("remaining handlers = %v, want only foreign handler", handlers)
+	}
+}
+
 func TestRemoveManagedHooksDropsEmptyHooksKey(t *testing.T) {
-	settings := decode(t, `{"hooks": {"PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "'/usr/local/bin/kontext' hook 'pre-tool-use'"}]}]}}`)
+	settings := map[string]any{}
+	if _, err := MergeManagedHooks(settings, testBinary); err != nil {
+		t.Fatal(err)
+	}
 	if err := RemoveManagedHooks(settings); err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +393,7 @@ func TestIsManagedHookCommand(t *testing.T) {
 		{"'/opt/homebrew/bin/kontext' hook 'session-start'", true},
 		{"/usr/local/bin/kontext hook session-end", true},
 		{"'/usr/local/bin/kontext' hook 'unterminated", false},
+		{`"/tmp/kon\text" hook pre-tool-use`, false},
 		// Guard hooks must never match.
 		{"'/usr/local/bin/kontext' hook --agent claude --event pre-tool-use --mode observe", false},
 		{"kontext guard hook claude-code", false},
