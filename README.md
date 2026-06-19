@@ -22,7 +22,7 @@
 
 Kontext is an authorization platform for AI agents. It helps teams control what agents can access and do with scoped credentials, policy enforcement, approvals, and audit trails. Kontext can run local-first for developer agents and extend to managed or self-hosted deployments for security-sensitive environments.
 
-## 🚀 Quickstart
+## Quickstart
 
 ```bash
 brew install kontext-security/tap/kontext
@@ -30,21 +30,24 @@ brew install kontext-security/tap/kontext
 
 The Homebrew package also installs `llama.cpp`, which provides the `llama-server` runtime used by the local LLM judge. On first use, Kontext manages the default GGUF judge model automatically: if the model is not already cached locally, it downloads it into the Kontext model cache before starting `llama-server` on loopback.
 
-## Start a local protected session
+## Connect this Mac to your workspace
+
+Use self-serve setup to stream agent activity from this Mac into your team's
+hosted Kontext dashboard. No MDM profile is required.
+
+Generate an install token on your workspace's Deployments page, then run:
 
 ```bash
-kontext start
+kontext setup
 ```
 
-This starts the currently supported adapter, Claude Code, with a local Kontext runtime. No hosted login is required.
+Setup validates the token, stores it in your login keychain, installs agent
+hooks, and starts the daemon as a user LaunchAgent. Sessions appear in your
+dashboard seconds after your next agent activity.
 
-By default, Kontext runs in observe mode: the agent keeps running, while Kontext records `would allow` and `would deny` decisions in the local dashboard. The dashboard is served on loopback, with the URL printed at startup.
-
-To block supported risky pre-tool actions, start in enforce mode:
-
-```bash
-KONTEXT_MODE=enforce kontext start
-```
+Re-run `kontext setup` to rotate the stored token. Run `kontext setup
+--uninstall` to remove the user-level config, hooks, and LaunchAgent that setup
+installed. Self-serve setup is currently macOS only.
 
 ## Core features
 
@@ -55,51 +58,25 @@ Kontext balances security and utility for AI agents: low-risk actions keep movin
 - **Probabilistic risk detection:** Route actions that deterministic policy allows through a local judge for an additional allow/deny decision without sending tool context to hosted services.
 - **Credential injection:** Inject scoped OAuth credentials at runtime using RFC 8693-compliant OAuth 2.0 Token Exchange, so agents can access approved tools without users pasting secrets into chat, config files, or project environments. Credentials can be short-lived, least-privilege, and bound to the current user, session, or workflow.
 
-The local decision path is:
+The decision path is:
 
 ```text
 Agent tool call
-  -> Kontext hook
-  -> local runtime socket
+  -> agent hook
+  -> daemon
   -> action classification
   -> deterministic policy
   -> probabilistic risk score
   -> allow / deny
-  -> local dashboard
+  -> hosted dashboard stream
 ```
 
-## Connect to your Kontext workspace (self-serve)
+## Managed deployments
 
-Stream Claude Code activity from this Mac into your team's hosted Kontext
-dashboard — no MDM required. Generate an install token on your workspace's
-Deployments page, then:
-
-```bash
-kontext setup
-```
-
-Setup validates the token, stores it in your login keychain, installs the
-Claude Code hooks, and starts a background agent. Sessions appear in your
-dashboard seconds after your next Claude Code activity. Re-running `kontext
-setup` rotates the token; `kontext setup --uninstall` removes everything it
-installed. macOS only.
-
-## Managed sessions
-
-Use managed sessions when you want hosted identity, short-lived provider credentials, and shared traces on top of the local safety path:
-
-```bash
-kontext start --managed
-```
-
-Managed sessions keep provider credentials out of agent config and project files. Kontext creates `.env.kontext` with provider placeholders:
-
-```dotenv
-GITHUB_TOKEN={{kontext:github}}
-LINEAR_API_KEY={{kontext:linear}}
-```
-
-At runtime, Kontext exchanges those placeholders for short-lived scoped credentials for the active agent session using RFC 8693-compliant OAuth 2.0 Token Exchange. Literal values you add stay untouched.
+Self-serve setup installs the same pipeline at user scope that enterprise
+deployments can install at system scope with MDM. In both cases, Kontext keeps
+the agent integration local, evaluates tool activity through the daemon, and
+streams governed activity to the workspace dashboard.
 
 For enterprise identity, audit retention, organization controls, deployment planning, custom usage volume, and onboarding for security and platform teams, contact [michel@kontext.security](mailto:michel@kontext.security) or [book here](https://calendar.superhuman.com/book/11W5Y8b5JsB8dOzQbd/YECs9).
 
@@ -107,18 +84,19 @@ For enterprise identity, audit retention, organization controls, deployment plan
 
 | Default | Behavior |
 | --- | --- |
-| Local evaluation | Default `kontext start` does not require hosted login or trace upload. |
+| User-scope daemon | `kontext setup` installs a user LaunchAgent that runs `kontext managed-observe-daemon`. |
 | Observe mode | Decisions are recorded as `would allow` or `would deny` without blocking the agent. |
-| Loopback dashboard | The local dashboard binds to loopback by default. |
+| Keychain token storage | Self-serve install tokens are stored in the user's login keychain. |
 | Redacted storage | Tool events and decisions are stored locally with redaction. |
 | Managed local judge | Homebrew installs `llama-server` via `llama.cpp`; Kontext downloads and caches the default GGUF judge model when needed. |
 | No reasoning capture | Kontext captures tool events and outcomes, not LLM reasoning, token usage, or full conversation history. |
 
 ## Agent support
 
-| Agent | Status | Start command | Support level |
+| Agent | Status | Self-serve path | Support level |
 | --- | --- | --- | --- |
-| Claude Code | Active | `kontext start` or `kontext start --agent claude` | Local observe/enforce, dashboard diagnostics, managed sessions. |
+| Claude Code | Active | `kontext setup` | Daemon, dashboard stream, observe/enforce decisions. |
+| Claude Cowork | Supported when enabled | Managed config | Cowork VM tool events replayed into the daemon. |
 | Goose | Planned | Coming soon | Adapter not shipped yet. |
 | Codex | Planned | Coming soon | Adapter not shipped yet. |
 | Cursor | Planned | Coming soon | Adapter not shipped yet. |
@@ -128,17 +106,19 @@ Additional agents can be added through adapters that send compatible tool events
 ## Architecture
 
 ```text
-kontext start
+kontext setup
   |
-  |-- Agent hook adapter (Claude Code today)
-  |     |-- PreToolUse  -> kontext hook --agent claude --mode observe --socket /tmp/kontext/.../kontext.sock
-  |     |-- PostToolUse -> kontext hook --agent claude --mode observe --socket /tmp/kontext/.../kontext.sock
+  |-- User managed config: ~/Library/Application Support/Kontext/managed.json
+  |-- Agent integration: hooks or observer
+  |     |-- PreToolUse  -> kontext hook pre-tool-use
+  |     |-- PostToolUse -> kontext hook post-tool-use
   |
-  |-- Local runtime: Unix socket service + RuntimeCore
-  |-- Local dashboard: 127.0.0.1:4765
+  |-- LaunchAgent: security.kontext.managed-observe
+  |-- Daemon: Unix socket service + RuntimeCore
   |-- Deterministic policy: curated rule categories + active profile
-  |-- Probabilistic risk: localhost allow/deny decision after deterministic allow
+  |-- Probabilistic risk: local allow/deny decision after deterministic allow
   |-- Store: local SQLite with redacted events and decision metadata
+  |-- Stream: governed activity to the hosted workspace dashboard
 ```
 
 ## Development
