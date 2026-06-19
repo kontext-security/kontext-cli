@@ -61,6 +61,21 @@ func TestRunNonBlockingHookCannotBlock(t *testing.T) {
 	}
 }
 
+func TestRunUserPromptSubmitCanBlock(t *testing.T) {
+	t.Parallel()
+
+	adapter := &stubAdapter{
+		event: hook.Event{HookName: hook.HookUserPromptSubmit},
+	}
+	err := Run(context.Background(), adapter, stubProcessor{result: hook.Result{Decision: hook.DecisionDeny, Reason: "blocked"}}, ModeEnforce, bytes.NewReader(nil), io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adapter.result.Decision != hook.DecisionDeny {
+		t.Fatalf("decision = %s, want deny", adapter.result.Decision)
+	}
+}
+
 func TestRunObserveModeFormatsNonBlockingHookReason(t *testing.T) {
 	t.Parallel()
 

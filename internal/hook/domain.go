@@ -27,7 +27,40 @@ func (h HookName) IsKnown() bool {
 }
 
 func (h HookName) CanBlock() bool {
-	return h == HookPreToolUse
+	return h == HookPreToolUse || h == HookUserPromptSubmit
+}
+
+type EventAlias struct {
+	Name  HookName
+	Alias string
+}
+
+var eventAliases = []EventAlias{
+	{Name: HookSessionStart, Alias: "session-start"},
+	{Name: HookPreToolUse, Alias: "pre-tool-use"},
+	{Name: HookPostToolUse, Alias: "post-tool-use"},
+	{Name: HookPostToolUseFailed, Alias: "post-tool-use-failure"},
+	{Name: HookSessionEnd, Alias: "session-end"},
+	{Name: HookUserPromptSubmit, Alias: "user-prompt-submit"},
+}
+
+func ParseEventAlias(value string) (HookName, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	for _, event := range eventAliases {
+		if normalized == event.Alias {
+			return event.Name, true
+		}
+	}
+	return "", false
+}
+
+func AliasForEvent(name HookName) (string, bool) {
+	for _, event := range eventAliases {
+		if event.Name == name {
+			return event.Alias, true
+		}
+	}
+	return "", false
 }
 
 type Decision string
