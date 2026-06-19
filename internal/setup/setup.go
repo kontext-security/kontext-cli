@@ -145,7 +145,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	fmt.Fprintln(opts.Stdout, "\nMac")
 
-	configPath, err := writeUserManagedConfig(cloudURL, ping.OrganizationID, deviceLabel(ctx))
+	configPath, err := writeUserManagedConfig(cloudURL, deviceLabel(ctx))
 	if err != nil {
 		return err
 	}
@@ -301,18 +301,17 @@ func deviceLabel(ctx context.Context) string {
 	return host
 }
 
-func writeUserManagedConfig(cloudURL, organizationID, label string) (string, error) {
+func writeUserManagedConfig(cloudURL, label string) (string, error) {
 	path := managedconfig.UserPath()
 	if path == "" {
 		return "", errors.New("cannot resolve your home directory")
 	}
 
 	cfg := managedconfig.Config{
-		Version:        managedconfig.Version,
-		OrganizationID: organizationID,
-		CloudURL:       cloudURL,
-		Mode:           managedconfig.Mode,
-		Agent:          managedconfig.Agent,
+		Version:  managedconfig.Version,
+		CloudURL: cloudURL,
+		Mode:     managedconfig.Mode,
+		Agent:    managedconfig.Agent,
 		Credentials: managedconfig.Credentials{
 			InstallTokenRef: managedconfig.TokenRef{Source: "keychain", Name: KeychainItemName},
 		},

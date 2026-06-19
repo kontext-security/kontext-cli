@@ -32,7 +32,6 @@ func PrintStatus(out io.Writer) {
 	}
 
 	fmt.Fprintf(out, "  config: %s (%s)\n", loaded.Path, describeScope(loaded.Scope))
-	fmt.Fprintf(out, "  organization: %s\n", loaded.Config.OrganizationID)
 
 	identityPath := installationPathForScope(loaded.Scope)
 	if state, err := installation.LoadFile(identityPath); err == nil {

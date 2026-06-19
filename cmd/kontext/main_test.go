@@ -208,7 +208,6 @@ func writeManagedConfigForCmdTest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "managed.json")
 	if err := os.WriteFile(path, []byte(`{
   "version": "managed-install-v1",
-  "organization_id": "org_123",
   "cloud_url": "https://app.kontext.dev",
   "mode": "observe",
   "agent": "claude",

@@ -86,18 +86,28 @@ func ResolvePath() (string, Scope) {
 }
 
 type Config struct {
-	Version        string      `json:"version"`
-	OrganizationID string      `json:"organization_id"`
-	CloudURL       string      `json:"cloud_url"`
-	Mode           string      `json:"mode"`
-	Agent          string      `json:"agent"`
-	Credentials    Credentials `json:"credentials"`
-	Device         Device      `json:"device,omitempty"`
+	Version     string      `json:"version"`
+	CloudURL    string      `json:"cloud_url"`
+	Mode        string      `json:"mode"`
+	Agent       string      `json:"agent"`
+	Credentials Credentials `json:"credentials"`
+	Device      Device      `json:"device,omitempty"`
 	// CoworkEnabled turns on Claude Cowork observation/enforcement in the
 	// managed-observe daemon (the posture follows Mode). A managed.json field
 	// so MDM-deployed installs control it through config rather than launchd
 	// environment plumbing.
 	CoworkEnabled bool `json:"cowork_enabled,omitempty"`
+}
+
+type configFile struct {
+	Version              string          `json:"version"`
+	LegacyOrganizationID json.RawMessage `json:"organization_id,omitempty"`
+	CloudURL             string          `json:"cloud_url"`
+	Mode                 string          `json:"mode"`
+	Agent                string          `json:"agent"`
+	Credentials          Credentials     `json:"credentials"`
+	Device               Device          `json:"device,omitempty"`
+	CoworkEnabled        bool            `json:"cowork_enabled,omitempty"`
 }
 
 type Credentials struct {
@@ -170,14 +180,22 @@ func Parse(data []byte) (Config, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 
-	var cfg Config
-	if err := decoder.Decode(&cfg); err != nil {
+	var file configFile
+	if err := decoder.Decode(&file); err != nil {
 		return Config{}, err
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Config{}, errors.New("unexpected trailing JSON value")
 	}
-	return normalizeAndValidate(cfg)
+	return normalizeAndValidate(Config{
+		Version:       file.Version,
+		CloudURL:      file.CloudURL,
+		Mode:          file.Mode,
+		Agent:         file.Agent,
+		Credentials:   file.Credentials,
+		Device:        file.Device,
+		CoworkEnabled: file.CoworkEnabled,
+	})
 }
 
 func ParseTokenRef(value string) (TokenRef, error) {
@@ -240,7 +258,6 @@ func ResolveInstallToken(ctx context.Context, ref TokenRef) (string, error) {
 
 func normalizeAndValidate(cfg Config) (Config, error) {
 	cfg.Version = strings.TrimSpace(cfg.Version)
-	cfg.OrganizationID = strings.TrimSpace(cfg.OrganizationID)
 	cfg.CloudURL = strings.TrimSpace(cfg.CloudURL)
 	cfg.Mode = strings.TrimSpace(cfg.Mode)
 	cfg.Agent = strings.TrimSpace(cfg.Agent)
@@ -250,9 +267,6 @@ func normalizeAndValidate(cfg Config) (Config, error) {
 
 	if cfg.Version != Version {
 		return Config{}, fmt.Errorf("version must be %q", Version)
-	}
-	if cfg.OrganizationID == "" {
-		return Config{}, errors.New("organization_id is required")
 	}
 	if err := validateCloudURL(cfg.CloudURL); err != nil {
 		return Config{}, err

@@ -19,7 +19,6 @@ func TestLoadFileMissingReturnsErrNotManaged(t *testing.T) {
 func TestParseValidConfigNormalizesStrings(t *testing.T) {
 	cfg, err := Parse([]byte(`{
   "version": " managed-install-v1 ",
-  "organization_id": " org_123 ",
   "cloud_url": " https://api.kontext.dev ",
   "mode": " observe ",
   "agent": " claude ",
@@ -33,7 +32,7 @@ func TestParseValidConfigNormalizesStrings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if cfg.Version != Version || cfg.OrganizationID != "org_123" || cfg.CloudURL != "https://api.kontext.dev" {
+	if cfg.Version != Version || cfg.CloudURL != "https://api.kontext.dev" {
 		t.Fatalf("config not normalized: %+v", cfg)
 	}
 	if got := cfg.Credentials.InstallTokenRef; got.Source != "keychain" || got.Name != "kontext-managed-install-token" {
@@ -41,6 +40,14 @@ func TestParseValidConfigNormalizesStrings(t *testing.T) {
 	}
 	if cfg.Device.Label != "Engineering Mac" {
 		t.Fatalf("device label = %q", cfg.Device.Label)
+	}
+}
+
+func TestParseIgnoresLegacyOrganizationID(t *testing.T) {
+	input := strings.Replace(validConfigJSON(), `"cloud_url":`, `"organization_id": "org_123",
+  "cloud_url":`, 1)
+	if _, err := Parse([]byte(input)); err != nil {
+		t.Fatalf("Parse() error = %v", err)
 	}
 }
 
@@ -79,7 +86,6 @@ func TestParseModeObserveAndEnforce(t *testing.T) {
 func TestParseRejectsUnknownFields(t *testing.T) {
 	_, err := Parse([]byte(`{
   "version": "managed-install-v1",
-  "organization_id": "org_123",
   "cloud_url": "https://api.kontext.dev",
   "mode": "observe",
   "agent": "claude",
@@ -101,7 +107,6 @@ func TestParseRejectsTrailingJSON(t *testing.T) {
 func TestParseRequiresFields(t *testing.T) {
 	tests := map[string]string{
 		"version":           `"version": ""`,
-		"organization_id":   `"organization_id": ""`,
 		"cloud_url":         `"cloud_url": ""`,
 		"mode":              `"mode": ""`,
 		"agent":             `"agent": ""`,
@@ -266,7 +271,6 @@ func TestLoadFileReturnsChecksumAndPath(t *testing.T) {
 func validConfigJSON() string {
 	return `{
   "version": "managed-install-v1",
-  "organization_id": "org_123",
   "cloud_url": "https://api.kontext.dev",
   "mode": "observe",
   "agent": "claude",
@@ -285,11 +289,10 @@ func replacementFor(field string) string {
 		return `"install_token_ref": "env:KONTEXT_INSTALL_TOKEN"`
 	default:
 		return `"` + field + `": "` + map[string]string{
-			"version":         "managed-install-v1",
-			"organization_id": "org_123",
-			"cloud_url":       "https://api.kontext.dev",
-			"mode":            "observe",
-			"agent":           "claude",
+			"version":   "managed-install-v1",
+			"cloud_url": "https://api.kontext.dev",
+			"mode":      "observe",
+			"agent":     "claude",
 		}[field] + `"`
 	}
 }
