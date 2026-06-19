@@ -1,6 +1,7 @@
 package agenthooks
 
 import (
+	"encoding/json"
 	"errors"
 	"maps"
 )
@@ -20,6 +21,20 @@ type Config struct {
 	Settings         map[string]any
 	HooksKey         string
 	HooksDescription string
+}
+
+// ToJSONAny round-trips a typed value through JSON so it lands in a generic
+// map with the same shape WriteJSONFile will serialize.
+func ToJSONAny(value any) (any, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var out any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // HooksMap returns the hooks object from the config. A missing hooks key is an

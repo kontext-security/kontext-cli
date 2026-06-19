@@ -314,11 +314,7 @@ func validateAsync(event Event, async *bool) error {
 }
 
 func hookCommand(kontextBinary, alias string) string {
-	return shellQuote(kontextBinary) + " hook " + shellQuote(alias)
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+	return agenthooks.ShellQuote(kontextBinary) + " hook " + agenthooks.ShellQuote(alias)
 }
 
 func isAllMatcher(value string) bool {

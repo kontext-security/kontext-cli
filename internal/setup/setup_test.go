@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
+	"github.com/kontext-security/kontext-cli/internal/codexmanaged"
 	"github.com/kontext-security/kontext-cli/internal/installation"
 	"github.com/kontext-security/kontext-cli/internal/managedconfig"
 )
@@ -205,6 +206,15 @@ func TestRunFullFlow(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(h.home, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Fatalf("setup created user settings file: %v", err)
 	}
+	codexHooksPath := filepath.Join(h.home, ".codex", "hooks.json")
+	codexHooks, err := codexmanaged.ReadHooks(codexHooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]any{"hooks": codexHooks["hooks"]})
+	if err := codexmanaged.Validate(raw, "/opt/homebrew/bin/kontext"); err != nil {
+		t.Fatalf("Codex hooks invalid after setup: %v", err)
+	}
 
 	// LaunchAgent plist written and lifecycle ordered bootout -> bootstrap
 	// in the user's GUI domain. RunAtLoad starts the daemon after bootstrap.
@@ -231,6 +241,7 @@ func TestRunFullFlow(t *testing.T) {
 		"Workspace\n  ✓ Acme (org_test)",
 		"Mac\n  ✓ Config written",
 		"  ✓ Claude Code managed hooks installed",
+		"  ✓ Codex hooks installed",
 		"  • Installing background agent...",
 		"  • Waiting for background agent...",
 		"  ✓ Background agent running",
@@ -243,6 +254,9 @@ func TestRunFullFlow(t *testing.T) {
 	}
 	if strings.Contains(stdout, "Start a Claude Code session") {
 		t.Fatalf("stdout still uses old ending:\n%s", stdout)
+	}
+	if errOut := h.errOut.String(); !strings.Contains(errOut, "Codex hooks require review") || !strings.Contains(errOut, "/hooks") {
+		t.Fatalf("stderr missing Codex /hooks trust review note:\n%s", errOut)
 	}
 
 	// The raw token never travels in argv — only via `security -i` stdin.
@@ -287,6 +301,14 @@ func TestRunIsIdempotent(t *testing.T) {
 	if err := claudemanaged.Validate(data, "/opt/homebrew/bin/kontext"); err != nil {
 		t.Fatalf("managed hooks invalid after re-run: %v", err)
 	}
+	codexHooks, err := codexmanaged.ReadHooks(filepath.Join(h.home, ".codex", "hooks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := codexHooks["hooks"].(map[string]any)["PreToolUse"].([]any)
+	if len(groups) != 1 {
+		t.Fatalf("Codex PreToolUse groups after re-run = %d, want 1", len(groups))
+	}
 }
 
 func TestRunRejectsRevokedToken(t *testing.T) {
@@ -304,6 +326,35 @@ func TestRunRejectsRevokedToken(t *testing.T) {
 	}
 	if _, err := os.Stat(managedconfig.UserPath()); !os.IsNotExist(err) {
 		t.Fatal("managed.json written despite rejected token")
+	}
+}
+
+func TestRunRejectsMalformedCodexHooksBeforeWritingState(t *testing.T) {
+	h := newHarness(t)
+	allowLoopback(t)
+	codexHooksPath := filepath.Join(h.home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(codexHooksPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(codexHooksPath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Run(context.Background(), h.options("tok-123", pingServer(t, "tok-123")))
+	if err == nil || !strings.Contains(err.Error(), "check Codex hooks") {
+		t.Fatalf("Run() error = %v, want Codex hook preflight failure", err)
+	}
+	if len(h.keychain) != 0 {
+		t.Fatal("keychain written despite malformed Codex hooks")
+	}
+	if _, err := os.Stat(managedconfig.UserPath()); !os.IsNotExist(err) {
+		t.Fatal("managed.json written despite malformed Codex hooks")
+	}
+	if _, err := os.Stat(installation.UserPath()); !os.IsNotExist(err) {
+		t.Fatal("installation identity written despite malformed Codex hooks")
+	}
+	if _, err := os.Stat(managedSettingsPath); !os.IsNotExist(err) {
+		t.Fatal("managed settings written despite malformed Codex hooks")
 	}
 }
 
@@ -734,6 +785,19 @@ func TestUninstallReversesSetupKeepingIdentity(t *testing.T) {
 	if err := claudemanaged.WriteUserSettings(settingsPath, settings); err != nil {
 		t.Fatal(err)
 	}
+	codexHooksPath := filepath.Join(h.home, ".codex", "hooks.json")
+	codexHooks, err := codexmanaged.ReadHooks(codexHooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexEvents := codexHooks["hooks"].(map[string]any)
+	codexEvents["PreToolUse"] = append(codexEvents["PreToolUse"].([]any), map[string]any{
+		"matcher": "Edit",
+		"hooks":   []any{map[string]any{"type": "command", "command": "codex-lint-check"}},
+	})
+	if err := codexmanaged.WriteHooks(codexHooksPath, codexHooks); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := Uninstall(context.Background(), h.options("", pingServer(t, "unused"))); err != nil {
 		t.Fatalf("Uninstall() error = %v", err)
@@ -757,7 +821,7 @@ func TestUninstallReversesSetupKeepingIdentity(t *testing.T) {
 		t.Fatalf("installation identity removed: %v", err)
 	}
 	// Legacy user hook gone, the foreign one intact.
-	settings, err := claudemanaged.ReadUserSettings(settingsPath)
+	settings, err = claudemanaged.ReadUserSettings(settingsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -765,10 +829,46 @@ func TestUninstallReversesSetupKeepingIdentity(t *testing.T) {
 	if len(pre) != 1 || pre[0].(map[string]any)["matcher"] != "Edit" {
 		t.Fatalf("foreign hook lost or ours kept: %v", pre)
 	}
+	codexHooks, err = codexmanaged.ReadHooks(codexHooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pre = codexHooks["hooks"].(map[string]any)["PreToolUse"].([]any)
+	if len(pre) != 1 || pre[0].(map[string]any)["matcher"] != "Edit" {
+		t.Fatalf("foreign Codex hook lost or ours kept: %v", pre)
+	}
 
 	// Idempotent: a second uninstall is clean.
 	if err := Uninstall(context.Background(), h.options("", pingServer(t, "unused"))); err != nil {
 		t.Fatalf("second Uninstall() error = %v", err)
+	}
+}
+
+func TestUninstallWarnsAndContinuesWhenCodexHooksMalformed(t *testing.T) {
+	h := newHarness(t)
+	allowLoopback(t)
+	server := pingServer(t, "tok-123")
+	if err := Run(context.Background(), h.options("tok-123", server)); err != nil {
+		t.Fatal(err)
+	}
+	codexHooksPath := filepath.Join(h.home, ".codex", "hooks.json")
+	if err := os.WriteFile(codexHooksPath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	h.errOut.Reset()
+	if err := Uninstall(context.Background(), h.options("", pingServer(t, "unused"))); err != nil {
+		t.Fatalf("Uninstall() error = %v", err)
+	}
+
+	if len(h.keychain) != 0 {
+		t.Fatal("keychain item not removed after Codex hook warning")
+	}
+	if _, err := os.Stat(managedconfig.UserPath()); !os.IsNotExist(err) {
+		t.Fatal("managed.json not removed after Codex hook warning")
+	}
+	if !strings.Contains(h.errOut.String(), "warning: Codex hooks could not be removed") {
+		t.Fatalf("stderr missing Codex warning:\n%s", h.errOut.String())
 	}
 }
 
@@ -1183,6 +1283,13 @@ func TestUninstallWithoutSettingsFileDoesNotCreateOne(t *testing.T) {
 	settingsPath := filepath.Join(h.home, ".claude", "settings.json")
 	if _, err := os.Lstat(settingsPath); !os.IsNotExist(err) {
 		t.Fatalf("uninstall created %s", settingsPath)
+	}
+	codexHooksPath := filepath.Join(h.home, ".codex", "hooks.json")
+	if _, err := os.Lstat(codexHooksPath); !os.IsNotExist(err) {
+		t.Fatalf("uninstall created %s", codexHooksPath)
+	}
+	if _, err := os.Lstat(filepath.Dir(codexHooksPath)); !os.IsNotExist(err) {
+		t.Fatalf("uninstall created %s", filepath.Dir(codexHooksPath))
 	}
 }
 

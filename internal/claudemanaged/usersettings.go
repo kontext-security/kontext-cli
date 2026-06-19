@@ -1,14 +1,9 @@
 package claudemanaged
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/kontext-security/kontext-cli/internal/agenthooks"
 	"github.com/kontext-security/kontext-cli/internal/hook"
@@ -36,18 +31,7 @@ func UserSettingsPath() (string, error) {
 // ReadUserSettings parses the settings file into a generic map so unknown
 // keys survive a read-merge-write round trip. A missing file is an empty map.
 func ReadUserSettings(path string) (map[string]any, error) {
-	settings := map[string]any{}
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return settings, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(raw, &settings); err != nil {
-		return nil, fmt.Errorf("parse Claude settings: %w", err)
-	}
-	return settings, nil
+	return agenthooks.ReadJSONFile(path, "Claude settings")
 }
 
 // WriteUserSettings writes the settings back atomically (temp file + rename,
@@ -55,90 +39,13 @@ func ReadUserSettings(path string) (map[string]any, error) {
 // preserving the existing file's permission bits (a user may keep their
 // settings private); new files are created 0600.
 func WriteUserSettings(path string, settings map[string]any) error {
-	writePath := path
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		target, err := filepath.EvalSymlinks(path)
-		if err != nil {
-			return err
-		}
-		writePath = target
-	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-
-	mode := fs.FileMode(0o600)
-	if info, err := os.Stat(writePath); err == nil {
-		mode = info.Mode().Perm()
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	temp, err := os.CreateTemp(filepath.Dir(writePath), ".settings-*.tmp")
-	if err != nil {
-		return err
-	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if err := temp.Chmod(mode); err != nil {
-		temp.Close()
-		return err
-	}
-	if _, err := temp.Write(append(data, '\n')); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempPath, writePath)
+	return agenthooks.WriteJSONFile(path, settings)
 }
 
 // BackupUserSettings copies the file aside (timestamped, same permissions)
 // before a mutation. Missing file is a no-op.
 func BackupUserSettings(path, label string) error {
-	info, err := os.Stat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	backupPathPrefix := fmt.Sprintf("%s.%s-backup-%s", path, label, time.Now().UTC().Format("20060102T150405.000000000Z"))
-	var file *os.File
-	for attempt := 0; attempt < 100; attempt++ {
-		backupPath := backupPathPrefix
-		if attempt > 0 {
-			backupPath = fmt.Sprintf("%s-%d", backupPathPrefix, attempt)
-		}
-		file, err = os.OpenFile(backupPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
-		if errors.Is(err, fs.ErrExist) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		break
-	}
-	if file == nil {
-		return fmt.Errorf("create backup for %s: too many timestamp collisions", path)
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		return err
-	}
-	return file.Close()
+	return agenthooks.BackupFile(path, label)
 }
 
 // IsGuardHookCommand reports whether a hook command belongs to Kontext Guard
