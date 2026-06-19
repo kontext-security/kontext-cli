@@ -170,7 +170,7 @@ func (s *Service) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	if s.asyncIngest && shouldAsyncIngest(&req) {
+	if s.shouldAsyncIngest(&req) {
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
@@ -192,14 +192,6 @@ func (s *Service) ingestEvent(ctx context.Context, req *EvaluateRequest) {
 	s.closeSessionEnd(ctx, event)
 }
 
-func shouldAsyncIngest(req *EvaluateRequest) bool {
-	if req == nil {
-		return false
-	}
-	hookName, ok := normalizeHookName(req.HookEvent)
-	return ok && !hookName.CanBlock()
-}
-
 func (s *Service) process(ctx context.Context, req *EvaluateRequest) EvaluateResult {
 	event, err := EventFromEvaluateRequest(s.sessionID, s.agentName, req)
 	if err != nil {
@@ -219,6 +211,14 @@ func (s *Service) process(ctx context.Context, req *EvaluateRequest) EvaluateRes
 	}
 	s.closeSessionEnd(ctx, event)
 	return s.result(event, result)
+}
+
+func (s *Service) shouldAsyncIngest(req *EvaluateRequest) bool {
+	if !s.asyncIngest || req == nil {
+		return false
+	}
+	hookName, ok := normalizeHookName(req.HookEvent)
+	return ok && !hookName.CanBlock()
 }
 
 func (s *Service) result(event hook.Event, result hook.Result) EvaluateResult {

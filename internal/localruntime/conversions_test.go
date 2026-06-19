@@ -48,6 +48,26 @@ func TestEvaluateRequestFromEventPreservesHookFields(t *testing.T) {
 	}
 }
 
+func TestEvaluateRequestFromEventPreservesPermissionRequest(t *testing.T) {
+	t.Parallel()
+
+	req, err := EvaluateRequestFromEvent(hook.Event{
+		HookName:  hook.HookPermissionRequest,
+		ToolName:  "Bash",
+		ToolInput: map[string]any{"command": "sudo make install"},
+	})
+	if err != nil {
+		t.Fatalf("EvaluateRequestFromEvent() error = %v", err)
+	}
+
+	if req.HookEvent != "PermissionRequest" || req.ToolName != "Bash" {
+		t.Fatalf("request = %+v, want PermissionRequest Bash event", req)
+	}
+	if !json.Valid(req.ToolInput) {
+		t.Fatalf("ToolInput = %s, want valid JSON", req.ToolInput)
+	}
+}
+
 func TestEventFromEvaluateRequestPreservesHookFields(t *testing.T) {
 	t.Parallel()
 
@@ -85,6 +105,26 @@ func TestEventFromEvaluateRequestPreservesHookFields(t *testing.T) {
 		event.IsInterrupt == nil ||
 		*event.IsInterrupt {
 		t.Fatalf("event = %+v, want request fields preserved", event)
+	}
+}
+
+func TestEventFromEvaluateRequestAcceptsPermissionRequest(t *testing.T) {
+	t.Parallel()
+
+	event, err := EventFromEvaluateRequest("session-123", "codex", &EvaluateRequest{
+		HookEvent: "PermissionRequest",
+		ToolName:  "Bash",
+		ToolInput: json.RawMessage(`{"command":"sudo make install"}`),
+	})
+	if err != nil {
+		t.Fatalf("EventFromEvaluateRequest() error = %v", err)
+	}
+
+	if event.HookName != hook.HookPermissionRequest || !event.HookName.CanBlock() {
+		t.Fatalf("event.HookName = %q, want blocking PermissionRequest", event.HookName)
+	}
+	if event.ToolInput["command"] != "sudo make install" {
+		t.Fatalf("ToolInput[command] = %v, want command preserved", event.ToolInput["command"])
 	}
 }
 

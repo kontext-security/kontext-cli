@@ -197,6 +197,19 @@ func TestDeterministicDecisionBlocksDestructiveCommand(t *testing.T) {
 	}
 }
 
+func TestDeterministicDecisionBlocksPermissionRequest(t *testing.T) {
+	decision, err := DecideRisk(HookEvent{HookEventName: "PermissionRequest", ToolName: "Bash", ToolInput: map[string]any{"command": "drop database"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Decision != DecisionDeny {
+		t.Fatalf("decision = %s", decision.Decision)
+	}
+	if decision.ReasonCode != "destructive_operation_without_intent" {
+		t.Fatalf("reason code = %s", decision.ReasonCode)
+	}
+}
+
 func TestDeterministicDecisionAllowsNormalToolCalls(t *testing.T) {
 	decision, err := DecideRisk(HookEvent{HookEventName: "PreToolUse", ToolName: "Read", ToolInput: map[string]any{"file_path": "README.md"}})
 	if err != nil {

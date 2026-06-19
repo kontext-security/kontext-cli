@@ -5,7 +5,7 @@ const PolicyVersionLaunchV0 = "guard-launch-v0"
 func DecideRisk(event HookEvent) (RiskDecision, error) {
 	riskEvent := NormalizeHookEvent(event)
 	riskEvent.PolicyVersion = PolicyVersionLaunchV0
-	if event.HookEventName != "PreToolUse" {
+	if !evaluatesRiskPolicy(event.HookEventName) {
 		riskEvent.Decision = DecisionAllow
 		riskEvent.ReasonCode = "async_telemetry"
 		riskEvent.DecisionStage = "async_telemetry"
@@ -39,6 +39,15 @@ func DecideRisk(event HookEvent) (RiskDecision, error) {
 		}
 	}
 	return decision, nil
+}
+
+func evaluatesRiskPolicy(hookEventName string) bool {
+	switch hookEventName {
+	case "PreToolUse", "PermissionRequest":
+		return true
+	default:
+		return false
+	}
 }
 
 func DeterministicDecision(event RiskEvent) RiskDecision {

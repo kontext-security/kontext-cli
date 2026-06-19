@@ -37,8 +37,14 @@ type codexHookSpecificOutput struct {
 	HookEventName            string         `json:"hookEventName"`
 	PermissionDecision       string         `json:"permissionDecision,omitempty"`
 	PermissionDecisionReason string         `json:"permissionDecisionReason,omitempty"`
+	Decision                 *codexDecision `json:"decision,omitempty"`
 	AdditionalContext        string         `json:"additionalContext,omitempty"`
 	UpdatedInput             map[string]any `json:"updatedInput,omitempty"`
+}
+
+type codexDecision struct {
+	Behavior string `json:"behavior"`
+	Message  string `json:"message,omitempty"`
 }
 
 func DecodeCodexEvent(input []byte, agentName string) (hook.Event, error) {
@@ -81,6 +87,9 @@ func EncodeCodexResult(hookEventName string, result hook.Result) ([]byte, error)
 	if hookName == hook.HookPreToolUse {
 		return encodeCodexPreToolUseResult(hookEventName, result, reason)
 	}
+	if hookName == hook.HookPermissionRequest {
+		return encodeCodexPermissionRequestResult(hookEventName, result)
+	}
 	return encodeCodexNonPreToolUseResult(hookEventName, result, reason)
 }
 
@@ -109,6 +118,48 @@ func encodeCodexPreToolUseResult(hookEventName string, result hook.Result, reaso
 		out.HookSpecificOutput.PermissionDecision = string(hook.DecisionAllow)
 	}
 	return json.Marshal(out)
+}
+
+func encodeCodexPermissionRequestResult(hookEventName string, result hook.Result) ([]byte, error) {
+	if codexShouldDeclinePermissionRequest(result) {
+		return json.Marshal(codexHookOutput{})
+	}
+	if result.Decision != hook.DecisionAllow {
+		return json.Marshal(codexHookOutput{
+			HookSpecificOutput: &codexHookSpecificOutput{
+				HookEventName: hookEventName,
+				Decision: &codexDecision{
+					Behavior: string(hook.DecisionDeny),
+					Message:  result.ClaudeReason(),
+				},
+			},
+		})
+	}
+	if !codexCanAllowPermissionRequest(result) {
+		return json.Marshal(codexHookOutput{})
+	}
+	return json.Marshal(codexHookOutput{
+		HookSpecificOutput: &codexHookSpecificOutput{
+			HookEventName: hookEventName,
+			Decision: &codexDecision{
+				Behavior: string(hook.DecisionAllow),
+			},
+		},
+	})
+}
+
+func codexShouldDeclinePermissionRequest(result hook.Result) bool {
+	if strings.EqualFold(strings.TrimSpace(result.Mode), "observe") {
+		return true
+	}
+	reason := strings.TrimSpace(result.Reason)
+	return strings.HasPrefix(reason, "Kontext observe mode: would deny;") ||
+		strings.HasPrefix(reason, "Kontext observe mode: would allow;")
+}
+
+func codexCanAllowPermissionRequest(result hook.Result) bool {
+	mode := strings.TrimSpace(result.Mode)
+	return mode == "" || strings.EqualFold(mode, "local") || strings.EqualFold(mode, "enforce")
 }
 
 func encodeCodexNonPreToolUseResult(hookEventName string, result hook.Result, reason string) ([]byte, error) {
@@ -143,6 +194,7 @@ func codexSupportedHook(hookName hook.HookName) bool {
 	switch hookName {
 	case hook.HookSessionStart,
 		hook.HookPreToolUse,
+		hook.HookPermissionRequest,
 		hook.HookPostToolUse,
 		hook.HookPostToolUseFailed,
 		hook.HookSessionEnd,

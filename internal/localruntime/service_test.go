@@ -42,6 +42,42 @@ func TestServiceEvaluatesBlockingHook(t *testing.T) {
 	}
 }
 
+func TestServiceEvaluatesPermissionRequestSynchronously(t *testing.T) {
+	t.Parallel()
+
+	runtime := &stubRuntime{
+		evaluateResult: hook.Result{
+			Decision: hook.DecisionDeny,
+			Reason:   "blocked by runtime",
+		},
+	}
+	service := newTestService(t, runtime, true)
+	client := NewClient(service.SocketPath())
+
+	result, err := client.Process(context.Background(), hook.Event{
+		HookName: hook.HookPermissionRequest,
+		ToolName: "Bash",
+		ToolInput: map[string]any{
+			"command": "sudo make install",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if result.Decision != hook.DecisionDeny || result.Reason != "blocked by runtime" {
+		t.Fatalf("Process() = %+v, want runtime deny result", result)
+	}
+	if got := runtime.evaluateCalls.Load(); got != 1 {
+		t.Fatalf("EvaluateHook calls = %d, want 1", got)
+	}
+	if err := service.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	if got := runtime.ingestCalls.Load(); got != 0 {
+		t.Fatalf("IngestEvent calls = %d, want 0", got)
+	}
+}
+
 func TestServiceCanAckTelemetryBeforeAsyncIngest(t *testing.T) {
 	t.Parallel()
 
@@ -256,6 +292,23 @@ func TestServiceFailsClosedWhenBlockingHookPayloadCannotDecode(t *testing.T) {
 	service := newTestService(t, &stubRuntime{}, false)
 	result := service.process(context.Background(), &EvaluateRequest{
 		HookEvent: "PreToolUse",
+		ToolInput: []byte(`{`),
+	})
+
+	if result.Allowed {
+		t.Fatal("result.Allowed = true, want false")
+	}
+	if result.Decision != string(hook.DecisionDeny) {
+		t.Fatalf("result.Decision = %q, want deny", result.Decision)
+	}
+}
+
+func TestServiceFailsClosedWhenPermissionRequestPayloadCannotDecode(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService(t, &stubRuntime{}, true)
+	result := service.process(context.Background(), &EvaluateRequest{
+		HookEvent: "PermissionRequest",
 		ToolInput: []byte(`{`),
 	})
 

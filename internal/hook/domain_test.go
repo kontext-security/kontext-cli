@@ -75,6 +75,9 @@ func TestHookNameCanBlock(t *testing.T) {
 	if !HookUserPromptSubmit.CanBlock() {
 		t.Fatalf("HookUserPromptSubmit.CanBlock() = false, want true")
 	}
+	if !HookPermissionRequest.CanBlock() {
+		t.Fatalf("HookPermissionRequest.CanBlock() = false, want true")
+	}
 	if HookPostToolUse.CanBlock() {
 		t.Fatalf("HookPostToolUse.CanBlock() = true, want false")
 	}
@@ -95,6 +98,7 @@ func TestParseEventAlias(t *testing.T) {
 	}{
 		{alias: "session-start", want: HookSessionStart},
 		{alias: "pre-tool-use", want: HookPreToolUse},
+		{alias: "permission-request", want: HookPermissionRequest},
 		{alias: "post-tool-use", want: HookPostToolUse},
 		{alias: "post-tool-use-failure", want: HookPostToolUseFailed},
 		{alias: "session-end", want: HookSessionEnd},
@@ -124,7 +128,14 @@ func TestParseEventAlias(t *testing.T) {
 func TestAliasForEvent(t *testing.T) {
 	t.Parallel()
 
-	got, ok := AliasForEvent(HookUserPromptSubmit)
+	got, ok := AliasForEvent(HookPermissionRequest)
+	if !ok {
+		t.Fatal("AliasForEvent(HookPermissionRequest) ok = false")
+	}
+	if got != "permission-request" {
+		t.Fatalf("AliasForEvent(HookPermissionRequest) = %q, want permission-request", got)
+	}
+	got, ok = AliasForEvent(HookUserPromptSubmit)
 	if !ok {
 		t.Fatal("AliasForEvent(HookUserPromptSubmit) ok = false")
 	}

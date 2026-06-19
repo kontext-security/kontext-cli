@@ -7,6 +7,7 @@ type HookName string
 const (
 	HookSessionStart      HookName = "SessionStart"
 	HookPreToolUse        HookName = "PreToolUse"
+	HookPermissionRequest HookName = "PermissionRequest"
 	HookPostToolUse       HookName = "PostToolUse"
 	HookPostToolUseFailed HookName = "PostToolUseFailure"
 	HookSessionEnd        HookName = "SessionEnd"
@@ -19,7 +20,7 @@ func (h HookName) String() string {
 
 func (h HookName) IsKnown() bool {
 	switch h {
-	case HookSessionStart, HookPreToolUse, HookPostToolUse, HookPostToolUseFailed, HookSessionEnd, HookUserPromptSubmit:
+	case HookSessionStart, HookPreToolUse, HookPermissionRequest, HookPostToolUse, HookPostToolUseFailed, HookSessionEnd, HookUserPromptSubmit:
 		return true
 	default:
 		return false
@@ -27,7 +28,7 @@ func (h HookName) IsKnown() bool {
 }
 
 func (h HookName) CanBlock() bool {
-	return h == HookPreToolUse || h == HookUserPromptSubmit
+	return h == HookPreToolUse || h == HookPermissionRequest || h == HookUserPromptSubmit
 }
 
 type EventAlias struct {
@@ -38,6 +39,7 @@ type EventAlias struct {
 var eventAliases = []EventAlias{
 	{Name: HookSessionStart, Alias: "session-start"},
 	{Name: HookPreToolUse, Alias: "pre-tool-use"},
+	{Name: HookPermissionRequest, Alias: "permission-request"},
 	{Name: HookPostToolUse, Alias: "post-tool-use"},
 	{Name: HookPostToolUseFailed, Alias: "post-tool-use-failure"},
 	{Name: HookSessionEnd, Alias: "session-end"},

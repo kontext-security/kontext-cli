@@ -201,6 +201,7 @@ func TestIsManagedHookCommand(t *testing.T) {
 		{"'/usr/local/bin/kontext' hook --agent 'codex' 'pre-tool-use'", true},
 		{"'/Users/o'\\''brien/bin/kontext' hook --agent 'codex' 'pre-tool-use'", true},
 		{"'/Applications/Kontext CLI/kontext' hook --agent 'codex' 'session-start'", true},
+		{"'/opt/homebrew/bin/kontext' hook --agent codex permission-request", true},
 		{"'/Applications/Kontext CLI/kontext' hook --agent 'codex' 'post-tool-use-failure'", true},
 		{"'/Applications/Kontext CLI/kontext' hook --agent 'codex' 'session-end'", true},
 		{"'/opt/homebrew/bin/kontext' hook --agent codex user-prompt-submit", true},

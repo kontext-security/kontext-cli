@@ -174,15 +174,118 @@ func TestDecodeCodexEventPostToolUsePreservesArrayResponse(t *testing.T) {
 	}
 }
 
-func TestDecodeCodexEventRejectsUnsupportedPermissionRequest(t *testing.T) {
+func TestDecodeCodexEventPermissionRequest(t *testing.T) {
 	t.Parallel()
 
-	_, err := DecodeCodexEvent([]byte(`{"hook_event_name":"PermissionRequest"}`), "codex")
+	event, err := DecodeCodexEvent([]byte(`{
+		"session_id":"s1",
+		"hook_event_name":"PermissionRequest",
+		"tool_name":"Bash",
+		"tool_input":{"command":"sudo make install"}
+	}`), "codex")
+	if err != nil {
+		t.Fatalf("DecodeCodexEvent() error = %v", err)
+	}
+	if event.HookName != hook.HookPermissionRequest || !event.HookName.CanBlock() {
+		t.Fatalf("HookName = %q, want blocking PermissionRequest", event.HookName)
+	}
+	if event.ToolInput["command"] != "sudo make install" {
+		t.Fatalf("ToolInput[command] = %v, want command", event.ToolInput["command"])
+	}
+}
+
+func TestDecodeCodexEventRejectsUnsupportedEvent(t *testing.T) {
+	t.Parallel()
+
+	_, err := DecodeCodexEvent([]byte(`{"hook_event_name":"UnsupportedHook"}`), "codex")
 	if err == nil {
 		t.Fatal("DecodeCodexEvent() error = nil, want unsupported event error")
 	}
 	if !strings.Contains(err.Error(), "unsupported hook event") {
 		t.Fatalf("DecodeCodexEvent() error = %v, want unsupported hook event", err)
+	}
+}
+
+func TestEncodeCodexPermissionRequestDeny(t *testing.T) {
+	t.Parallel()
+
+	out, err := EncodeCodexResult("PermissionRequest", hook.Result{
+		Decision: hook.DecisionDeny,
+		Reason:   "Blocked by policy",
+	})
+	if err != nil {
+		t.Fatalf("EncodeCodexResult() error = %v", err)
+	}
+	var got codexHookOutput
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got.HookSpecificOutput == nil || got.HookSpecificOutput.Decision == nil {
+		t.Fatalf("EncodeCodexResult() = %s, want hookSpecificOutput.decision", out)
+	}
+	if got.HookSpecificOutput.Decision.Behavior != "deny" {
+		t.Fatalf("behavior = %q, want deny", got.HookSpecificOutput.Decision.Behavior)
+	}
+	if got.HookSpecificOutput.Decision.Message != "Blocked by policy" {
+		t.Fatalf("message = %q, want reason", got.HookSpecificOutput.Decision.Message)
+	}
+}
+
+func TestEncodeCodexPermissionRequestAllow(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{"", "local", "enforce"} {
+		mode := mode
+		t.Run("mode="+mode, func(t *testing.T) {
+			t.Parallel()
+
+			out, err := EncodeCodexResult("PermissionRequest", hook.Result{
+				Decision: hook.DecisionAllow,
+				Mode:     mode,
+				Reason:   "allowed",
+			})
+			if err != nil {
+				t.Fatalf("EncodeCodexResult() error = %v", err)
+			}
+			var got codexHookOutput
+			if err := json.Unmarshal(out, &got); err != nil {
+				t.Fatalf("Unmarshal() error = %v", err)
+			}
+			if got.HookSpecificOutput == nil || got.HookSpecificOutput.Decision == nil {
+				t.Fatalf("EncodeCodexResult() = %s, want hookSpecificOutput.decision", out)
+			}
+			if got.HookSpecificOutput.Decision.Behavior != "allow" {
+				t.Fatalf("behavior = %q, want allow", got.HookSpecificOutput.Decision.Behavior)
+			}
+			if got.HookSpecificOutput.Decision.Message != "" {
+				t.Fatalf("message = %q, want empty allow message", got.HookSpecificOutput.Decision.Message)
+			}
+		})
+	}
+}
+
+func TestEncodeCodexPermissionRequestDeclinesObserveDecisions(t *testing.T) {
+	t.Parallel()
+
+	tests := []hook.Result{
+		{Decision: hook.DecisionAllow, Mode: "observe", Reason: "Kontext observe mode: would deny; blocked"},
+		{Decision: hook.DecisionAllow, Mode: "observe", Reason: "Kontext observe mode: would allow; allowed"},
+		{Decision: hook.DecisionAllow, Reason: "Kontext observe mode: would deny; blocked"},
+		{Decision: hook.DecisionAllow, Mode: "no_policy", Reason: "backend observed a block"},
+	}
+	for _, result := range tests {
+		result := result
+		t.Run(result.Reason+" "+result.Mode, func(t *testing.T) {
+			t.Parallel()
+
+			out, err := EncodeCodexResult("PermissionRequest", result)
+			if err != nil {
+				t.Fatalf("EncodeCodexResult() error = %v", err)
+			}
+			if got := string(out); got != "{}" {
+				t.Fatalf("EncodeCodexResult() = %s, want empty object", got)
+			}
+		})
 	}
 }
 
@@ -265,7 +368,7 @@ func TestEncodeCodexUserPromptSubmitDenyBlocks(t *testing.T) {
 func TestEncodeCodexRejectsUnsupportedEvent(t *testing.T) {
 	t.Parallel()
 
-	_, err := EncodeCodexResult("PermissionRequest", hook.Result{Decision: hook.DecisionAllow})
+	_, err := EncodeCodexResult("UnsupportedHook", hook.Result{Decision: hook.DecisionAllow})
 	if err == nil {
 		t.Fatal("EncodeCodexResult() error = nil, want unsupported event error")
 	}

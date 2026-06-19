@@ -20,6 +20,7 @@ const (
 var SupportedEvents = []hook.EventAlias{
 	{Name: hook.HookSessionStart, Alias: "session-start"},
 	{Name: hook.HookPreToolUse, Alias: "pre-tool-use"},
+	{Name: hook.HookPermissionRequest, Alias: "permission-request"},
 	{Name: hook.HookPostToolUse, Alias: "post-tool-use"},
 	{Name: hook.HookPostToolUseFailed, Alias: "post-tool-use-failure"},
 	{Name: hook.HookSessionEnd, Alias: "session-end"},
