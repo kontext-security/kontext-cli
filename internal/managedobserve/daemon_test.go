@@ -12,9 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 	"github.com/kontext-security/kontext-cli/internal/hook"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
+	"github.com/kontext-security/kontext-cli/internal/managedconfig"
 )
 
 func TestDaemonPreservesHookSessionIDs(t *testing.T) {
@@ -453,6 +455,59 @@ func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
 		case <-deadline:
 			t.Fatal("timed out waiting for refreshed policy token")
 		}
+	}
+}
+
+func TestRunDaemonExitsCleanlyAfterHomebrewUpgradeSignal(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dir := t.TempDir()
+	socketDir, err := os.MkdirTemp("/tmp", "kontext-managedobserve-updater-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "kontext.sock")
+	dbPath := filepath.Join(dir, "guard.db")
+	writeTestManagedConfigWithCloudURL(t, filepath.Join(dir, "managed.json"), server.URL)
+	writeTestInstallation(t, filepath.Join(dir, "installation.json"))
+
+	upgraded := make(chan struct{}, 1)
+	started := make(chan struct{}, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunDaemon(ctx, DaemonOptions{
+			SocketPath:       socketPath,
+			DBPath:           dbPath,
+			IdleTimeout:      time.Hour,
+			StreamInterval:   time.Hour,
+			StreamHTTPClient: server.Client(),
+			HomebrewUpdater: func(context.Context, managedconfig.LoadedConfig, diagnostic.Logger) <-chan struct{} {
+				started <- struct{}{}
+				return upgraded
+			},
+		})
+	}()
+	waitForSocket(t, socketPath, errCh)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("updater did not start")
+	}
+
+	upgraded <- struct{}{}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("RunDaemon() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunDaemon did not exit after upgrade signal")
 	}
 }
 
