@@ -15,8 +15,10 @@
 // kontext cloud repository.
 package githubpolicy
 
-// SchemaVersion identifies the snapshot wire format.
-const SchemaVersion = "github-policy-snapshot-v1"
+// SchemaVersion identifies the snapshot wire format. v2 added the endpoint
+// layer and most-specific-wins evaluation; a snapshot at any other version is
+// rejected (fail closed) rather than misread under the wrong semantics.
+const SchemaVersion = "github-policy-snapshot-v2"
 
 // Enforcement directive for the local engine.
 //
