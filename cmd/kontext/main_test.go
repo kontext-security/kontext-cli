@@ -272,6 +272,14 @@ func TestExpectedHookEventFromArgs(t *testing.T) {
 		t.Fatalf("event = %q, want PreToolUse", event)
 	}
 
+	event, err = expectedHookEventFromArgs([]string{"user-prompt-submit"})
+	if err != nil {
+		t.Fatalf("expectedHookEventFromArgs(user-prompt-submit) error = %v", err)
+	}
+	if event != hook.HookUserPromptSubmit {
+		t.Fatalf("event = %q, want UserPromptSubmit", event)
+	}
+
 	_, err = expectedHookEventFromArgs([]string{"pretooluse"})
 	if err == nil {
 		t.Fatal("expectedHookEventFromArgs() error = nil, want non-nil")
@@ -569,6 +577,24 @@ func TestEvaluateHookWithSidecarFailsClosedWhenEnforceSocketMissing(t *testing.T
 		Agent:    "claude",
 		HookName: hook.HookPreToolUse,
 		ToolName: "Bash",
+	})
+	if err != nil {
+		t.Fatalf("evaluateHookWithSidecar() error = %v", err)
+	}
+	if result.Decision != hook.DecisionDeny {
+		t.Fatalf("decision = %q, want DENY", result.Decision)
+	}
+	if result.Reason != "sidecar socket missing" {
+		t.Fatalf("reason = %q, want missing socket", result.Reason)
+	}
+}
+
+func TestEvaluateHookWithSidecarFailsClosedForBlockingPromptWhenEnforceSocketMissing(t *testing.T) {
+	t.Setenv("KONTEXT_ACCESS_MODE", "enforce")
+
+	result, err := evaluateHookWithSidecar("", hook.Event{
+		Agent:    "codex",
+		HookName: hook.HookUserPromptSubmit,
 	})
 	if err != nil {
 		t.Fatalf("evaluateHookWithSidecar() error = %v", err)

@@ -139,7 +139,7 @@ func observeResult(event hook.Event, result hook.Result) hook.Result {
 	if result.Decision == "" {
 		result.Decision = hook.DecisionAllow
 	}
-	if event.HookName == hook.HookPreToolUse {
+	if event.HookName.CanBlock() {
 		decision := result.Decision
 		if result.Reason == "" {
 			result.Reason = "no reason provided"

@@ -27,6 +27,10 @@ func TestIngestEventRejectsBlockingHooks(t *testing.T) {
 	if err == nil {
 		t.Fatal("IngestEvent() error = nil, want blocking hook rejection")
 	}
+	_, err = core.IngestEvent(context.Background(), hook.Event{HookName: hook.HookUserPromptSubmit})
+	if err == nil {
+		t.Fatal("IngestEvent(UserPromptSubmit) error = nil, want blocking hook rejection")
+	}
 }
 
 func TestProcessHookRoutesByBlockingCapability(t *testing.T) {
@@ -42,15 +46,19 @@ func TestProcessHookRoutesByBlockingCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	prompt, err := core.ProcessHook(context.Background(), hook.Event{HookName: hook.HookUserPromptSubmit})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ingest, err := core.ProcessHook(context.Background(), hook.Event{HookName: hook.HookPostToolUse})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.evaluateCalls != 1 || runtime.ingestCalls != 1 {
+	if runtime.evaluateCalls != 2 || runtime.ingestCalls != 1 {
 		t.Fatalf("calls evaluate=%d ingest=%d", runtime.evaluateCalls, runtime.ingestCalls)
 	}
-	if evaluate.Decision != hook.DecisionDeny || ingest.Reason != "recorded" {
-		t.Fatalf("evaluate=%+v ingest=%+v", evaluate, ingest)
+	if evaluate.Decision != hook.DecisionDeny || prompt.Decision != hook.DecisionDeny || ingest.Reason != "recorded" {
+		t.Fatalf("evaluate=%+v prompt=%+v ingest=%+v", evaluate, prompt, ingest)
 	}
 }
 
