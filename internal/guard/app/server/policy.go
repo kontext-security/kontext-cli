@@ -24,6 +24,9 @@ type RiskPolicyProvider struct {
 	policyEngine guardpolicy.Engine
 	policyConfig PolicyConfigProvider
 	githubPolicy githubpolicy.SnapshotProvider
+	// endpointID is this managed endpoint's installation ("ins_…") id, used as
+	// the endpoint-layer subject when evaluating synced GitHub policy.
+	endpointID string
 }
 
 type RiskPolicyProviderOptions struct {
@@ -32,6 +35,7 @@ type RiskPolicyProviderOptions struct {
 	PolicyConfig         guardpolicy.Config
 	PolicyConfigProvider PolicyConfigProvider
 	GithubPolicy         githubpolicy.SnapshotProvider
+	EndpointID           string
 }
 
 type staticPolicyConfigProvider struct {
@@ -62,6 +66,7 @@ func NewRiskPolicyProviderWithOptions(opts RiskPolicyProviderOptions) RiskPolicy
 		policyEngine: opts.PolicyEngine,
 		policyConfig: configProvider,
 		githubPolicy: opts.GithubPolicy,
+		endpointID:   opts.EndpointID,
 	}
 }
 
@@ -99,7 +104,10 @@ func (p RiskPolicyProvider) DecideHook(ctx context.Context, event risk.HookEvent
 // trusted identity is the service account + installation — Claude hook
 // payloads are not trusted human identity — so requests carry no Kontext
 // user/application subject and user/agent-layer rules cannot match their
-// subject (the evaluation flags this via SubjectsResolved).
+// subject (the evaluation flags this via SubjectsResolved). The endpoint's
+// own installation id IS known and trusted, so it is supplied as the
+// endpoint-layer subject; endpoint-scoped rules are how device policy is
+// enforced on this path.
 //
 // The boolean result reports whether the snapshot explicitly directs
 // enforcement; anything else is observe and never influences the decision.
@@ -123,6 +131,7 @@ func (p RiskPolicyProvider) evaluateGithubPolicy(event risk.HookEvent) ([]github
 			Action:      action.Action,
 			Resource:    action.Resource,
 			BranchOrRef: action.BranchOrRef,
+			EndpointID:  p.endpointID,
 		})
 		if ok {
 			evaluations = append(evaluations, evaluation)

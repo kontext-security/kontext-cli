@@ -68,7 +68,7 @@ func validateSnapshot(snapshot Snapshot) error {
 	}
 	for _, rule := range snapshot.Rules {
 		switch rule.Layer {
-		case LayerOrg, LayerUser, LayerAgent:
+		case LayerOrg, LayerUser, LayerAgent, LayerEndpoint:
 		default:
 			return fmt.Errorf("github policy rule %s has unknown layer %q", rule.ID, rule.Layer)
 		}

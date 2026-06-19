@@ -39,6 +39,7 @@ type Options struct {
 	JudgeManagedDefault       bool
 	JudgeDownloadProgress     judge.DownloadProgressHandler
 	GithubPolicy              githubpolicy.SnapshotProvider
+	EndpointID                string
 	Mode                      guardhookruntime.Mode
 	Diagnostic                diagnostic.Logger
 	Out                       io.Writer
@@ -114,6 +115,7 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 	localServer, closeStore, err := server.OpenDefaultServerWithOptions(dbPath, server.Options{
 		Judge:            localJudge,
 		GithubPolicy:     opts.GithubPolicy,
+		EndpointID:       opts.EndpointID,
 		CurrentSessionID: serverSessionID,
 		Mode:             string(mode),
 	})

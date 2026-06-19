@@ -51,6 +51,7 @@ type Options struct {
 	PolicyConfig         policy.Config
 	PolicyConfigProvider PolicyConfigProvider
 	GithubPolicy         githubpolicy.SnapshotProvider
+	EndpointID           string
 	CurrentSessionID     string
 	Mode                 string
 }
@@ -93,6 +94,7 @@ func NewServerWithOptions(store *sqlite.Store, opts Options) (*Server, error) {
 		Judge:                opts.Judge,
 		PolicyConfigProvider: configProvider,
 		GithubPolicy:         opts.GithubPolicy,
+		EndpointID:           opts.EndpointID,
 	}), policyStore, opts)
 }
 

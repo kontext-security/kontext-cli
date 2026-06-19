@@ -35,6 +35,11 @@ const (
 	LayerOrg   = "org"
 	LayerUser  = "user"
 	LayerAgent = "agent"
+	// LayerEndpoint binds a rule to a managed endpoint's installation
+	// ("ins_…") id. Unlike user/agent, this subject is always resolvable on
+	// the managed endpoint, so it is how device-scoped policy is enforced
+	// locally.
+	LayerEndpoint = "endpoint"
 )
 
 // Rule effects.
@@ -51,8 +56,8 @@ const (
 type Rule struct {
 	ID    string `json:"id"`
 	Layer string `json:"layer"`
-	// SubjectID is the org id, kontext user id, or application id depending
-	// on Layer.
+	// SubjectID is the org id, kontext user id, application id, or endpoint
+	// installation id depending on Layer.
 	SubjectID string `json:"subjectId"`
 	// ResourceID is a repository slug "owner/repo", or nil for any repository.
 	ResourceID *string `json:"resourceId"`
@@ -62,9 +67,9 @@ type Rule struct {
 	// BranchOrRef is a branch or ref constraint, or nil for any branch.
 	BranchOrRef *string `json:"branchOrRef"`
 	Effect      string  `json:"effect"`
-	// Specificity is higher for more pinned rules. Ordering/diagnostic hint
-	// only — evaluation is NOT most-specific-wins; any matching deny beats
-	// any matching allow.
+	// Specificity is a diagnostic hint the cloud computes for display/sorting.
+	// The evaluator does not read it: it derives precedence from the rule's
+	// own dimensions and layer (see Evaluate — most-specific-wins).
 	Specificity int `json:"specificity"`
 }
 
