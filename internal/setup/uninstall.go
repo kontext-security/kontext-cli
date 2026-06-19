@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
+	"github.com/kontext-security/kontext-cli/internal/codexmanaged"
 	"github.com/kontext-security/kontext-cli/internal/installation"
 	"github.com/kontext-security/kontext-cli/internal/managedconfig"
 )
@@ -97,6 +98,15 @@ func Uninstall(ctx context.Context, opts Options) error {
 		fmt.Fprintln(opts.Stdout, "  ✓ Claude Code hooks removed from ~/.claude/settings.json")
 	}
 
+	removedCodexHooks, err := removeCodexUserHooks()
+	if err != nil {
+		fmt.Fprintf(opts.Stderr, "warning: Codex hooks could not be removed from ~/.codex/hooks.json (%v)\n", err)
+	} else if removedCodexHooks {
+		fmt.Fprintln(opts.Stdout, "✓ Codex hooks removed from ~/.codex/hooks.json")
+	} else {
+		fmt.Fprintln(opts.Stdout, "  • No Codex hooks file; no hooks to remove")
+	}
+
 	if err := deleteKeychainTokens(ctx); err != nil {
 		return err
 	}
@@ -118,6 +128,32 @@ func Uninstall(ctx context.Context, opts Options) error {
 	fmt.Fprintln(opts.Stdout, "  • Local observe data and logs under ~/Library/Application Support/Kontext and ~/Library/Logs/Kontext")
 	fmt.Fprintln(opts.Stdout, "  • Homebrew-owned kontext binary (`brew uninstall kontext`)")
 	return nil
+}
+
+func removeCodexUserHooks() (bool, error) {
+	codexHooksPath, err := codexmanaged.UserHooksPathNoCreate()
+	if err != nil {
+		return false, err
+	}
+	if _, err := os.Lstat(codexHooksPath); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	settings, err := codexmanaged.ReadHooks(codexHooksPath)
+	if err != nil {
+		return false, err
+	}
+	if err := codexmanaged.BackupHooks(codexHooksPath, settingsBackupLabel); err != nil {
+		return false, err
+	}
+	if err := codexmanaged.RemoveManagedHooks(settings); err != nil {
+		return false, err
+	}
+	if err := codexmanaged.WriteHooks(codexHooksPath, settings); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func removeSelfServeLaunchAgentIfPresent(ctx context.Context) (bool, string, error) {

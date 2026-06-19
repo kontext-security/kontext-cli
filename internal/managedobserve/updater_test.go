@@ -241,12 +241,23 @@ func TestRunHomebrewUpdaterLogsUpdateFailureAndKeepsRunning(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	upgraded := make(chan struct{}, 1)
-	go runHomebrewUpdater(ctx, homebrewUpdaterConfigValue{
-		brewPath: "/opt/homebrew/bin/brew",
-		interval: time.Millisecond,
-	}, diagnostic.New(channelWriter{ch: logs}, true), upgraded)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runHomebrewUpdater(ctx, homebrewUpdaterConfigValue{
+			brewPath: "/opt/homebrew/bin/brew",
+			interval: time.Millisecond,
+		}, diagnostic.New(channelWriter{ch: logs}, true), upgraded)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for updater shutdown")
+		}
+	})
 
 	deadline := time.After(time.Second)
 	for {

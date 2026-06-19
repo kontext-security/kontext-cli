@@ -17,8 +17,8 @@ func setupCmd() *cobra.Command {
 		Long: `Connect this Mac to your Kontext organization (self-serve managed observe).
 
 Setup asks for the install token created in the Kontext dashboard, stores it
-in your login keychain, installs the Claude Code hooks, and starts a
-background agent that streams Claude Code activity to your workspace.
+in your login keychain, installs hooks for supported local agents, and starts
+a background agent that streams agent activity to your workspace.
 
 Re-running setup is safe: it rotates the stored token and restarts the agent.
 Use --uninstall to remove everything setup installed (the kontext binary

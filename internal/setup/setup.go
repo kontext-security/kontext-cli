@@ -1,8 +1,8 @@
 // Package setup implements `kontext setup`: connecting a single Mac to a
 // Kontext organization without MDM. It produces the same managed-observe
 // pipeline as an enterprise package install — managed config, installation
-// identity, Claude Code hooks, LaunchAgent running the daemon — but at user
-// scope (~/Library, ~/.claude) with the install token in the login keychain.
+// identity, agent hooks, LaunchAgent running the daemon — but at user scope
+// (~/Library, ~/.claude, ~/.codex) with the install token in the login keychain.
 package setup
 
 import (
@@ -26,6 +26,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
+	"github.com/kontext-security/kontext-cli/internal/codexmanaged"
 	"github.com/kontext-security/kontext-cli/internal/installation"
 	"github.com/kontext-security/kontext-cli/internal/managedconfig"
 	"github.com/kontext-security/kontext-cli/internal/managedobserve"
@@ -121,15 +122,19 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	fmt.Fprintln(opts.Stdout, "Kontext setup")
 
+	if err := preflightLegacyUserHooks(); err != nil {
+		return err
+	}
+	if err := preflightCodexUserHooks(binary); err != nil {
+		return err
+	}
+
 	ok, err := prepareManagedEnvironment(ctx, opts, settingsData)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return nil
-	}
-	if err := preflightLegacyUserHooks(); err != nil {
-		return err
 	}
 
 	cloudURL := strings.TrimSpace(opts.CloudURL)
@@ -199,6 +204,13 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	fmt.Fprintf(opts.Stdout, "  ✓ Claude Code managed hooks installed (%s)\n", settingsPath)
+
+	codexHooksPath, err := installCodexUserHooks(binary)
+	if err != nil {
+		return fmt.Errorf("install Codex hooks: %w\n\nFix or move ~/.codex/hooks.json, then rerun setup.", err)
+	}
+	fmt.Fprintf(opts.Stdout, "  ✓ Codex hooks installed (%s)\n", codexHooksPath)
+	fmt.Fprintln(opts.Stderr, "note: Codex hooks require review before they run; open `/hooks` in Codex to trust the Kontext hooks.")
 
 	var plistPath, logPath string
 	err = runWithStatus(opts.Stdout, "Installing background agent", func() error {
@@ -681,6 +693,61 @@ func preflightLegacyUserHooks() error {
 		return fmt.Errorf("check legacy Claude Code hooks: %w", err)
 	}
 	return nil
+}
+
+func preflightCodexUserHooks(binary string) error {
+	path, err := codexmanaged.UserHooksPathNoCreate()
+	if err != nil {
+		return fmt.Errorf("check Codex hooks: %w", err)
+	}
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("check Codex hooks: %w", err)
+	}
+	settings, err := codexmanaged.ReadHooks(path)
+	if err != nil {
+		return fmt.Errorf("check Codex hooks: %w\n\nFix or move ~/.codex/hooks.json, then rerun setup.", err)
+	}
+	if err := codexmanaged.MergeManagedHooks(settings, binary); err != nil {
+		return fmt.Errorf("check Codex hooks: %w\n\nFix or move ~/.codex/hooks.json, then rerun setup.", err)
+	}
+	return nil
+}
+
+func installCodexUserHooks(binary string) (string, error) {
+	path, err := codexmanaged.UserHooksPath()
+	if err != nil {
+		return "", err
+	}
+	before, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		before = nil
+	} else if err != nil {
+		return "", err
+	}
+	settings, err := codexmanaged.ReadHooks(path)
+	if err != nil {
+		return "", err
+	}
+	if err := codexmanaged.MergeManagedHooks(settings, binary); err != nil {
+		return "", err
+	}
+	after, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	after = append(after, '\n')
+	if bytes.Equal(before, after) {
+		return path, nil
+	}
+	if err := codexmanaged.BackupHooks(path, settingsBackupLabel); err != nil {
+		return "", err
+	}
+	if err := codexmanaged.WriteHooks(path, settings); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func waitForDaemon(out io.Writer) error {
