@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.11.0](https://github.com/kontext-security/kontext-cli/compare/v0.10.3...v0.11.0) (2026-06-22)
+
+
+### Features
+
+* **githubpolicy:** bump snapshot schema to v2 (ENG-450 review) ([#315](https://github.com/kontext-security/kontext-cli/issues/315)) ([b70f474](https://github.com/kontext-security/kontext-cli/commit/b70f47492d9e094d5909b00d23ca90cabcf4d357))
+* **managedconfig:** remove client organization id ([#304](https://github.com/kontext-security/kontext-cli/issues/304)) ([ec24f75](https://github.com/kontext-security/kontext-cli/commit/ec24f75f7cc4f7c1f90a5fef6d1d354a80f949da))
+* **managedobserve:** add daemon homebrew updater ([#317](https://github.com/kontext-security/kontext-cli/issues/317)) ([a52136b](https://github.com/kontext-security/kontext-cli/commit/a52136b88f291dbe3408a3377e95b7efa31edb3a))
+
+
+### Bug Fixes
+
+* **githubpolicy:** most-specific-wins eval + endpoint subject (ENG-450) ([#307](https://github.com/kontext-security/kontext-cli/issues/307)) ([bb2cb11](https://github.com/kontext-security/kontext-cli/commit/bb2cb116b275aa22996750182c2d4467f444f017))
+* **setup:** avoid launchagent double restart ([#314](https://github.com/kontext-security/kontext-cli/issues/314)) ([f7c9c1d](https://github.com/kontext-security/kontext-cli/commit/f7c9c1d95077a72d67d00a4f7ef45049ec2adadc))
+
 ## [0.10.3](https://github.com/kontext-security/kontext-cli/compare/v0.10.2...v0.10.3) (2026-06-18)
 
 
