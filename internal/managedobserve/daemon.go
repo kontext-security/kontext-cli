@@ -35,6 +35,7 @@ type DaemonOptions struct {
 	// FallbackDeploymentVersion is reported to the ledger when no MDM
 	// deployment-version marker exists (self-serve brew installs).
 	FallbackDeploymentVersion string
+	HomebrewUpdater           func(context.Context, managedconfig.LoadedConfig, diagnostic.Logger) <-chan struct{}
 }
 
 func RunDaemon(ctx context.Context, opts DaemonOptions) error {
@@ -137,6 +138,12 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		streamErr <- runManagedStream(streamCtx, opts, dbPath, installationState.InstallationID)
 	}()
 
+	startUpdater := opts.HomebrewUpdater
+	if startUpdater == nil {
+		startUpdater = startHomebrewUpdater
+	}
+	upgraded := startUpdater(ctx, loadedConfig, opts.Diagnostic)
+
 	// Cowork observation runs alongside Claude Code in the same daemon, replaying
 	// in-VM Cowork tool events into the same localruntime socket as agent "cowork".
 	// Enabled via managed.json (cowork_enabled) or the env var override.
@@ -160,6 +167,11 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case _, ok := <-upgraded:
+			if ok {
+				return nil
+			}
+			upgraded = nil
 		case err := <-streamErr:
 			if err != nil {
 				opts.Diagnostic.Printf("managed stream exited: %v\n", err)
