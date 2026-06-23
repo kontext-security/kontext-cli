@@ -12,6 +12,7 @@ import (
 
 const (
 	ManagedSettingsPath        = "/Library/Application Support/ClaudeCode/managed-settings.json"
+	ManagedSettingsDropInPath  = "/Library/Application Support/ClaudeCode/managed-settings.d/20-kontext.json"
 	LinuxManagedSettingsPath   = "/etc/claude-code/managed-settings.json"
 	WindowsManagedSettingsPath = `C:\Program Files\ClaudeCode\managed-settings.json`
 	DefaultKontextBinary       = "/usr/local/bin/kontext"
@@ -127,6 +128,32 @@ func Validate(data []byte, kontextBinary string) error {
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+// IsManagedSettingsDropIn reports whether data is a Kontext-owned managed
+// settings drop-in: parseable hooks where EVERY handler command is one of our
+// flagless managed-observe hooks (IsManagedHookCommand). Matching on the alias,
+// not the binary path, means a drop-in written by an older self-serve run (a
+// stale binary path after `brew upgrade`) still reads as ours — so setup can
+// refresh it and uninstall can remove it, while a foreign or enterprise file is
+// left untouched. Empty/garbage data is not ours.
+func IsManagedSettingsDropIn(data []byte) bool {
+	var settings Settings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false
+	}
+	seen := false
+	for _, groups := range settings.Hooks {
+		for _, group := range groups {
+			for _, handler := range group.Hooks {
+				if !IsManagedHookCommand(handler.Command) {
+					return false
+				}
+				seen = true
+			}
+		}
+	}
+	return seen
 }
 
 func ParseEventAlias(value string) (hook.HookName, bool) {

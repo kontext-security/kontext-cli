@@ -92,22 +92,22 @@ type Config struct {
 	Agent       string      `json:"agent"`
 	Credentials Credentials `json:"credentials"`
 	Device      Device      `json:"device,omitempty"`
-	// CoworkEnabled turns on Claude Cowork observation/enforcement in the
-	// managed-observe daemon (the posture follows Mode). A managed.json field
-	// so MDM-deployed installs control it through config rather than launchd
-	// environment plumbing.
-	CoworkEnabled bool `json:"cowork_enabled,omitempty"`
 }
 
 type configFile struct {
 	Version              string          `json:"version"`
 	LegacyOrganizationID json.RawMessage `json:"organization_id,omitempty"`
-	CloudURL             string          `json:"cloud_url"`
-	Mode                 string          `json:"mode"`
-	Agent                string          `json:"agent"`
-	Credentials          Credentials     `json:"credentials"`
-	Device               Device          `json:"device,omitempty"`
-	CoworkEnabled        bool            `json:"cowork_enabled,omitempty"`
+	// LegacyCoworkEnabled is accepted but ignored. Cowork is now always observed
+	// through the managed-settings hook path (the hook wrapper labels Cowork from
+	// session context), so coverage no longer depends on this flag. Tolerated
+	// here only so existing managed.json files keep parsing under
+	// DisallowUnknownFields; it can be dropped from configs.
+	LegacyCoworkEnabled json.RawMessage `json:"cowork_enabled,omitempty"`
+	CloudURL            string          `json:"cloud_url"`
+	Mode                string          `json:"mode"`
+	Agent               string          `json:"agent"`
+	Credentials         Credentials     `json:"credentials"`
+	Device              Device          `json:"device,omitempty"`
 }
 
 type Credentials struct {
@@ -188,13 +188,12 @@ func Parse(data []byte) (Config, error) {
 		return Config{}, errors.New("unexpected trailing JSON value")
 	}
 	return normalizeAndValidate(Config{
-		Version:       file.Version,
-		CloudURL:      file.CloudURL,
-		Mode:          file.Mode,
-		Agent:         file.Agent,
-		Credentials:   file.Credentials,
-		Device:        file.Device,
-		CoworkEnabled: file.CoworkEnabled,
+		Version:     file.Version,
+		CloudURL:    file.CloudURL,
+		Mode:        file.Mode,
+		Agent:       file.Agent,
+		Credentials: file.Credentials,
+		Device:      file.Device,
 	})
 }
 
