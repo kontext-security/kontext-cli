@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -35,6 +36,7 @@ var version = "dev"
 var (
 	startLocal   = run.StartLocal
 	startManaged = run.StartManaged
+	userHomeDir  = os.UserHomeDir
 )
 
 func main() {
@@ -296,7 +298,7 @@ func hookCmd() *cobra.Command {
 			if shouldUseManagedObserve(explicitSocket, explicitMode) {
 				lifecycle := managedobserve.NewLifecycle()
 				lifecycle.Diagnostic = diagnostic.New(cmd.ErrOrStderr(), diagnostic.EnabledFromEnv())
-				hookcmd.RunWithExpectedEvent(a, expectedEvent, func(e hook.Event) (hook.Result, error) {
+				hookcmd.RunWithExpectedEvent(managedHookAgent{Agent: a}, expectedEvent, func(e hook.Event) (hook.Result, error) {
 					return lifecycle.Process(context.Background(), e), nil
 				})
 				return nil
@@ -327,6 +329,53 @@ func hookCmd() *cobra.Command {
 	cmd.Flags().StringVar(&mode, "mode", "", "hook mode: observe or enforce")
 
 	return cmd
+}
+
+type managedHookAgent struct {
+	agent.Agent
+}
+
+func (a managedHookAgent) DecodeHookInput(input []byte) (hook.Event, error) {
+	event, err := a.Agent.DecodeHookInput(input)
+	if err != nil {
+		return hook.Event{}, err
+	}
+	if isCoworkHookContext(input, event) {
+		event.Agent = "cowork"
+	}
+	return event, nil
+}
+
+func isCoworkHookContext(input []byte, event hook.Event) bool {
+	if isCoworkPath(event.CWD) {
+		return true
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(input, &raw); err != nil {
+		return false
+	}
+	for _, key := range []string{"transcript_path", "transcriptPath", "session_path", "sessionPath"} {
+		value, _ := raw[key].(string)
+		if isCoworkPath(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCoworkPath(value string) bool {
+	normalized := strings.ReplaceAll(value, "\\", "/")
+	home, err := userHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	root := strings.ReplaceAll(home, "\\", "/") + "/Library/Application Support/Claude/local-agent-mode-sessions"
+	if normalized != root && !strings.HasPrefix(normalized, root+"/") {
+		return false
+	}
+	suffix := strings.TrimPrefix(strings.TrimPrefix(normalized, root), "/")
+	parts := strings.Split(suffix, "/")
+	return len(parts) >= 3 && parts[0] != "" && parts[1] != "" && strings.HasPrefix(parts[2], "local_")
 }
 
 func shouldUseManagedObserve(explicitSocket, explicitMode bool) bool {

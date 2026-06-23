@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/kontext-security/kontext-cli/internal/coworkobserve"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
@@ -143,18 +141,6 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		startUpdater = startHomebrewUpdater
 	}
 	upgraded := startUpdater(ctx, loadedConfig, opts.Diagnostic)
-
-	// Cowork observation runs alongside Claude Code in the same daemon, replaying
-	// in-VM Cowork tool events into the same localruntime socket as agent "cowork".
-	// Enabled via managed.json (cowork_enabled) or the env var override.
-	if loadedConfig.Config.CoworkEnabled || coworkobserve.Enabled() {
-		go coworkobserve.Run(ctx, coworkobserve.Options{
-			SocketPath: socketPath,
-			StatePath:  filepath.Join(filepath.Dir(dbPath), "cowork-spool-offsets.json"),
-			Mode:       mode,
-			Diagnostic: opts.Diagnostic,
-		})
-	}
 
 	idleTimeout := opts.IdleTimeout
 	if idleTimeout == 0 {

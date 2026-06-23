@@ -6,6 +6,7 @@
 package setup
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -57,10 +58,18 @@ var (
 	readPassword = func(fd int) ([]byte, error) {
 		return term.ReadPassword(fd)
 	}
+	runPrivilegedCommand = func(ctx context.Context, name string, args ...string) error {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
 	isTerminal = func(fd int) bool {
 		return term.IsTerminal(fd)
 	}
 	executablePath = os.Executable
+	geteuid        = os.Geteuid
 	resolveToken   = managedconfig.ResolveInstallToken
 	dialSocket     = func(path string, timeout time.Duration) error {
 		conn, err := net.DialTimeout("unix", path, timeout)
@@ -69,8 +78,9 @@ var (
 		}
 		return conn.Close()
 	}
-	systemConfigPath = managedconfig.DefaultPath
-	goos             = runtime.GOOS
+	systemConfigPath    = managedconfig.DefaultPath
+	managedSettingsPath = claudemanaged.ManagedSettingsDropInPath
+	goos                = runtime.GOOS
 )
 
 type Options struct {
@@ -166,14 +176,14 @@ func Run(ctx context.Context, opts Options) error {
 		fmt.Fprintln(opts.Stderr, binaryNote)
 	}
 
-	warnings, err := installUserHooks(binary)
+	settingsPath, warnings, err := installManagedSettings(ctx, binary)
 	if err != nil {
 		return err
 	}
 	for _, warning := range warnings {
 		fmt.Fprintf(opts.Stderr, "warning: %s\n", warning)
 	}
-	fmt.Fprintln(opts.Stdout, "  ✓ Claude Code hooks installed")
+	fmt.Fprintf(opts.Stdout, "  ✓ Claude Code managed hooks installed (%s)\n", settingsPath)
 
 	var plistPath, logPath string
 	err = runWithStatus(opts.Stdout, "Installing background agent", func() error {
@@ -214,6 +224,25 @@ func refuseManagedEnvironments() error {
 		return fmt.Errorf("this Mac is organization-managed\n\nSystem config\n  %s\n\nSelf-serve setup cannot continue because system config wins over user config.\nNothing changed.", systemConfigPath)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("cannot determine whether this Mac is organization-managed: %w", err)
+	}
+	if err := refuseUnknownManagedSettingsOwner(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func refuseUnknownManagedSettingsOwner() error {
+	if _, err := os.Lstat(managedSettingsPath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("cannot determine Claude managed hooks ownership: %w", err)
+	}
+	userConfig := managedconfig.UserPath()
+	if userConfig == "" {
+		return errors.New("Claude Code managed hooks already exist, but your self-serve config cannot be resolved. Nothing changed.")
+	}
+	if _, err := managedconfig.LoadFile(userConfig); err != nil {
+		return fmt.Errorf("Claude Code managed hooks already exist\n\nManaged hooks\n  %s\n\nSelf-serve setup cannot continue because hook ownership is unknown.\nNothing changed.", managedSettingsPath)
 	}
 	return nil
 }
@@ -386,26 +415,110 @@ func stableBinaryPath() (string, string) {
 	return exe, "note: using a Homebrew Cellar path for hooks; re-run `kontext setup` after `brew upgrade kontext`"
 }
 
-func installUserHooks(binary string) ([]string, error) {
-	path, err := claudemanaged.UserSettingsPath()
+func installManagedSettings(ctx context.Context, binary string) (string, []string, error) {
+	data, err := claudemanaged.TemplateJSON(binary)
 	if err != nil {
-		return nil, err
+		return "", nil, err
+	}
+	if err := claudemanaged.Validate(data, binary); err != nil {
+		return "", nil, fmt.Errorf("generated managed settings are invalid: %w", err)
+	}
+	if err := writePrivilegedFile(ctx, managedSettingsPath, data); err != nil {
+		return "", nil, err
+	}
+	return managedSettingsPath, removeLegacyUserHooks(), nil
+}
+
+func writePrivilegedFile(ctx context.Context, path string, data []byte) error {
+	if geteuid() == 0 {
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		temp, err := os.CreateTemp(dir, ".managed-settings-*.tmp")
+		if err != nil {
+			return err
+		}
+		tempPath := temp.Name()
+		defer os.Remove(tempPath)
+		if err := temp.Chmod(0o644); err != nil {
+			temp.Close()
+			return err
+		}
+		if _, err := temp.Write(data); err != nil {
+			temp.Close()
+			return err
+		}
+		if err := temp.Sync(); err != nil {
+			temp.Close()
+			return err
+		}
+		if err := temp.Close(); err != nil {
+			return err
+		}
+		if err := os.Rename(tempPath, path); err != nil {
+			return err
+		}
+		return os.Chmod(path, 0o644)
+	}
+
+	temp, err := os.CreateTemp("", "kontext-managed-settings-*.json")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := runPrivilegedCommand(ctx, "sudo", "mkdir", "-p", filepath.Dir(path)); err != nil {
+		return fmt.Errorf("create Claude managed settings directory: %w", err)
+	}
+	if err := runPrivilegedCommand(ctx, "sudo", "install", "-m", "0644", tempPath, path); err != nil {
+		return fmt.Errorf("install Claude managed settings: %w", err)
+	}
+	return nil
+}
+
+func removeLegacyUserHooks() []string {
+	path, err := userSettingsPathNoCreate()
+	if err != nil {
+		return []string{fmt.Sprintf("legacy Claude Code hooks were not cleaned up: %v", err)}
+	}
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return []string{fmt.Sprintf("legacy Claude Code hooks were not cleaned up: %v", err)}
 	}
 	settings, err := claudemanaged.ReadUserSettings(path)
 	if err != nil {
-		return nil, err
+		return []string{fmt.Sprintf("legacy Claude Code hooks were not cleaned up: %v", err)}
 	}
-	warnings, err := claudemanaged.MergeManagedHooks(settings, binary)
+	before, err := json.Marshal(settings)
 	if err != nil {
-		return nil, err
+		return []string{fmt.Sprintf("legacy Claude Code hooks were not cleaned up: %v", err)}
+	}
+	if err := claudemanaged.RemoveManagedHooks(settings); err != nil {
+		return []string{fmt.Sprintf("legacy Claude Code hooks were not cleaned up: %v", err)}
+	}
+	after, err := json.Marshal(settings)
+	if err != nil {
+		return []string{fmt.Sprintf("legacy Claude Code hooks were not cleaned up: %v", err)}
+	}
+	if bytes.Equal(before, after) {
+		return nil
 	}
 	if err := claudemanaged.BackupUserSettings(path, settingsBackupLabel); err != nil {
-		return nil, err
+		return []string{fmt.Sprintf("legacy Claude Code hooks were not cleaned up: %v", err)}
 	}
 	if err := claudemanaged.WriteUserSettings(path, settings); err != nil {
-		return nil, err
+		return []string{fmt.Sprintf("legacy Claude Code hooks were not cleaned up: %v", err)}
 	}
-	return warnings, nil
+	return nil
 }
 
 func waitForDaemon(out io.Writer) error {

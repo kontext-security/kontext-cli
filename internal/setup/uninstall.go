@@ -27,7 +27,11 @@ func Uninstall(ctx context.Context, opts Options) error {
 		return errors.New("kontext setup is currently macOS-only")
 	}
 
-	if _, err := os.Lstat(systemConfigPath); err == nil {
+	organizationManaged, err := organizationManagedInstall()
+	if err != nil {
+		return err
+	}
+	if organizationManaged {
 		fmt.Fprintln(opts.Stderr, "warning: an organization-managed (MDM) Kontext install remains active on this Mac and is not affected by this command")
 	}
 
@@ -36,6 +40,15 @@ func Uninstall(ctx context.Context, opts Options) error {
 		return err
 	}
 	fmt.Fprintf(opts.Stdout, "✓ Background agent removed (%s)\n", plistPath)
+
+	if organizationManaged {
+		fmt.Fprintf(opts.Stdout, "· Kept Claude Code managed hooks because an organization-managed install is active (%s)\n", managedSettingsPath)
+	} else {
+		if err := removeManagedSettings(ctx); err != nil {
+			return err
+		}
+		fmt.Fprintf(opts.Stdout, "✓ Claude Code managed hooks removed (%s)\n", managedSettingsPath)
+	}
 
 	settingsPath, err := userSettingsPathNoCreate()
 	if err != nil {
@@ -84,6 +97,36 @@ func Uninstall(ctx context.Context, opts Options) error {
 	fmt.Fprintln(opts.Stdout, "· Kept local observe data and logs under ~/Library/Application Support/Kontext and ~/Library/Logs/Kontext")
 	fmt.Fprintln(opts.Stdout, "· The kontext binary is managed by Homebrew (`brew uninstall kontext` to remove)")
 	return nil
+}
+
+func removeManagedSettings(ctx context.Context) error {
+	if _, err := os.Lstat(managedSettingsPath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if geteuid() == 0 {
+		if err := os.Remove(managedSettingsPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err := runPrivilegedCommand(ctx, "sudo", "rm", "-f", managedSettingsPath); err != nil {
+		return fmt.Errorf("remove Claude managed settings: %w", err)
+	}
+	return nil
+}
+
+func organizationManagedInstall() (bool, error) {
+	if _, err := os.Lstat(systemConfigPath); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("cannot determine whether this Mac is organization-managed: %w", err)
+	}
+	if _, err := managedconfig.LoadFile(systemConfigPath); err != nil {
+		return false, fmt.Errorf("cannot determine whether this Mac is organization-managed: %w", err)
+	}
+	return true, nil
 }
 
 func userSettingsPathNoCreate() (string, error) {
