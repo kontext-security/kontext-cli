@@ -12,6 +12,7 @@ import (
 
 const (
 	ManagedSettingsPath        = "/Library/Application Support/ClaudeCode/managed-settings.json"
+	ManagedSettingsDropInPath  = "/Library/Application Support/ClaudeCode/managed-settings.d/20-kontext.json"
 	LinuxManagedSettingsPath   = "/etc/claude-code/managed-settings.json"
 	WindowsManagedSettingsPath = `C:\Program Files\ClaudeCode\managed-settings.json`
 	DefaultKontextBinary       = "/usr/local/bin/kontext"

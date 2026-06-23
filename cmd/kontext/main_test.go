@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/agent"
 	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
 	"github.com/kontext-security/kontext-cli/internal/hook"
 	"github.com/kontext-security/kontext-cli/internal/run"
@@ -278,6 +279,88 @@ func TestExpectedHookEventFromArgs(t *testing.T) {
 	if !strings.Contains(err.Error(), "unknown hook event alias") {
 		t.Fatalf("error = %q, want unknown alias", err.Error())
 	}
+}
+
+func TestManagedHookAgentLabelsCoworkFromCWD(t *testing.T) {
+	overrideMainVar(t, &userHomeDir, func() (string, error) { return "/Users/michel", nil })
+	a, ok := agent.Get("claude")
+	if !ok {
+		t.Fatal("claude agent not registered")
+	}
+	event, err := (managedHookAgent{Agent: a}).DecodeHookInput([]byte(`{
+		"session_id": "s1",
+		"hook_event_name": "PreToolUse",
+		"cwd": "/Users/michel/Library/Application Support/Claude/local-agent-mode-sessions/acme/ws/local_123/repo"
+	}`))
+	if err != nil {
+		t.Fatalf("DecodeHookInput() error = %v", err)
+	}
+	if event.Agent != "cowork" {
+		t.Fatalf("Agent = %q, want cowork", event.Agent)
+	}
+}
+
+func TestManagedHookAgentLabelsCoworkFromTranscriptPath(t *testing.T) {
+	overrideMainVar(t, &userHomeDir, func() (string, error) { return "/Users/michel", nil })
+	a, ok := agent.Get("claude")
+	if !ok {
+		t.Fatal("claude agent not registered")
+	}
+	event, err := (managedHookAgent{Agent: a}).DecodeHookInput([]byte(`{
+		"session_id": "s1",
+		"hook_event_name": "PreToolUse",
+		"transcript_path": "/Users/michel/Library/Application Support/Claude/local-agent-mode-sessions/acme/ws/local_123/transcript.jsonl"
+	}`))
+	if err != nil {
+		t.Fatalf("DecodeHookInput() error = %v", err)
+	}
+	if event.Agent != "cowork" {
+		t.Fatalf("Agent = %q, want cowork", event.Agent)
+	}
+}
+
+func TestManagedHookAgentKeepsClaudeForNormalClaudeCode(t *testing.T) {
+	a, ok := agent.Get("claude")
+	if !ok {
+		t.Fatal("claude agent not registered")
+	}
+	event, err := (managedHookAgent{Agent: a}).DecodeHookInput([]byte(`{
+		"session_id": "s1",
+		"hook_event_name": "PreToolUse",
+		"cwd": "/Users/michel/project"
+	}`))
+	if err != nil {
+		t.Fatalf("DecodeHookInput() error = %v", err)
+	}
+	if event.Agent != "claude" {
+		t.Fatalf("Agent = %q, want claude", event.Agent)
+	}
+}
+
+func TestManagedHookAgentKeepsClaudeForPathTextLookalike(t *testing.T) {
+	overrideMainVar(t, &userHomeDir, func() (string, error) { return "/Users/alice", nil })
+	a, ok := agent.Get("claude")
+	if !ok {
+		t.Fatal("claude agent not registered")
+	}
+	event, err := (managedHookAgent{Agent: a}).DecodeHookInput([]byte(`{
+		"session_id": "s1",
+		"hook_event_name": "PreToolUse",
+		"cwd": "/Users/alice/work/Library/Application Support/Claude/local-agent-mode-sessions/acme/ws/local_123/repo"
+	}`))
+	if err != nil {
+		t.Fatalf("DecodeHookInput() error = %v", err)
+	}
+	if event.Agent != "claude" {
+		t.Fatalf("Agent = %q, want claude", event.Agent)
+	}
+}
+
+func overrideMainVar[T any](t *testing.T, target *T, value T) {
+	t.Helper()
+	previous := *target
+	*target = value
+	t.Cleanup(func() { *target = previous })
 }
 
 func writeTempManagedSettings(t *testing.T, data []byte) string {
