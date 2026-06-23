@@ -6,6 +6,7 @@
 package setup
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -57,10 +58,18 @@ var (
 	readPassword = func(fd int) ([]byte, error) {
 		return term.ReadPassword(fd)
 	}
+	runPrivilegedCommand = func(ctx context.Context, name string, args ...string) error {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
 	isTerminal = func(fd int) bool {
 		return term.IsTerminal(fd)
 	}
 	executablePath = os.Executable
+	geteuid        = os.Geteuid
 	resolveToken   = managedconfig.ResolveInstallToken
 	dialSocket     = func(path string, timeout time.Duration) error {
 		conn, err := net.DialTimeout("unix", path, timeout)
@@ -69,8 +78,10 @@ var (
 		}
 		return conn.Close()
 	}
-	systemConfigPath = managedconfig.DefaultPath
-	goos             = runtime.GOOS
+	systemConfigPath    = managedconfig.DefaultPath
+	managedSettingsPath = claudemanaged.ManagedSettingsDropInPath
+	managedSettingsFile = claudemanaged.ManagedSettingsPath
+	goos                = runtime.GOOS
 )
 
 type Options struct {
@@ -97,7 +108,15 @@ func Run(ctx context.Context, opts Options) error {
 	if goos != "darwin" {
 		return errors.New("kontext setup is currently macOS-only")
 	}
-	if err := refuseManagedEnvironments(); err != nil {
+	binary, binaryNote := stableBinaryPath()
+	settingsData, err := managedSettingsData(binary)
+	if err != nil {
+		return err
+	}
+	if err := refuseManagedEnvironments(settingsData); err != nil {
+		return err
+	}
+	if err := preflightLegacyUserHooks(); err != nil {
 		return err
 	}
 
@@ -161,19 +180,15 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	fmt.Fprintf(opts.Stdout, "  ✓ Installation identity ready (%s)\n", identity.InstallationID)
 
-	binary, binaryNote := stableBinaryPath()
 	if binaryNote != "" {
 		fmt.Fprintln(opts.Stderr, binaryNote)
 	}
 
-	warnings, err := installUserHooks(binary)
+	settingsPath, err := installManagedSettings(ctx, settingsData)
 	if err != nil {
 		return err
 	}
-	for _, warning := range warnings {
-		fmt.Fprintf(opts.Stderr, "warning: %s\n", warning)
-	}
-	fmt.Fprintln(opts.Stdout, "  ✓ Claude Code hooks installed")
+	fmt.Fprintf(opts.Stdout, "  ✓ Claude Code managed hooks installed (%s)\n", settingsPath)
 
 	var plistPath, logPath string
 	err = runWithStatus(opts.Stdout, "Installing background agent", func() error {
@@ -193,6 +208,10 @@ func Run(ctx context.Context, opts Options) error {
 		fmt.Fprintln(opts.Stdout, "  ✓ Background agent running")
 	}
 
+	if err := removeLegacyUserHooks(); err != nil {
+		fmt.Fprintf(opts.Stderr, "warning: legacy Claude Code user hooks could not be removed after installing managed hooks (%v)\n", err)
+	}
+
 	fmt.Fprintln(opts.Stdout, "\nNext")
 	fmt.Fprintln(opts.Stdout, "  Return to the Kontext dashboard.")
 	fmt.Fprintln(opts.Stdout, "  Run the hello command shown there to confirm this Mac is connected.")
@@ -203,7 +222,7 @@ func Run(ctx context.Context, opts Options) error {
 // are (or claim to be) organization-managed: a system config under /Library
 // always outranks anything setup could write, so proceeding would only
 // produce artifacts the daemon ignores.
-func refuseManagedEnvironments() error {
+func refuseManagedEnvironments(settingsData []byte) error {
 	// ANY env override means config resolution is explicitly env-driven —
 	// even one pointing at the user path. Setup must not write state whose
 	// activation depends on an environment variable it doesn't control.
@@ -214,6 +233,31 @@ func refuseManagedEnvironments() error {
 		return fmt.Errorf("this Mac is organization-managed\n\nSystem config\n  %s\n\nSelf-serve setup cannot continue because system config wins over user config.\nNothing changed.", systemConfigPath)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("cannot determine whether this Mac is organization-managed: %w", err)
+	}
+	if err := refuseUnknownManagedSettingsOwner(settingsData); err != nil {
+		return err
+	}
+	return nil
+}
+
+func refuseUnknownManagedSettingsOwner(_ []byte) error {
+	if _, err := os.Lstat(managedSettingsFile); err == nil {
+		return fmt.Errorf("Claude Code root managed settings already exist\n\nManaged settings\n  %s\n\nSelf-serve setup cannot continue because root managed settings may contain organization or foreign hooks.\nNothing changed.", managedSettingsFile)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("cannot determine Claude root managed settings ownership: %w", err)
+	}
+	existing, err := os.ReadFile(managedSettingsPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("cannot determine Claude managed hooks ownership: %w", err)
+	}
+	// Ours by content (alias-matched, binary-path-agnostic) → safe to refresh,
+	// even if an older self-serve run baked in a now-stale binary path. Anything
+	// else (enterprise, a foreign installer) we must not overwrite.
+	if !claudemanaged.IsManagedSettingsDropIn(existing) {
+		return fmt.Errorf("Claude Code managed hooks already exist\n\nManaged hooks\n  %s\n\nSelf-serve setup cannot continue because hook ownership is unknown.\nNothing changed.", managedSettingsPath)
 	}
 	return nil
 }
@@ -386,26 +430,140 @@ func stableBinaryPath() (string, string) {
 	return exe, "note: using a Homebrew Cellar path for hooks; re-run `kontext setup` after `brew upgrade kontext`"
 }
 
-func installUserHooks(binary string) ([]string, error) {
-	path, err := claudemanaged.UserSettingsPath()
+func managedSettingsData(binary string) ([]byte, error) {
+	data, err := claudemanaged.TemplateJSON(binary)
 	if err != nil {
 		return nil, err
+	}
+	if err := claudemanaged.Validate(data, binary); err != nil {
+		return nil, fmt.Errorf("generated managed settings are invalid: %w", err)
+	}
+	return data, nil
+}
+
+func installManagedSettings(ctx context.Context, data []byte) (string, error) {
+	if err := writePrivilegedFile(ctx, managedSettingsPath, data); err != nil {
+		return "", err
+	}
+	return managedSettingsPath, nil
+}
+
+func writePrivilegedFile(ctx context.Context, path string, data []byte) error {
+	if geteuid() == 0 {
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		temp, err := os.CreateTemp(dir, ".managed-settings-*.tmp")
+		if err != nil {
+			return err
+		}
+		tempPath := temp.Name()
+		defer os.Remove(tempPath)
+		if err := temp.Chmod(0o644); err != nil {
+			temp.Close()
+			return err
+		}
+		if _, err := temp.Write(data); err != nil {
+			temp.Close()
+			return err
+		}
+		if err := temp.Sync(); err != nil {
+			temp.Close()
+			return err
+		}
+		if err := temp.Close(); err != nil {
+			return err
+		}
+		if err := os.Rename(tempPath, path); err != nil {
+			return err
+		}
+		return os.Chmod(path, 0o644)
+	}
+
+	temp, err := os.CreateTemp("", "kontext-managed-settings-*.json")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := runPrivilegedCommand(ctx, "sudo", "mkdir", "-p", filepath.Dir(path)); err != nil {
+		return fmt.Errorf("create Claude managed settings directory: %w", err)
+	}
+	if err := runPrivilegedCommand(ctx, "sudo", "install", "-m", "0644", tempPath, path); err != nil {
+		return fmt.Errorf("install Claude managed settings: %w", err)
+	}
+	return nil
+}
+
+func removeLegacyUserHooks() error {
+	path, err := userSettingsPathNoCreate()
+	if err != nil {
+		return fmt.Errorf("clean legacy Claude Code hooks: %w", err)
+	}
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("clean legacy Claude Code hooks: %w", err)
 	}
 	settings, err := claudemanaged.ReadUserSettings(path)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("clean legacy Claude Code hooks: %w", err)
 	}
-	warnings, err := claudemanaged.MergeManagedHooks(settings, binary)
+	if disabled, _ := settings["disableAllHooks"].(bool); disabled {
+		return fmt.Errorf("clean legacy Claude Code hooks: disableAllHooks must not be true")
+	}
+	before, err := json.Marshal(settings)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("clean legacy Claude Code hooks: %w", err)
+	}
+	if err := claudemanaged.RemoveManagedHooks(settings); err != nil {
+		return fmt.Errorf("clean legacy Claude Code hooks: %w", err)
+	}
+	after, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("clean legacy Claude Code hooks: %w", err)
+	}
+	if bytes.Equal(before, after) {
+		return nil
 	}
 	if err := claudemanaged.BackupUserSettings(path, settingsBackupLabel); err != nil {
-		return nil, err
+		return fmt.Errorf("clean legacy Claude Code hooks: %w", err)
 	}
 	if err := claudemanaged.WriteUserSettings(path, settings); err != nil {
-		return nil, err
+		return fmt.Errorf("clean legacy Claude Code hooks: %w", err)
 	}
-	return warnings, nil
+	return nil
+}
+
+func preflightLegacyUserHooks() error {
+	path, err := userSettingsPathNoCreate()
+	if err != nil {
+		return fmt.Errorf("check legacy Claude Code hooks: %w", err)
+	}
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("check legacy Claude Code hooks: %w", err)
+	}
+	settings, err := claudemanaged.ReadUserSettings(path)
+	if err != nil {
+		return fmt.Errorf("check legacy Claude Code hooks: %w", err)
+	}
+	if disabled, _ := settings["disableAllHooks"].(bool); disabled {
+		return fmt.Errorf("check legacy Claude Code hooks: disableAllHooks must not be true")
+	}
+	if err := claudemanaged.RemoveManagedHooks(settings); err != nil {
+		return fmt.Errorf("check legacy Claude Code hooks: %w", err)
+	}
+	return nil
 }
 
 func waitForDaemon(out io.Writer) error {

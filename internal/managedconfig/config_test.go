@@ -51,22 +51,15 @@ func TestParseIgnoresLegacyOrganizationID(t *testing.T) {
 	}
 }
 
-func TestParseCoworkEnabled(t *testing.T) {
-	cfg, err := Parse([]byte(validConfigJSON()))
+func TestParseIgnoresLegacyCoworkEnabled(t *testing.T) {
+	input := strings.Replace(validConfigJSON(), `"cloud_url":`, `"cowork_enabled": true,
+  "cloud_url":`, 1)
+	cfg, err := Parse([]byte(input))
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if cfg.CoworkEnabled {
-		t.Fatal("cowork_enabled should default to false")
-	}
-	withFlag := strings.Replace(validConfigJSON(), `"mode": "observe",`, `"mode": "observe",
-  "cowork_enabled": true,`, 1)
-	cfg, err = Parse([]byte(withFlag))
-	if err != nil {
-		t.Fatalf("Parse() error = %v", err)
-	}
-	if !cfg.CoworkEnabled {
-		t.Fatal("cowork_enabled = false, want true")
+	if !cfg.LegacyCoworkEnabled {
+		t.Fatal("LegacyCoworkEnabled = false, want true")
 	}
 }
 

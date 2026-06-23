@@ -319,3 +319,83 @@ func TestParseEventAlias(t *testing.T) {
 		t.Fatal("ParseEventAlias(pretooluse) ok = true, want false")
 	}
 }
+
+func TestIsManagedSettingsDropIn(t *testing.T) {
+	t.Parallel()
+
+	ours, err := TemplateJSON("/opt/homebrew/bin/kontext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, err := TemplateJSON("/old/Cellar/x/bin/kontext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingAsyncSettings := Template("/opt/homebrew/bin/kontext")
+	missingAsyncSettings.Hooks["SessionStart"][0].Hooks[0].Async = nil
+	missingAsync, err := json.Marshal(missingAsyncSettings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		data string
+		want bool
+	}{
+		{"our template", string(ours), true},
+		{"stale binary path still ours", string(stale), true},
+		{"ours plus foreign top-level key", `{"hooks":{"PreToolUse":[{"matcher":"","hooks":[{"type":"command","command":"'/opt/homebrew/bin/kontext' hook 'pre-tool-use'"}]}]},"permissions":{"deny":["x"]}}`, false},
+		{"partial managed hook file", `{"hooks":{"PreToolUse":[{"matcher":"","hooks":[{"type":"command","command":"'/opt/homebrew/bin/kontext' hook 'pre-tool-use'","timeout":20}]}]}}`, false},
+		{"non canonical matcher", strings.Replace(string(ours), `"matcher": ""`, `"matcher": "*"`, 1), false},
+		{"non canonical timeout", strings.Replace(string(ours), `"timeout": 20`, `"timeout": 5`, 1), false},
+		{"missing lifecycle async", string(missingAsync), false},
+		{"extra event", strings.Replace(string(ours), `"hooks": {`, `"hooks": {"PreCompact":[{"matcher":"","hooks":[{"type":"command","command":"'/opt/homebrew/bin/kontext' hook 'pre-tool-use'","timeout":20}]}],`, 1), false},
+		{"foreign hook command", `{"hooks":{"PreToolUse":[{"matcher":"","hooks":[{"type":"command","command":"/opt/other/tool run"}]}]}}`, false},
+		{"no hooks", `{"hooks":{}}`, false},
+		{"empty object", `{}`, false},
+		{"garbage", `not json`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsManagedSettingsDropIn([]byte(tc.data)); got != tc.want {
+				t.Fatalf("IsManagedSettingsDropIn(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHasManagedObserveHooksRejectsDisabledHooks(t *testing.T) {
+	t.Parallel()
+
+	settings := Template("/opt/homebrew/bin/kontext")
+	disabled := true
+	settings.DisableAllHooks = &disabled
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if HasManagedObserveHooks(data) {
+		t.Fatal("HasManagedObserveHooks() = true with disableAllHooks")
+	}
+	if !DisablesAllHooks(data) {
+		t.Fatal("DisablesAllHooks() = false with disableAllHooks")
+	}
+}
+
+func TestHasManagedObserveHooksAllowsRootManagedSettingsFields(t *testing.T) {
+	t.Parallel()
+
+	settings := Template("/opt/homebrew/bin/kontext")
+	allow := true
+	settings.AllowManagedHooksOnly = &allow
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !HasManagedObserveHooks(data) {
+		t.Fatal("HasManagedObserveHooks() = false for root managed settings")
+	}
+}

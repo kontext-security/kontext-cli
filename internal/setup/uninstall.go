@@ -27,7 +27,11 @@ func Uninstall(ctx context.Context, opts Options) error {
 		return errors.New("kontext setup is currently macOS-only")
 	}
 
-	if _, err := os.Lstat(systemConfigPath); err == nil {
+	organizationManaged, err := organizationManagedInstall()
+	if err != nil {
+		return err
+	}
+	if organizationManaged {
 		fmt.Fprintln(opts.Stderr, "warning: an organization-managed (MDM) Kontext install remains active on this Mac and is not affected by this command")
 	}
 
@@ -36,6 +40,20 @@ func Uninstall(ctx context.Context, opts Options) error {
 		return err
 	}
 	fmt.Fprintf(opts.Stdout, "✓ Background agent removed (%s)\n", plistPath)
+
+	if organizationManaged {
+		fmt.Fprintf(opts.Stdout, "· Kept Claude Code managed hooks because an organization-managed install is active (%s)\n", managedSettingsPath)
+	} else {
+		removed, err := removeManagedSettings(ctx)
+		if err != nil {
+			return err
+		}
+		if removed {
+			fmt.Fprintf(opts.Stdout, "✓ Claude Code managed hooks removed (%s)\n", managedSettingsPath)
+		} else {
+			fmt.Fprintf(opts.Stdout, "· Kept Claude Code managed hooks because ownership is unknown (%s)\n", managedSettingsPath)
+		}
+	}
 
 	settingsPath, err := userSettingsPathNoCreate()
 	if err != nil {
@@ -84,6 +102,43 @@ func Uninstall(ctx context.Context, opts Options) error {
 	fmt.Fprintln(opts.Stdout, "· Kept local observe data and logs under ~/Library/Application Support/Kontext and ~/Library/Logs/Kontext")
 	fmt.Fprintln(opts.Stdout, "· The kontext binary is managed by Homebrew (`brew uninstall kontext` to remove)")
 	return nil
+}
+
+// removeManagedSettings removes the drop-in only when it is ours by content
+// (mirroring setup's ownership check), so uninstall never deletes an enterprise
+// or foreign managed-settings file. Returns whether the file was removed.
+func removeManagedSettings(ctx context.Context) (bool, error) {
+	existing, err := os.ReadFile(managedSettingsPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	if !claudemanaged.IsManagedSettingsDropIn(existing) {
+		return false, nil
+	}
+	if geteuid() == 0 {
+		if err := os.Remove(managedSettingsPath); err != nil && !os.IsNotExist(err) {
+			return false, err
+		}
+		return true, nil
+	}
+	if err := runPrivilegedCommand(ctx, "sudo", "rm", "-f", managedSettingsPath); err != nil {
+		return false, fmt.Errorf("remove Claude managed settings: %w", err)
+	}
+	return true, nil
+}
+
+func organizationManagedInstall() (bool, error) {
+	if _, err := os.Lstat(systemConfigPath); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("cannot determine whether this Mac is organization-managed: %w", err)
+	}
+	if _, err := managedconfig.LoadFile(systemConfigPath); err != nil {
+		return false, fmt.Errorf("cannot determine whether this Mac is organization-managed: %w", err)
+	}
+	return true, nil
 }
 
 func userSettingsPathNoCreate() (string, error) {

@@ -44,6 +44,9 @@ func newHarness(t *testing.T) *harness {
 
 	overrideVar(t, &goos, "darwin")
 	overrideVar(t, &systemConfigPath, filepath.Join(h.home, "no-system", "managed.json"))
+	overrideVar(t, &managedSettingsPath, filepath.Join(h.home, "Library", "Application Support", "ClaudeCode", "managed-settings.d", "20-kontext.json"))
+	overrideVar(t, &managedSettingsFile, filepath.Join(h.home, "Library", "Application Support", "ClaudeCode", "managed-settings.json"))
+	overrideVar(t, &geteuid, func() int { return 0 })
 	overrideVar(t, &executablePath, func() (string, error) { return "/opt/homebrew/bin/kontext", nil })
 	overrideVar(t, &dialSocket, func(string, time.Duration) error { return nil })
 	overrideVar(t, &isTerminal, func(int) bool { return false })
@@ -81,6 +84,10 @@ func newHarness(t *testing.T) *harness {
 			h.t.Fatalf("unexpected command: %s %v", name, args)
 			return "", nil
 		}
+	})
+	overrideVar(t, &runPrivilegedCommand, func(_ context.Context, name string, args ...string) error {
+		h.calls = append(h.calls, execCall{name: name, args: args})
+		return nil
 	})
 	return h
 }
@@ -185,15 +192,16 @@ func TestRunFullFlow(t *testing.T) {
 		t.Fatalf("installation identity: %v", err)
 	}
 
-	// Hooks merged into ~/.claude/settings.json with the stable binary path.
-	settingsPath := filepath.Join(h.home, ".claude", "settings.json")
-	settings, err := claudemanaged.ReadUserSettings(settingsPath)
+	// Hooks are installed through Claude managed settings with the stable binary path.
+	data, err = os.ReadFile(managedSettingsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(map[string]any{"hooks": settings["hooks"]})
-	if err := claudemanaged.Validate(raw, "/opt/homebrew/bin/kontext"); err != nil {
-		t.Fatalf("hooks invalid after setup: %v", err)
+	if err := claudemanaged.Validate(data, "/opt/homebrew/bin/kontext"); err != nil {
+		t.Fatalf("managed hooks invalid after setup: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(h.home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("setup created user settings file: %v", err)
 	}
 
 	// LaunchAgent plist written and lifecycle ordered bootout -> bootstrap
@@ -220,6 +228,7 @@ func TestRunFullFlow(t *testing.T) {
 		"Kontext setup",
 		"Workspace\n  ✓ Acme (org_test)",
 		"Mac\n  ✓ Config written",
+		"  ✓ Claude Code managed hooks installed",
 		"  • Installing background agent...",
 		"  • Waiting for background agent...",
 		"  ✓ Background agent running",
@@ -261,7 +270,7 @@ func TestRunIsIdempotent(t *testing.T) {
 		t.Fatalf("second Run() error = %v", err)
 	}
 
-	// Identity survives; hooks not duplicated.
+	// Identity survives; managed settings stay valid.
 	identityAfter, err := installation.LoadFile(installation.UserPath())
 	if err != nil {
 		t.Fatal(err)
@@ -269,13 +278,12 @@ func TestRunIsIdempotent(t *testing.T) {
 	if identityBefore.InstallationID != identityAfter.InstallationID {
 		t.Fatal("installation identity changed across re-runs")
 	}
-	settings, err := claudemanaged.ReadUserSettings(filepath.Join(h.home, ".claude", "settings.json"))
+	data, err := os.ReadFile(managedSettingsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	groups := settings["hooks"].(map[string]any)["PreToolUse"].([]any)
-	if len(groups) != 1 {
-		t.Fatalf("PreToolUse groups after re-run = %d, want 1", len(groups))
+	if err := claudemanaged.Validate(data, "/opt/homebrew/bin/kontext"); err != nil {
+		t.Fatalf("managed hooks invalid after re-run: %v", err)
 	}
 }
 
@@ -318,6 +326,192 @@ func TestRunRefusesMDMManagedMac(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("Run() error = %v, missing %q", err, want)
 		}
+	}
+}
+
+func TestRunRefusesExistingManagedHooksWithoutSelfServeConfig(t *testing.T) {
+	h := newHarness(t)
+	allowLoopback(t)
+	if err := os.MkdirAll(filepath.Dir(managedSettingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedSettingsPath, []byte("enterprise hooks"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server := pingServer(t, "tok")
+
+	err := Run(context.Background(), h.options("tok", server))
+	if err == nil || !strings.Contains(err.Error(), "hook ownership is unknown") {
+		t.Fatalf("Run() error = %v, want hook ownership refusal", err)
+	}
+	if h.keychain[KeychainItemName] != "" {
+		t.Fatal("keychain written despite hook ownership refusal")
+	}
+	if _, err := os.Stat(managedconfig.UserPath()); !os.IsNotExist(err) {
+		t.Fatal("managed.json written despite hook ownership refusal")
+	}
+	data, err := os.ReadFile(managedSettingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "enterprise hooks" {
+		t.Fatalf("managed hooks overwritten: %q", data)
+	}
+}
+
+func TestRunRefusesExistingRootManagedSettings(t *testing.T) {
+	h := newHarness(t)
+	allowLoopback(t)
+	if err := os.MkdirAll(filepath.Dir(managedSettingsFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := managedSettingsData("/opt/homebrew/bin/kontext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedSettingsFile, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server := pingServer(t, "tok")
+
+	err = Run(context.Background(), h.options("tok", server))
+	if err == nil || !strings.Contains(err.Error(), "root managed settings already exist") {
+		t.Fatalf("Run() error = %v, want root managed-settings refusal", err)
+	}
+	if _, err := os.Stat(managedconfig.UserPath()); !os.IsNotExist(err) {
+		t.Fatal("managed.json written despite root managed-settings refusal")
+	}
+}
+
+func TestRunRefreshesStaleSelfServeDropIn(t *testing.T) {
+	// A drop-in written by an older self-serve run carries a now-stale binary
+	// path. It is still ours (alias-matched), so setup must refresh it in place
+	// rather than refuse with "hook ownership is unknown".
+	h := newHarness(t)
+	allowLoopback(t)
+	stale, err := managedSettingsData("/old/Cellar/path/kontext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(managedSettingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedSettingsPath, stale, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server := pingServer(t, "tok")
+
+	if err := Run(context.Background(), h.options("tok", server)); err != nil {
+		t.Fatalf("Run() error = %v, want refresh of owned drop-in", err)
+	}
+	data, err := os.ReadFile(managedSettingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(data, stale) {
+		t.Fatal("stale drop-in was not refreshed")
+	}
+	if !claudemanaged.IsManagedSettingsDropIn(data) {
+		t.Fatalf("refreshed drop-in is not owned: %q", data)
+	}
+}
+
+func TestRunPreflightsLegacyCleanupBeforeWritingState(t *testing.T) {
+	// A corrupt ~/.claude/settings.json must fail before setup writes active
+	// managed config or hooks. Otherwise hook commands can switch to managed
+	// observe before the LaunchAgent exists.
+	h := newHarness(t)
+	allowLoopback(t)
+	settingsPath := filepath.Join(h.home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := pingServer(t, "tok")
+
+	err := Run(context.Background(), h.options("tok", server))
+	if err == nil || !strings.Contains(err.Error(), "check legacy Claude Code hooks") {
+		t.Fatalf("Run() error = %v, want legacy cleanup failure", err)
+	}
+	if _, err := os.Stat(managedSettingsPath); !os.IsNotExist(err) {
+		t.Fatalf("managed drop-in written before preflight failure: %v", err)
+	}
+	if _, err := os.Stat(managedconfig.UserPath()); !os.IsNotExist(err) {
+		t.Fatalf("managed config written before preflight failure: %v", err)
+	}
+	if len(h.keychain) != 0 {
+		t.Fatal("keychain written before preflight failure")
+	}
+}
+
+func TestRunFailsWhenLegacyUserSettingsDisableHooks(t *testing.T) {
+	h := newHarness(t)
+	allowLoopback(t)
+	settingsPath := filepath.Join(h.home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(`{"disableAllHooks":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := pingServer(t, "tok")
+
+	err := Run(context.Background(), h.options("tok", server))
+	if err == nil || !strings.Contains(err.Error(), "disableAllHooks must not be true") {
+		t.Fatalf("Run() error = %v, want disableAllHooks failure", err)
+	}
+	if _, err := os.Stat(managedSettingsPath); !os.IsNotExist(err) {
+		t.Fatalf("managed drop-in written before preflight failure: %v", err)
+	}
+	if _, err := os.Stat(managedconfig.UserPath()); !os.IsNotExist(err) {
+		t.Fatalf("managed config written before preflight failure: %v", err)
+	}
+	if len(h.keychain) != 0 {
+		t.Fatal("keychain written before preflight failure")
+	}
+}
+
+func TestRunWarnsAfterInstallWhenLegacyCleanupWriteFails(t *testing.T) {
+	h := newHarness(t)
+	allowLoopback(t)
+	settingsDir := filepath.Join(h.home, ".claude")
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := map[string]any{"hooks": map[string]any{
+		"PreToolUse": []any{
+			map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": "'/opt/homebrew/bin/kontext' hook 'pre-tool-use'"}}},
+		},
+	}}
+	if err := claudemanaged.WriteUserSettings(settingsPath, settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(settingsDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(settingsDir, 0o755) })
+	server := pingServer(t, "tok")
+
+	if err := Run(context.Background(), h.options("tok", server)); err != nil {
+		t.Fatalf("Run() error = %v, want warning-only legacy cleanup failure", err)
+	}
+	if _, err := os.Stat(managedSettingsPath); err != nil {
+		t.Fatalf("managed drop-in not installed: %v", err)
+	}
+	var bootstrapped bool
+	for _, call := range h.calls {
+		if call.name == "launchctl" && len(call.args) > 0 && call.args[0] == "bootstrap" {
+			bootstrapped = true
+		}
+	}
+	if !bootstrapped {
+		t.Fatal("LaunchAgent was not installed before cleanup failure")
+	}
+	if !strings.Contains(h.errOut.String(), "legacy Claude Code user hooks could not be removed") {
+		t.Fatalf("stderr missing cleanup warning:\n%s", h.errOut.String())
 	}
 }
 
@@ -375,17 +569,17 @@ func TestUninstallReversesSetupKeepingIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A foreign hook installed after setup must survive uninstall.
+	// A legacy user hook installed before the cutover is removed, foreign hooks survive.
 	settingsPath := filepath.Join(h.home, ".claude", "settings.json")
-	settings, err := claudemanaged.ReadUserSettings(settingsPath)
-	if err != nil {
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	hooks := settings["hooks"].(map[string]any)
-	hooks["PreToolUse"] = append(hooks["PreToolUse"].([]any), map[string]any{
-		"matcher": "Edit",
-		"hooks":   []any{map[string]any{"type": "command", "command": "lint-check"}},
-	})
+	settings := map[string]any{"hooks": map[string]any{
+		"PreToolUse": []any{
+			map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": "'/opt/homebrew/bin/kontext' hook 'pre-tool-use'"}}},
+			map[string]any{"matcher": "Edit", "hooks": []any{map[string]any{"type": "command", "command": "lint-check"}}},
+		},
+	}}
 	if err := claudemanaged.WriteUserSettings(settingsPath, settings); err != nil {
 		t.Fatal(err)
 	}
@@ -404,12 +598,15 @@ func TestUninstallReversesSetupKeepingIdentity(t *testing.T) {
 	if _, err := os.Stat(plist); !os.IsNotExist(err) {
 		t.Fatal("plist not removed")
 	}
+	if _, err := os.Stat(managedSettingsPath); !os.IsNotExist(err) {
+		t.Fatal("managed settings not removed")
+	}
 	// Identity kept for endpoint continuity.
 	if _, err := installation.LoadFile(installation.UserPath()); err != nil {
 		t.Fatalf("installation identity removed: %v", err)
 	}
-	// Our hooks gone, the foreign one intact.
-	settings, err = claudemanaged.ReadUserSettings(settingsPath)
+	// Legacy user hook gone, the foreign one intact.
+	settings, err := claudemanaged.ReadUserSettings(settingsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,6 +618,178 @@ func TestUninstallReversesSetupKeepingIdentity(t *testing.T) {
 	// Idempotent: a second uninstall is clean.
 	if err := Uninstall(context.Background(), h.options("", pingServer(t, "unused"))); err != nil {
 		t.Fatalf("second Uninstall() error = %v", err)
+	}
+}
+
+func TestUninstallKeepsManagedHooksWhenOrganizationManaged(t *testing.T) {
+	h := newHarness(t)
+	if err := os.MkdirAll(filepath.Dir(systemConfigPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(systemConfigPath, []byte(`{
+  "version": "managed-install-v1",
+  "cloud_url": "https://api.kontext.dev",
+  "mode": "observe",
+  "agent": "claude",
+  "credentials": {
+    "install_token_ref": "env:KONTEXT_INSTALL_TOKEN"
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(managedSettingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedSettingsPath, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Uninstall(context.Background(), h.options("", pingServer(t, "unused"))); err != nil {
+		t.Fatalf("Uninstall() error = %v", err)
+	}
+
+	if _, err := os.Stat(managedSettingsPath); err != nil {
+		t.Fatalf("managed settings removed with organization config present: %v", err)
+	}
+	if !strings.Contains(h.errOut.String(), "organization-managed") {
+		t.Fatalf("stderr missing organization-managed warning:\n%s", h.errOut.String())
+	}
+	if !strings.Contains(h.out.String(), "Kept Claude Code managed hooks") {
+		t.Fatalf("stdout missing kept managed hooks message:\n%s", h.out.String())
+	}
+}
+
+func TestUninstallKeepsForeignManagedHooks(t *testing.T) {
+	// No organization config, but the drop-in is not ours (another installer).
+	// Uninstall must not delete it.
+	h := newHarness(t)
+	if err := os.MkdirAll(filepath.Dir(managedSettingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := []byte(`{"hooks":{"PreToolUse":[{"matcher":"","hooks":[{"type":"command","command":"/opt/other/tool observe"}]}]}}` + "\n")
+	if err := os.WriteFile(managedSettingsPath, foreign, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Uninstall(context.Background(), h.options("", pingServer(t, "unused"))); err != nil {
+		t.Fatalf("Uninstall() error = %v", err)
+	}
+
+	data, err := os.ReadFile(managedSettingsPath)
+	if err != nil {
+		t.Fatalf("foreign managed hooks removed: %v", err)
+	}
+	if !bytes.Equal(data, foreign) {
+		t.Fatalf("foreign managed hooks altered: %q", data)
+	}
+	if !strings.Contains(h.out.String(), "Kept Claude Code managed hooks because ownership is unknown") {
+		t.Fatalf("stdout missing ownership-kept message:\n%s", h.out.String())
+	}
+}
+
+func TestUninstallRejectsStaleOrganizationConfigBeforeKeepingManagedHooks(t *testing.T) {
+	h := newHarness(t)
+	if err := os.MkdirAll(filepath.Dir(systemConfigPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(systemConfigPath, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(managedSettingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedSettingsPath, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Uninstall(context.Background(), h.options("", pingServer(t, "unused")))
+	if err == nil || !strings.Contains(err.Error(), "cannot determine whether this Mac is organization-managed") {
+		t.Fatalf("Uninstall() error = %v, want ownership failure", err)
+	}
+	if _, err := os.Stat(managedSettingsPath); err != nil {
+		t.Fatalf("managed settings changed after ownership failure: %v", err)
+	}
+	if h.out.Len() != 0 {
+		t.Fatalf("stdout = %q, want no uninstall progress before ownership failure", h.out.String())
+	}
+}
+
+func TestInstallManagedSettingsUsesSudoWhenNotRoot(t *testing.T) {
+	h := newHarness(t)
+	overrideVar(t, &geteuid, func() int { return 501 })
+	data, err := managedSettingsData("/opt/homebrew/bin/kontext")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := installManagedSettings(context.Background(), data); err != nil {
+		t.Fatalf("installManagedSettings() error = %v", err)
+	}
+
+	var sudo [][]string
+	for _, call := range h.calls {
+		if call.name == "sudo" {
+			sudo = append(sudo, call.args)
+		}
+	}
+	if len(sudo) != 2 || sudo[0][0] != "mkdir" || sudo[1][0] != "install" {
+		t.Fatalf("sudo calls = %v, want mkdir then install", sudo)
+	}
+}
+
+func TestWritePrivilegedFileRootWritesAtomicallyWithMode(t *testing.T) {
+	newHarness(t)
+	path := filepath.Join(t.TempDir(), "managed-settings.d", "20-kontext.json")
+
+	if err := writePrivilegedFile(context.Background(), path, []byte(`{"hooks":{}}`+"\n")); err != nil {
+		t.Fatalf("writePrivilegedFile() error = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "{\"hooks\":{}}\n" {
+		t.Fatalf("data = %q", data)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("mode = %v, want 0644", info.Mode().Perm())
+	}
+}
+
+func TestRemoveManagedSettingsRootTreatsMissingAfterReadAsSuccess(t *testing.T) {
+	newHarness(t)
+	path := filepath.Join(t.TempDir(), "20-kontext.json")
+	data, err := managedSettingsData("/opt/homebrew/bin/kontext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	overrideVar(t, &managedSettingsPath, path)
+	remove := os.Remove
+	removedDuringStat := false
+	overrideVar(t, &geteuid, func() int {
+		if !removedDuringStat {
+			removedDuringStat = true
+			if err := remove(path); err != nil {
+				t.Fatalf("remove during race setup: %v", err)
+			}
+		}
+		return 0
+	})
+
+	removed, err := removeManagedSettings(context.Background())
+	if err != nil {
+		t.Fatalf("removeManagedSettings() error = %v", err)
+	}
+	if !removed {
+		t.Fatal("removeManagedSettings() reported kept for an owned drop-in")
 	}
 }
 

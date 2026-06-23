@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 	"github.com/kontext-security/kontext-cli/internal/hook"
@@ -508,6 +510,101 @@ func TestRunDaemonExitsCleanlyAfterHomebrewUpgradeSignal(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("RunDaemon did not exit after upgrade signal")
+	}
+}
+
+func TestRunDaemonRejectsLegacyCoworkWithoutManagedDropIn(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "managed.json")
+	t.Setenv("KONTEXT_MANAGED_CONFIG", configPath)
+	t.Setenv("KONTEXT_INSTALL_TOKEN", "test-install-token")
+	if err := os.WriteFile(configPath, []byte(`{
+  "version": "managed-install-v1",
+  "cowork_enabled": true,
+  "cloud_url": "https://app.kontext.dev",
+  "mode": "observe",
+  "agent": "claude",
+  "credentials": {"install_token_ref": "env:KONTEXT_INSTALL_TOKEN"}
+}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(managed config) error = %v", err)
+	}
+	previousDropIn := managedSettingsDropInPath
+	previousRoot := managedSettingsFilePath
+	managedSettingsDropInPath = filepath.Join(dir, "missing", "20-kontext.json")
+	managedSettingsFilePath = filepath.Join(dir, "missing", "managed-settings.json")
+	t.Cleanup(func() {
+		managedSettingsDropInPath = previousDropIn
+		managedSettingsFilePath = previousRoot
+	})
+
+	err := RunDaemon(context.Background(), DaemonOptions{})
+	if err == nil || !strings.Contains(err.Error(), "cowork_enabled is set but Claude Code managed hooks are missing") {
+		t.Fatalf("RunDaemon() error = %v, want missing managed hook failure", err)
+	}
+}
+
+func TestLegacyCoworkAcceptsRootManagedSettings(t *testing.T) {
+	dir := t.TempDir()
+	rootSettings := filepath.Join(dir, "managed-settings.json")
+	data, err := claudemanaged.TemplateJSON("/opt/homebrew/bin/kontext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	root["allowManagedHooksOnly"] = true
+	data, err = json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rootSettings, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previousDropIn := managedSettingsDropInPath
+	previousRoot := managedSettingsFilePath
+	managedSettingsDropInPath = filepath.Join(dir, "missing", "20-kontext.json")
+	managedSettingsFilePath = rootSettings
+	t.Cleanup(func() {
+		managedSettingsDropInPath = previousDropIn
+		managedSettingsFilePath = previousRoot
+	})
+
+	if err := requireManagedHooksForLegacyCowork(managedconfig.Config{LegacyCoworkEnabled: true}); err != nil {
+		t.Fatalf("requireManagedHooksForLegacyCowork() error = %v", err)
+	}
+}
+
+func TestLegacyCoworkRejectsDisabledManagedSettingsSource(t *testing.T) {
+	dir := t.TempDir()
+	dropInSettings := filepath.Join(dir, "managed-settings.d", "20-kontext.json")
+	if err := os.MkdirAll(filepath.Dir(dropInSettings), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := claudemanaged.TemplateJSON("/opt/homebrew/bin/kontext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dropInSettings, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rootSettings := filepath.Join(dir, "managed-settings.json")
+	if err := os.WriteFile(rootSettings, []byte(`{"disableAllHooks":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	previousDropIn := managedSettingsDropInPath
+	previousRoot := managedSettingsFilePath
+	managedSettingsDropInPath = dropInSettings
+	managedSettingsFilePath = rootSettings
+	t.Cleanup(func() {
+		managedSettingsDropInPath = previousDropIn
+		managedSettingsFilePath = previousRoot
+	})
+
+	err = requireManagedHooksForLegacyCowork(managedconfig.Config{LegacyCoworkEnabled: true})
+	if err == nil || !strings.Contains(err.Error(), "disableAllHooks") {
+		t.Fatalf("requireManagedHooksForLegacyCowork() error = %v, want disableAllHooks failure", err)
 	}
 }
 

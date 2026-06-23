@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 
 const (
 	ManagedSettingsPath        = "/Library/Application Support/ClaudeCode/managed-settings.json"
+	ManagedSettingsDropInPath  = "/Library/Application Support/ClaudeCode/managed-settings.d/20-kontext.json"
 	LinuxManagedSettingsPath   = "/etc/claude-code/managed-settings.json"
 	WindowsManagedSettingsPath = `C:\Program Files\ClaudeCode\managed-settings.json`
 	DefaultKontextBinary       = "/usr/local/bin/kontext"
@@ -127,6 +129,115 @@ func Validate(data []byte, kontextBinary string) error {
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+// IsManagedSettingsDropIn reports whether data is a Kontext-owned managed
+// settings drop-in — a file we are safe to refresh (setup) or delete
+// (uninstall) without destroying state we don't own. It is ours iff:
+//
+//  1. The ONLY top-level key is "hooks" — exactly what Template emits. A file
+//     carrying any other top-level field (enterprise policy, metadata, or a
+//     future Claude managed-settings key) is not solely ours, so we leave it
+//     untouched even when its hooks match.
+//  2. Every handler command is one of our flagless managed-observe hooks
+//     (IsManagedHookCommand). Matching on the alias, not the binary path, means
+//     a drop-in from an older self-serve run (a stale path after `brew upgrade`)
+//     still reads as ours.
+//
+// Empty/garbage data is not ours.
+func IsManagedSettingsDropIn(data []byte) bool {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return false
+	}
+	if len(top) != 1 {
+		return false
+	}
+	for key := range top {
+		if key != "hooks" {
+			return false
+		}
+	}
+	var settings Settings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false
+	}
+	if len(settings.Hooks) != len(SupportedEvents) {
+		return false
+	}
+	for _, event := range SupportedEvents {
+		groups := settings.Hooks[event.Name.String()]
+		if len(groups) != 1 || groups[0].Matcher != "" || len(groups[0].Hooks) != 1 {
+			return false
+		}
+		if !isCanonicalManagedDropInHandler(groups[0].Hooks[0], event) {
+			return false
+		}
+	}
+	return true
+}
+
+func HasManagedObserveHooks(data []byte) bool {
+	var settings Settings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false
+	}
+	if settings.DisableAllHooks != nil && *settings.DisableAllHooks {
+		return false
+	}
+	for _, event := range SupportedEvents {
+		if !hasManagedObserveHook(settings.Hooks[event.Name.String()], event) {
+			return false
+		}
+	}
+	return true
+}
+
+func DisablesAllHooks(data []byte) bool {
+	var settings Settings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false
+	}
+	return settings.DisableAllHooks != nil && *settings.DisableAllHooks
+}
+
+func hasManagedObserveHook(groups []MatcherGroup, event Event) bool {
+	for _, group := range groups {
+		if !isAllMatcher(group.Matcher) {
+			continue
+		}
+		for _, handler := range group.Hooks {
+			if handler.Type != "command" || len(handler.Args) != 0 {
+				continue
+			}
+			if err := validateAsync(event, handler.Async); err != nil {
+				continue
+			}
+			fields, ok := splitHookCommand(handler.Command)
+			if ok && len(fields) == 3 && filepath.Base(fields[0]) == "kontext" && fields[1] == "hook" && fields[2] == event.Alias {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isCanonicalManagedDropInHandler(handler Handler, event Event) bool {
+	if handler.Type != "command" || len(handler.Args) != 0 || handler.Timeout != DefaultHookTimeout {
+		return false
+	}
+	if event.Async {
+		if handler.Async == nil || !*handler.Async {
+			return false
+		}
+	} else if handler.Async != nil {
+		return false
+	}
+	fields, ok := splitHookCommand(handler.Command)
+	return ok && len(fields) == 3 &&
+		filepath.Base(fields[0]) == "kontext" &&
+		fields[1] == "hook" &&
+		fields[2] == event.Alias
 }
 
 func ParseEventAlias(value string) (hook.HookName, bool) {
