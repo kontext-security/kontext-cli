@@ -98,11 +98,11 @@ type Config struct {
 type configFile struct {
 	Version              string          `json:"version"`
 	LegacyOrganizationID json.RawMessage `json:"organization_id,omitempty"`
-	// LegacyCoworkEnabled is accepted but ignored. Cowork is now always observed
-	// through the managed-settings hook path (the hook wrapper labels Cowork from
-	// session context), so coverage no longer depends on this flag. Tolerated
-	// here only so existing managed.json files keep parsing under
-	// DisallowUnknownFields; it can be dropped from configs.
+	// LegacyCoworkEnabled is accepted for backward-compatible migration checks.
+	// Cowork is now observed through the managed-settings hook path (the hook
+	// wrapper labels Cowork from session context), not a separate observer.
+	// When old configs still set this flag, daemon startup verifies that the
+	// managed hooks are present and enabled so missing coverage fails loudly.
 	LegacyCoworkEnabled json.RawMessage `json:"cowork_enabled,omitempty"`
 	CloudURL            string          `json:"cloud_url"`
 	Mode                string          `json:"mode"`

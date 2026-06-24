@@ -51,7 +51,7 @@ func TestParseIgnoresLegacyOrganizationID(t *testing.T) {
 	}
 }
 
-func TestParseIgnoresLegacyCoworkEnabled(t *testing.T) {
+func TestParseAcceptsLegacyCoworkEnabled(t *testing.T) {
 	input := strings.Replace(validConfigJSON(), `"cloud_url":`, `"cowork_enabled": true,
   "cloud_url":`, 1)
 	cfg, err := Parse([]byte(input))
