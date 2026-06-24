@@ -6,11 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/kontext-security/kontext-cli/internal/coworkobserve"
+	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
@@ -38,6 +37,11 @@ type DaemonOptions struct {
 	HomebrewUpdater           func(context.Context, managedconfig.LoadedConfig, diagnostic.Logger) <-chan struct{}
 }
 
+var (
+	managedSettingsDropInPath = claudemanaged.ManagedSettingsDropInPath
+	managedSettingsFilePath   = claudemanaged.DefaultManagedSettingsPath()
+)
+
 func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	loadedConfig, err := managedconfig.Load()
 	if err != nil {
@@ -56,6 +60,9 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			loadedConfig.Scope, expected)
 		<-ctx.Done()
 		return nil
+	}
+	if err := requireManagedHooksForLegacyCowork(loadedConfig.Config); err != nil {
+		return err
 	}
 	installationState, err := installation.EnsureFile(installationPathForScope(loadedConfig.Scope))
 	if err != nil {
@@ -144,18 +151,6 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	}
 	upgraded := startUpdater(ctx, loadedConfig, opts.Diagnostic)
 
-	// Cowork observation runs alongside Claude Code in the same daemon, replaying
-	// in-VM Cowork tool events into the same localruntime socket as agent "cowork".
-	// Enabled via managed.json (cowork_enabled) or the env var override.
-	if loadedConfig.Config.CoworkEnabled || coworkobserve.Enabled() {
-		go coworkobserve.Run(ctx, coworkobserve.Options{
-			SocketPath: socketPath,
-			StatePath:  filepath.Join(filepath.Dir(dbPath), "cowork-spool-offsets.json"),
-			Mode:       mode,
-			Diagnostic: opts.Diagnostic,
-		})
-	}
-
 	idleTimeout := opts.IdleTimeout
 	if idleTimeout == 0 {
 		idleTimeout = DefaultIdleTimeout()
@@ -184,6 +179,48 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			}
 		}
 	}
+}
+
+func requireManagedHooksForLegacyCowork(cfg managedconfig.Config) error {
+	if !cfg.LegacyCoworkEnabled {
+		return nil
+	}
+	foundHooks := false
+	for _, path := range []string{managedSettingsDropInPath, managedSettingsFilePath} {
+		state, err := managedObserveHooksState(path)
+		if err != nil {
+			return fmt.Errorf("check Claude Code managed hooks for cowork_enabled: %w", err)
+		}
+		if state.disabled {
+			return fmt.Errorf("cowork_enabled is set but Claude Code hooks are disabled at %s; remove disableAllHooks before starting managed observe", path)
+		}
+		if state.hasHooks {
+			foundHooks = true
+		}
+	}
+	if foundHooks {
+		return nil
+	}
+	return fmt.Errorf("cowork_enabled is set but Claude Code managed hooks are missing at %s or %s; run `kontext setup` or install the managed-settings drop-in before starting managed observe", managedSettingsDropInPath, managedSettingsFilePath)
+}
+
+type managedObserveHooksStatus struct {
+	disabled bool
+	hasHooks bool
+}
+
+func managedObserveHooksState(path string) (managedObserveHooksStatus, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return managedObserveHooksStatus{}, nil
+	}
+	if err != nil {
+		return managedObserveHooksStatus{}, err
+	}
+	return managedObserveHooksStatus{
+		disabled: claudemanaged.DisablesAllHooks(data),
+		hasHooks: claudemanaged.HasManagedObserveHooks(data),
+	}, nil
 }
 
 // deploymentVersionWithFallback resolves the version reported with each

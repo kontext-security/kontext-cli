@@ -86,28 +86,29 @@ func ResolvePath() (string, Scope) {
 }
 
 type Config struct {
-	Version     string      `json:"version"`
-	CloudURL    string      `json:"cloud_url"`
-	Mode        string      `json:"mode"`
-	Agent       string      `json:"agent"`
-	Credentials Credentials `json:"credentials"`
-	Device      Device      `json:"device,omitempty"`
-	// CoworkEnabled turns on Claude Cowork observation/enforcement in the
-	// managed-observe daemon (the posture follows Mode). A managed.json field
-	// so MDM-deployed installs control it through config rather than launchd
-	// environment plumbing.
-	CoworkEnabled bool `json:"cowork_enabled,omitempty"`
+	Version             string      `json:"version"`
+	CloudURL            string      `json:"cloud_url"`
+	Mode                string      `json:"mode"`
+	Agent               string      `json:"agent"`
+	Credentials         Credentials `json:"credentials"`
+	Device              Device      `json:"device,omitempty"`
+	LegacyCoworkEnabled bool        `json:"-"`
 }
 
 type configFile struct {
 	Version              string          `json:"version"`
 	LegacyOrganizationID json.RawMessage `json:"organization_id,omitempty"`
-	CloudURL             string          `json:"cloud_url"`
-	Mode                 string          `json:"mode"`
-	Agent                string          `json:"agent"`
-	Credentials          Credentials     `json:"credentials"`
-	Device               Device          `json:"device,omitempty"`
-	CoworkEnabled        bool            `json:"cowork_enabled,omitempty"`
+	// LegacyCoworkEnabled is accepted for backward-compatible migration checks.
+	// Cowork is now observed through the managed-settings hook path (the hook
+	// wrapper labels Cowork from session context), not a separate observer.
+	// When old configs still set this flag, daemon startup verifies that the
+	// managed hooks are present and enabled so missing coverage fails loudly.
+	LegacyCoworkEnabled json.RawMessage `json:"cowork_enabled,omitempty"`
+	CloudURL            string          `json:"cloud_url"`
+	Mode                string          `json:"mode"`
+	Agent               string          `json:"agent"`
+	Credentials         Credentials     `json:"credentials"`
+	Device              Device          `json:"device,omitempty"`
 }
 
 type Credentials struct {
@@ -188,14 +189,19 @@ func Parse(data []byte) (Config, error) {
 		return Config{}, errors.New("unexpected trailing JSON value")
 	}
 	return normalizeAndValidate(Config{
-		Version:       file.Version,
-		CloudURL:      file.CloudURL,
-		Mode:          file.Mode,
-		Agent:         file.Agent,
-		Credentials:   file.Credentials,
-		Device:        file.Device,
-		CoworkEnabled: file.CoworkEnabled,
+		Version:             file.Version,
+		CloudURL:            file.CloudURL,
+		Mode:                file.Mode,
+		Agent:               file.Agent,
+		Credentials:         file.Credentials,
+		Device:              file.Device,
+		LegacyCoworkEnabled: legacyCoworkEnabled(file.LegacyCoworkEnabled),
 	})
+}
+
+func legacyCoworkEnabled(raw json.RawMessage) bool {
+	var enabled bool
+	return json.Unmarshal(raw, &enabled) == nil && enabled
 }
 
 func ParseTokenRef(value string) (TokenRef, error) {

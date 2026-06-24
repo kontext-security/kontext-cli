@@ -227,49 +227,6 @@ func splitHookCommand(command string) ([]string, bool) {
 	return fields, true
 }
 
-// MergeManagedHooks installs/refreshes the five managed-observe hooks in the
-// settings map: for each supported event it removes any existing Kontext
-// managed handlers (stale binary paths included) and appends the canonical
-// group from Template. Everything else in the map is untouched. Idempotent:
-// merging twice is a fixpoint. Returns non-fatal warnings for conditions the
-// user should know about.
-func MergeManagedHooks(settings map[string]any, kontextBinary string) ([]string, error) {
-	var warnings []string
-
-	if disabled, ok := settings["disableAllHooks"].(bool); ok && disabled {
-		warnings = append(warnings, "Claude Code hooks are globally disabled (disableAllHooks) in settings.json; Kontext hooks will not fire until you remove that setting")
-	}
-
-	hooks, err := hooksMap(settings)
-	if err != nil {
-		return nil, err
-	}
-
-	if hasGuardHooks(hooks) {
-		warnings = append(warnings, "Kontext Guard hooks are also installed; consider `kontext guard hooks uninstall claude-code` to avoid duplicate processing")
-	}
-
-	// Build every canonical group before touching the map, so an error can
-	// never leave the caller's settings half-merged.
-	template := Template(kontextBinary)
-	canonical := make(map[string]any, len(SupportedEvents))
-	for _, event := range SupportedEvents {
-		name := event.Name.String()
-		group, err := toAny(template.Hooks[name][0])
-		if err != nil {
-			return nil, err
-		}
-		canonical[name] = group
-	}
-
-	settings["hooks"] = hooks
-	for _, event := range SupportedEvents {
-		name := event.Name.String()
-		hooks[name] = append(withoutManagedHandlers(hooks[name]), canonical[name])
-	}
-	return warnings, nil
-}
-
 // RemoveManagedHooks strips OUR handlers (and only ours) from the settings
 // map, pruning groups and event keys that end up empty. Foreign hooks,
 // including Guard's, survive untouched. Idempotent.
@@ -347,44 +304,4 @@ func withoutManagedHandlers(raw any) []any {
 		filtered = append(filtered, group)
 	}
 	return filtered
-}
-
-func hasGuardHooks(hooks map[string]any) bool {
-	for _, raw := range hooks {
-		list, ok := raw.([]any)
-		if !ok {
-			continue
-		}
-		for _, entry := range list {
-			group, ok := entry.(map[string]any)
-			if !ok {
-				continue
-			}
-			handlers, _ := group["hooks"].([]any)
-			for _, handler := range handlers {
-				handlerMap, ok := handler.(map[string]any)
-				if !ok {
-					continue
-				}
-				if command, ok := handlerMap["command"].(string); ok && IsGuardHookCommand(command) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// toAny round-trips a typed value through JSON so it lands in the generic
-// settings map with exactly the shape WriteUserSettings will serialize.
-func toAny(value any) (any, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	var out any
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
