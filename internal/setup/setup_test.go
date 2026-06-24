@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -44,6 +45,7 @@ func newHarness(t *testing.T) *harness {
 
 	overrideVar(t, &goos, "darwin")
 	overrideVar(t, &systemConfigPath, filepath.Join(h.home, "no-system", "managed.json"))
+	overrideVar(t, &orgInstallTokenPath, filepath.Join(h.home, "no-system", "install-token"))
 	overrideVar(t, &managedSettingsPath, filepath.Join(h.home, "Library", "Application Support", "ClaudeCode", "managed-settings.d", "20-kontext.json"))
 	overrideVar(t, &managedSettingsFile, filepath.Join(h.home, "Library", "Application Support", "ClaudeCode", "managed-settings.json"))
 	overrideVar(t, &geteuid, func() int { return 0 })
@@ -319,12 +321,161 @@ func TestRunRefusesMDMManagedMac(t *testing.T) {
 		t.Fatalf("Run() error = %v, want MDM refusal", err)
 	}
 	for _, want := range []string{
-		"System config\n  " + system,
+		"Organization-managed install detected",
+		"System config: " + system,
 		"system config wins over user config",
+		"Remove the organization-managed install first",
+		`sudo rm -f "/Library/Application Support/Kontext/managed.json"`,
 		"Nothing changed.",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("Run() error = %v, missing %q", err, want)
+		}
+	}
+}
+
+func TestRunStopsWhenOrganizationManagedRemovalDeclined(t *testing.T) {
+	h := newHarness(t)
+	allowLoopback(t)
+	if err := os.MkdirAll(filepath.Dir(systemConfigPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(systemConfigPath, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	overrideVar(t, &isTerminal, func(int) bool { return true })
+	overrideVar(t, &readLine, func(io.Reader) (string, error) { return "no\n", nil })
+	server := pingServer(t, "tok")
+
+	if err := Run(context.Background(), h.options("tok", server)); err != nil {
+		t.Fatalf("Run() error = %v, want clean stop", err)
+	}
+
+	if _, err := os.Stat(systemConfigPath); err != nil {
+		t.Fatalf("system config changed after declined removal: %v", err)
+	}
+	if _, err := os.Stat(managedconfig.UserPath()); !os.IsNotExist(err) {
+		t.Fatal("managed.json written despite declined removal")
+	}
+	if len(h.keychain) != 0 {
+		t.Fatal("keychain written despite declined removal")
+	}
+	for _, call := range h.calls {
+		if call.name == "launchctl" {
+			t.Fatalf("launchctl called despite declined removal: %v", call.args)
+		}
+	}
+	stdout := h.out.String()
+	for _, want := range []string{
+		"Kontext setup",
+		"Organization-managed install detected",
+		"Remove organization-managed install and continue? [y/N]",
+		"Nothing changed.",
+		"Remove the MDM profile or enterprise package",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestRunRemovesOrganizationManagedInstallAndContinues(t *testing.T) {
+	h := newHarness(t)
+	allowLoopback(t)
+	ownedRootSettings, err := managedSettingsData("/opt/homebrew/bin/kontext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{systemConfigPath, orgInstallTokenPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(managedSettingsFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedSettingsFile, ownedRootSettings, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	overrideVar(t, &isTerminal, func(int) bool { return true })
+	overrideVar(t, &readLine, func(io.Reader) (string, error) { return "yes\n", nil })
+	server := pingServer(t, "tok")
+
+	if err := Run(context.Background(), h.options("tok", server)); err != nil {
+		t.Fatalf("Run() error = %v\nstdout:\n%s\nstderr:\n%s", err, h.out.String(), h.errOut.String())
+	}
+
+	for _, path := range []string{systemConfigPath, orgInstallTokenPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s still exists after org removal: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(managedSettingsFile); !os.IsNotExist(err) {
+		t.Fatalf("root managed settings still exist after org removal: %v", err)
+	}
+	if h.keychain[KeychainItemName] != "tok" {
+		t.Fatalf("keychain = %q", h.keychain[KeychainItemName])
+	}
+	if _, err := managedconfig.LoadFile(managedconfig.UserPath()); err != nil {
+		t.Fatalf("user managed config missing after continued setup: %v", err)
+	}
+
+	var stoppedOrgAgent bool
+	for _, call := range h.calls {
+		if call.name == "launchctl" && len(call.args) == 2 && call.args[0] == "bootout" && strings.HasSuffix(call.args[1], "/"+LaunchAgentLabel) {
+			stoppedOrgAgent = true
+		}
+	}
+	if !stoppedOrgAgent {
+		t.Fatalf("launchctl calls = %v, want org agent bootout by service label", h.calls)
+	}
+	stdout := h.out.String()
+	for _, want := range []string{
+		"Remove organization-managed install and continue? [y/N]",
+		"Organization-managed files removed",
+		"Organization-managed background agent stopped",
+		"Workspace\n  ✓ Acme (org_test)",
+		"Next\n  Return to the Kontext dashboard.",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestRunDoesNotRemoveForeignRootManagedSettings(t *testing.T) {
+	h := newHarness(t)
+	allowLoopback(t)
+	for _, path := range []string{systemConfigPath, orgInstallTokenPath, managedSettingsFile} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("foreign settings"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	overrideVar(t, &isTerminal, func(int) bool { return true })
+	overrideVar(t, &readLine, func(io.Reader) (string, error) { return "yes\n", nil })
+	server := pingServer(t, "tok")
+
+	err := Run(context.Background(), h.options("tok", server))
+	if err == nil || !strings.Contains(err.Error(), "root managed settings may contain organization or foreign hooks") {
+		t.Fatalf("Run() error = %v, want root settings ownership refusal", err)
+	}
+	for _, path := range []string{systemConfigPath, orgInstallTokenPath, managedSettingsFile} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s removed before ownership was proven: %v", path, err)
+		}
+	}
+	if len(h.keychain) != 0 {
+		t.Fatal("keychain written despite root settings ownership refusal")
+	}
+	for _, call := range h.calls {
+		if call.name == "launchctl" {
+			t.Fatalf("launchctl called despite root settings ownership refusal: %v", call.args)
 		}
 	}
 }
@@ -643,6 +794,13 @@ func TestUninstallKeepsManagedHooksWhenOrganizationManaged(t *testing.T) {
 	if err := os.WriteFile(managedSettingsPath, []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	plist := filepath.Join(h.home, "Library", "LaunchAgents", LaunchAgentLabel+".plist")
+	if err := os.MkdirAll(filepath.Dir(plist), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plist, []byte("plist"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := Uninstall(context.Background(), h.options("", pingServer(t, "unused"))); err != nil {
 		t.Fatalf("Uninstall() error = %v", err)
@@ -651,11 +809,36 @@ func TestUninstallKeepsManagedHooksWhenOrganizationManaged(t *testing.T) {
 	if _, err := os.Stat(managedSettingsPath); err != nil {
 		t.Fatalf("managed settings removed with organization config present: %v", err)
 	}
-	if !strings.Contains(h.errOut.String(), "organization-managed") {
-		t.Fatalf("stderr missing organization-managed warning:\n%s", h.errOut.String())
+	for _, want := range []string{
+		"Organization-managed install detected",
+		"Self-serve uninstall cannot remove organization-managed state",
+		"Remove the organization-managed install first",
+		`sudo rm -f "/Library/Application Support/Kontext/managed.json"`,
+	} {
+		if !strings.Contains(h.errOut.String(), want) {
+			t.Fatalf("stderr missing %q:\n%s", want, h.errOut.String())
+		}
 	}
 	if !strings.Contains(h.out.String(), "Kept Claude Code managed hooks") {
 		t.Fatalf("stdout missing kept managed hooks message:\n%s", h.out.String())
+	}
+	if !strings.Contains(h.out.String(), "Self-serve background agent removed") {
+		t.Fatalf("stdout missing self-serve agent removal:\n%s", h.out.String())
+	}
+	if _, err := os.Stat(plist); !os.IsNotExist(err) {
+		t.Fatalf("self-serve LaunchAgent plist still exists after uninstall: %v", err)
+	}
+	var bootedOutPlist bool
+	for _, call := range h.calls {
+		if call.name == "launchctl" && len(call.args) == 3 && call.args[0] == "bootout" && call.args[2] == plist {
+			bootedOutPlist = true
+		}
+		if call.name == "launchctl" && len(call.args) == 2 && strings.HasSuffix(call.args[1], "/"+LaunchAgentLabel) {
+			t.Fatalf("organization-managed uninstall booted out by label: %v", call.args)
+		}
+	}
+	if !bootedOutPlist {
+		t.Fatalf("launchctl calls = %v, want bootout by self-serve plist path", h.calls)
 	}
 }
 
