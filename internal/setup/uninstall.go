@@ -32,26 +32,41 @@ func Uninstall(ctx context.Context, opts Options) error {
 		return err
 	}
 	if organizationManaged {
-		fmt.Fprintln(opts.Stderr, "warning: an organization-managed (MDM) Kontext install remains active on this Mac and is not affected by this command")
+		fmt.Fprintln(opts.Stderr, organizationManagedMessage("Self-serve uninstall cannot remove organization-managed state."))
 	}
 
-	plistPath, err := removeLaunchAgent(ctx)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(opts.Stdout, "✓ Background agent removed (%s)\n", plistPath)
+	fmt.Fprintln(opts.Stdout, "Kontext uninstall")
+	fmt.Fprintln(opts.Stdout, "\nMac")
 
 	if organizationManaged {
-		fmt.Fprintf(opts.Stdout, "· Kept Claude Code managed hooks because an organization-managed install is active (%s)\n", managedSettingsPath)
+		removed, path, err := removeSelfServeLaunchAgentIfPresent(ctx)
+		if err != nil {
+			return err
+		}
+		if removed {
+			fmt.Fprintf(opts.Stdout, "  ✓ Self-serve background agent removed (%s)\n", path)
+		} else {
+			fmt.Fprintf(opts.Stdout, "  • No self-serve background agent to remove (%s)\n", path)
+		}
+	} else {
+		plistPath, err := removeLaunchAgent(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(opts.Stdout, "  ✓ Background agent removed (%s)\n", plistPath)
+	}
+
+	if organizationManaged {
+		fmt.Fprintf(opts.Stdout, "  • Kept Claude Code managed hooks because an organization-managed install is active (%s)\n", managedSettingsPath)
 	} else {
 		removed, err := removeManagedSettings(ctx)
 		if err != nil {
 			return err
 		}
 		if removed {
-			fmt.Fprintf(opts.Stdout, "✓ Claude Code managed hooks removed (%s)\n", managedSettingsPath)
+			fmt.Fprintf(opts.Stdout, "  ✓ Claude Code managed hooks removed (%s)\n", managedSettingsPath)
 		} else {
-			fmt.Fprintf(opts.Stdout, "· Kept Claude Code managed hooks because ownership is unknown (%s)\n", managedSettingsPath)
+			fmt.Fprintf(opts.Stdout, "  • Kept Claude Code managed hooks because ownership is unknown (%s)\n", managedSettingsPath)
 		}
 	}
 
@@ -62,7 +77,7 @@ func Uninstall(ctx context.Context, opts Options) error {
 	if _, err := os.Lstat(settingsPath); errors.Is(err, os.ErrNotExist) {
 		// A removal must never CREATE settings: on a machine without Claude
 		// settings (or after the user deleted them) there is nothing to do.
-		fmt.Fprintln(opts.Stdout, "· No Claude Code settings file — no hooks to remove")
+		fmt.Fprintln(opts.Stdout, "  • No Claude Code settings file; no hooks to remove")
 	} else if err != nil {
 		return err
 	} else {
@@ -79,29 +94,44 @@ func Uninstall(ctx context.Context, opts Options) error {
 		if err := claudemanaged.WriteUserSettings(settingsPath, settings); err != nil {
 			return err
 		}
-		fmt.Fprintln(opts.Stdout, "✓ Claude Code hooks removed from ~/.claude/settings.json")
+		fmt.Fprintln(opts.Stdout, "  ✓ Claude Code hooks removed from ~/.claude/settings.json")
 	}
 
 	if err := deleteKeychainTokens(ctx); err != nil {
 		return err
 	}
-	fmt.Fprintf(opts.Stdout, "✓ Install token removed from your keychain (%s)\n", KeychainItemName)
+	fmt.Fprintf(opts.Stdout, "  ✓ Install token removed from your keychain (%s)\n", KeychainItemName)
 
 	if path := managedconfig.UserPath(); path != "" {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		fmt.Fprintf(opts.Stdout, "✓ Managed config removed (%s)\n", path)
+		fmt.Fprintf(opts.Stdout, "  ✓ Managed config removed (%s)\n", path)
 	}
 
+	fmt.Fprintln(opts.Stdout, "\nKept")
 	if identity := installation.UserPath(); identity != "" {
 		if _, err := os.Lstat(identity); err == nil {
-			fmt.Fprintf(opts.Stdout, "· Kept installation identity %s (re-running setup reuses the same endpoint)\n", identity)
+			fmt.Fprintf(opts.Stdout, "  • Installation identity (%s)\n", identity)
 		}
 	}
-	fmt.Fprintln(opts.Stdout, "· Kept local observe data and logs under ~/Library/Application Support/Kontext and ~/Library/Logs/Kontext")
-	fmt.Fprintln(opts.Stdout, "· The kontext binary is managed by Homebrew (`brew uninstall kontext` to remove)")
+	fmt.Fprintln(opts.Stdout, "  • Local observe data and logs under ~/Library/Application Support/Kontext and ~/Library/Logs/Kontext")
+	fmt.Fprintln(opts.Stdout, "  • Homebrew-owned kontext binary (`brew uninstall kontext`)")
 	return nil
+}
+
+func removeSelfServeLaunchAgentIfPresent(ctx context.Context) (bool, string, error) {
+	plistPath, err := launchAgentPath()
+	if err != nil {
+		return false, "", err
+	}
+	if _, err := os.Lstat(plistPath); errors.Is(err, os.ErrNotExist) {
+		return false, plistPath, nil
+	} else if err != nil {
+		return false, plistPath, err
+	}
+	path, err := removeLaunchAgent(ctx)
+	return err == nil, path, err
 }
 
 // removeManagedSettings removes the drop-in only when it is ours by content

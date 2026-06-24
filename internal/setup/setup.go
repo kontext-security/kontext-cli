@@ -6,6 +6,7 @@
 package setup
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,6 +70,9 @@ var (
 	isTerminal = func(fd int) bool {
 		return term.IsTerminal(fd)
 	}
+	readLine = func(r io.Reader) (string, error) {
+		return bufio.NewReader(r).ReadString('\n')
+	}
 	executablePath = os.Executable
 	geteuid        = os.Geteuid
 	resolveToken   = managedconfig.ResolveInstallToken
@@ -79,6 +84,7 @@ var (
 		return conn.Close()
 	}
 	systemConfigPath    = managedconfig.DefaultPath
+	orgInstallTokenPath = "/Library/Application Support/Kontext/install-token"
 	managedSettingsPath = claudemanaged.ManagedSettingsDropInPath
 	managedSettingsFile = claudemanaged.ManagedSettingsPath
 	goos                = runtime.GOOS
@@ -113,14 +119,18 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	if err := refuseManagedEnvironments(settingsData); err != nil {
+	fmt.Fprintln(opts.Stdout, "Kontext setup")
+
+	ok, err := prepareManagedEnvironment(ctx, opts, settingsData)
+	if err != nil {
 		return err
+	}
+	if !ok {
+		return nil
 	}
 	if err := preflightLegacyUserHooks(); err != nil {
 		return err
 	}
-
-	fmt.Fprintln(opts.Stdout, "Kontext setup")
 
 	cloudURL := strings.TrimSpace(opts.CloudURL)
 	if cloudURL == "" {
@@ -218,24 +228,113 @@ func Run(ctx context.Context, opts Options) error {
 	return nil
 }
 
-// refuseManagedEnvironments keeps self-serve setup away from machines that
-// are (or claim to be) organization-managed: a system config under /Library
-// always outranks anything setup could write, so proceeding would only
-// produce artifacts the daemon ignores.
-func refuseManagedEnvironments(settingsData []byte) error {
+// prepareManagedEnvironment keeps self-serve setup away from machines that
+// are silently organization-managed. In an interactive terminal, setup can
+// remove the local enterprise state and continue; in non-interactive contexts,
+// it refuses with copy-pasteable cleanup steps.
+func prepareManagedEnvironment(ctx context.Context, opts Options, settingsData []byte) (bool, error) {
 	// ANY env override means config resolution is explicitly env-driven —
 	// even one pointing at the user path. Setup must not write state whose
 	// activation depends on an environment variable it doesn't control.
 	if strings.TrimSpace(os.Getenv(managedconfig.EnvPath)) != "" {
-		return fmt.Errorf("%s is set; unset it before running setup", managedconfig.EnvPath)
+		return false, fmt.Errorf("%s is set; unset it before running setup", managedconfig.EnvPath)
 	}
 	if _, err := os.Lstat(systemConfigPath); err == nil {
-		return fmt.Errorf("this Mac is organization-managed\n\nSystem config\n  %s\n\nSelf-serve setup cannot continue because system config wins over user config.\nNothing changed.", systemConfigPath)
+		confirmed, err := confirmRemoveOrganizationManagedInstall(ctx, opts)
+		if err != nil {
+			return false, err
+		}
+		if !confirmed {
+			return false, nil
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("cannot determine whether this Mac is organization-managed: %w", err)
+		return false, fmt.Errorf("cannot determine whether this Mac is organization-managed: %w", err)
 	}
 	if err := refuseUnknownManagedSettingsOwner(settingsData); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func confirmRemoveOrganizationManagedInstall(ctx context.Context, opts Options) (bool, error) {
+	if !isTerminal(int(os.Stdin.Fd())) {
+		return false, errors.New(organizationManagedMessage("Self-serve setup cannot continue because system config wins over user config."))
+	}
+
+	fmt.Fprintln(opts.Stdout, "\nMac")
+	fmt.Fprintln(opts.Stdout, "  ! Organization-managed install detected")
+	fmt.Fprintf(opts.Stdout, "  • System config: %s\n", systemConfigPath)
+	fmt.Fprint(opts.Stdout, "  ? Remove organization-managed install and continue? [y/N] ")
+
+	answer, err := readLine(os.Stdin)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("read confirmation: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "y", "yes":
+		if err := removeOrganizationManagedInstall(ctx); err != nil {
+			return false, err
+		}
+		fmt.Fprintln(opts.Stdout, "  ✓ Organization-managed files removed")
+		fmt.Fprintln(opts.Stdout, "  ✓ Organization-managed background agent stopped")
+		return true, nil
+	default:
+		fmt.Fprintln(opts.Stdout, "  • Nothing changed.")
+		fmt.Fprintln(opts.Stdout, "\nNext")
+		fmt.Fprintln(opts.Stdout, "  Remove the MDM profile or enterprise package that installed Kontext.")
+		fmt.Fprintln(opts.Stdout, "  For local testing, remove the enterprise files and run setup again.")
+		return false, nil
+	}
+}
+
+func removeOrganizationManagedInstall(ctx context.Context) error {
+	removeRootSettings, err := ownedRootManagedSettingsExists()
+	if err != nil {
 		return err
+	}
+	paths := []string{systemConfigPath, orgInstallTokenPath}
+	if removeRootSettings {
+		paths = append(paths, managedSettingsFile)
+	}
+	if err := removeOrganizationManagedFiles(ctx, paths...); err != nil {
+		return err
+	}
+
+	serviceTarget := "gui/" + strconv.Itoa(os.Getuid()) + "/" + LaunchAgentLabel
+	out, err := execCommand(ctx, "", "launchctl", "bootout", serviceTarget)
+	if err != nil && !launchctlPrintMeansAbsent(out) {
+		return fmt.Errorf("stop organization-managed background agent: launchctl bootout failed: %w (%s)", err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+func ownedRootManagedSettingsExists() (bool, error) {
+	data, err := os.ReadFile(managedSettingsFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("cannot determine Claude root managed settings ownership: %w", err)
+	}
+	if !claudemanaged.IsManagedSettingsDropIn(data) {
+		return false, fmt.Errorf("Claude Code root managed settings already exist\n\nManaged settings\n  %s\n\nSelf-serve setup cannot continue because root managed settings may contain organization or foreign hooks.\nNothing changed.", managedSettingsFile)
+	}
+	return true, nil
+}
+
+func removeOrganizationManagedFiles(ctx context.Context, paths ...string) error {
+	if geteuid() == 0 {
+		for _, path := range paths {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove organization-managed file %s: %w", path, err)
+			}
+		}
+		return nil
+	}
+
+	args := append([]string{"rm", "-f"}, paths...)
+	if err := runPrivilegedCommand(ctx, "sudo", args...); err != nil {
+		return fmt.Errorf("remove organization-managed files: %w", err)
 	}
 	return nil
 }
@@ -260,6 +359,24 @@ func refuseUnknownManagedSettingsOwner(_ []byte) error {
 		return fmt.Errorf("Claude Code managed hooks already exist\n\nManaged hooks\n  %s\n\nSelf-serve setup cannot continue because hook ownership is unknown.\nNothing changed.", managedSettingsPath)
 	}
 	return nil
+}
+
+func organizationManagedMessage(reason string) string {
+	return fmt.Sprintf(`Organization-managed install detected
+
+Mac
+  ! %s
+  • System config: %s
+  • Nothing changed.
+
+Remove the organization-managed install first:
+  1. Remove the MDM profile or enterprise package that installed Kontext.
+  2. For local testing, clean the enterprise files:
+     sudo rm -f "/Library/Application Support/Kontext/managed.json"
+     sudo rm -f "/Library/Application Support/Kontext/install-token"
+     sudo rm -f "/Library/Application Support/ClaudeCode/managed-settings.json"
+     launchctl bootout gui/$(id -u)/%s 2>/dev/null || true
+  3. Run self-serve setup again.`, reason, systemConfigPath, LaunchAgentLabel)
 }
 
 // acquireToken never mutates the input: a token containing whitespace fails

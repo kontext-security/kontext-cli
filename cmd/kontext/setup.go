@@ -10,8 +10,10 @@ func setupCmd() *cobra.Command {
 	var token, cloudURL string
 	var uninstall bool
 	cmd := &cobra.Command{
-		Use:   "setup",
-		Short: "Connect this Mac to your Kontext organization",
+		Use:           "setup",
+		Short:         "Connect this Mac to your Kontext organization",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		Long: `Connect this Mac to your Kontext organization (self-serve managed observe).
 
 Setup asks for the install token created in the Kontext dashboard, stores it

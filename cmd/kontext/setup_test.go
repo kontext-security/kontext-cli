@@ -42,3 +42,13 @@ func TestSetupCmdRegistered(t *testing.T) {
 		t.Fatalf("Use = %q", cmd.Use)
 	}
 }
+
+func TestSetupCmdSilencesUsageForRuntimeErrors(t *testing.T) {
+	cmd := setupCmd()
+	if !cmd.SilenceUsage {
+		t.Fatal("setup runtime errors should not print command usage")
+	}
+	if !cmd.SilenceErrors {
+		t.Fatal("setup runtime errors should be printed once by main")
+	}
+}

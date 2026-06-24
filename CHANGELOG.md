@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/kontext-security/kontext-cli/compare/v0.12.0...v0.12.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* **setup:** clean org-managed setup UX ([d0b054f](https://github.com/kontext-security/kontext-cli/commit/d0b054f821a6207a76354424bff3c2b734530334))
+
 ## [0.12.0](https://github.com/kontext-security/kontext-cli/compare/v0.11.0...v0.12.0) (2026-06-24)
 
 
