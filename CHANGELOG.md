@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/kontext-security/kontext-cli/compare/v0.11.0...v0.12.0) (2026-06-24)
+
+
+### Features
+
+* use managed hooks for self-serve cowork ([#338](https://github.com/kontext-security/kontext-cli/issues/338)) ([4daf31d](https://github.com/kontext-security/kontext-cli/commit/4daf31d48475f9f3bfa91f6fb230df5dffd4216a))
+
 ## [0.11.0](https://github.com/kontext-security/kontext-cli/compare/v0.10.3...v0.11.0) (2026-06-22)
 
 
