@@ -55,6 +55,7 @@ func TestSaveDecisionRecordsGithubDryRunRows(t *testing.T) {
 	}
 
 	var dryRun LedgerRecord
+	var runtimeDecision LedgerRecord
 	decidedRows := 0
 	for _, action := range batch.Actions {
 		if action["canonical_event_type"] != "request.decided" {
@@ -63,6 +64,8 @@ func TestSaveDecisionRecordsGithubDryRunRows(t *testing.T) {
 		decidedRows++
 		if action["decision_category"] == "dry_run" {
 			dryRun = action
+		} else {
+			runtimeDecision = action
 		}
 	}
 	if decidedRows != 2 {
@@ -70,6 +73,9 @@ func TestSaveDecisionRecordsGithubDryRunRows(t *testing.T) {
 	}
 	if dryRun == nil {
 		t.Fatal("no dry_run request.decided row found")
+	}
+	if runtimeDecision == nil {
+		t.Fatal("no runtime request.decided row found")
 	}
 
 	expectations := map[string]any{
@@ -115,8 +121,14 @@ func TestSaveDecisionRecordsGithubDryRunRows(t *testing.T) {
 	}
 
 	identityJSON, _ := dryRun["identity_context_json"].(map[string]any)
-	if identityJSON["principal_kind"] != "service_account" {
-		t.Fatalf("identity_context_json = %v, want service_account principal", identityJSON)
+	if identityJSON["agent_provider"] != "anthropic" || identityJSON["agent"] != "claude_code" {
+		t.Fatalf("identity_context_json = %v, want canonical Claude identity", identityJSON)
+	}
+	if identityJSON["principal_kind"] != nil {
+		t.Fatalf("identity_context_json = %v, want agent identity only", identityJSON)
+	}
+	if dryRun["identity_hash"] != runtimeDecision["identity_hash"] {
+		t.Fatalf("dry-run identity_hash = %v, runtime identity_hash = %v", dryRun["identity_hash"], runtimeDecision["identity_hash"])
 	}
 
 	if decisionAt, _ := dryRun["decision_at"].(string); decisionAt == "" {

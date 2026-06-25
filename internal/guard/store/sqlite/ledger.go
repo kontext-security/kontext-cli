@@ -122,7 +122,7 @@ func (s *Store) AgentSessions(ctx context.Context, ids []string) ([]LedgerRecord
 		args = append(args, id)
 	}
 	return queryLedgerRecords(ctx, s.db, fmt.Sprintf(`
-select id, runtime_kind, runtime_instance_id, adapter_kind, adapter_version, agent,
+select id, runtime_kind, runtime_instance_id, adapter_kind, adapter_version, agent_provider, agent,
   conversation_id, trace_id, principal_id, identity_context_json, identity_hash,
   policy_version, policy_hash, cwd, source, status, external_id, closed_at,
   mode, created_at, updated_at
