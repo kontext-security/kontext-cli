@@ -28,12 +28,11 @@ Kontext is an authorization platform for AI agents. It helps teams control what 
 brew install kontext-security/tap/kontext
 ```
 
-The Homebrew package also installs `llama.cpp`, which provides the `llama-server` runtime used by the local LLM judge. On first use, Kontext manages the default GGUF judge model automatically: if the model is not already cached locally, it downloads it into the Kontext model cache before starting `llama-server` on loopback.
+The Homebrew package also installs `llama.cpp`, which provides the `llama-server` runtime used by the local LLM judge. On first use, Kontext automatically downloads and caches the default judge model, then runs `llama-server` locally on loopback.
 
 ## Connect this Mac to your workspace
 
-Use self-serve setup to stream agent activity from this Mac into your team's
-hosted Kontext dashboard. No MDM profile is required.
+Use self-serve setup to stream agent activity from this Mac into your team's hosted Kontext dashboard. No MDM profile is required.
 
 Generate an install token on your workspace's Deployments page, then run:
 
@@ -41,13 +40,9 @@ Generate an install token on your workspace's Deployments page, then run:
 kontext setup
 ```
 
-Setup validates the token, stores it in your login keychain, installs agent
-hooks, and starts the daemon as a user LaunchAgent. Sessions appear in your
-dashboard seconds after your next agent activity.
+Setup validates the token, stores it in your login keychain, installs agent hooks, and starts the daemon as a user LaunchAgent. Sessions appear in your dashboard seconds after your next agent activity.
 
-Re-run `kontext setup` to rotate the stored token. Run `kontext setup
---uninstall` to remove the user-level config, hooks, and LaunchAgent that setup
-installed. Self-serve setup is currently macOS only.
+Re-run `kontext setup` to rotate the stored token. Run `kontext setup --uninstall` to remove the user-level config, hooks, LaunchAgent, and keychain token that setup installed; local logs and observe data are kept, and organization-managed hooks are left in place. Self-serve setup is currently macOS only.
 
 ## Core features
 
@@ -73,10 +68,7 @@ Agent tool call
 
 ## Managed deployments
 
-Self-serve setup installs the same pipeline at user scope that enterprise
-deployments can install at system scope with MDM. In both cases, Kontext keeps
-the agent integration local, evaluates tool activity through the daemon, and
-streams governed activity to the workspace dashboard.
+Self-serve setup installs the same pipeline at user scope that enterprise deployments can install at system scope with MDM. In both cases, Kontext keeps the agent integration local, evaluates tool activity through the daemon, and streams governed activity to the workspace dashboard.
 
 For enterprise identity, audit retention, organization controls, deployment planning, custom usage volume, and onboarding for security and platform teams, contact [michel@kontext.security](mailto:michel@kontext.security) or [book here](https://calendar.superhuman.com/book/11W5Y8b5JsB8dOzQbd/YECs9).
 
@@ -95,8 +87,8 @@ For enterprise identity, audit retention, organization controls, deployment plan
 
 | Agent | Status | Self-serve path | Support level |
 | --- | --- | --- | --- |
-| Claude Code | Active | `kontext setup` | Daemon, dashboard stream, observe/enforce decisions. |
-| Claude Cowork | Supported when enabled | Managed config | Cowork VM tool events replayed into the daemon. |
+| Claude Code | Active | `kontext setup` | Daemon, dashboard stream, observe by default (enforce only when managed config sets `enforce`). |
+| Claude Cowork | Active | `kontext setup` | Cowork activity appears in the dashboard after setup. |
 | Goose | Planned | Coming soon | Adapter not shipped yet. |
 | Codex | Planned | Coming soon | Adapter not shipped yet. |
 | Cursor | Planned | Coming soon | Adapter not shipped yet. |
