@@ -28,6 +28,7 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/update"
 
 	_ "github.com/kontext-security/kontext-cli/internal/agent/claude"
+	_ "github.com/kontext-security/kontext-cli/internal/agent/codex"
 	_ "github.com/kontext-security/kontext-cli/internal/agent/cowork"
 )
 
@@ -445,7 +446,7 @@ func expectedHookEventFromArgs(args []string) (hook.HookName, error) {
 	if len(args) > 1 {
 		return "", fmt.Errorf("expected at most one hook event alias")
 	}
-	event, ok := claudemanaged.ParseEventAlias(args[0])
+	event, ok := hook.ParseEventAlias(args[0])
 	if !ok {
 		return "", fmt.Errorf("unknown hook event alias %q", args[0])
 	}
@@ -514,7 +515,7 @@ func evaluateViaSidecarForMode(socketPath string, event hook.Event, mode string)
 }
 
 func sidecarFailureResult(event hook.Event, reason, mode string) hook.Result {
-	if event.HookName != hook.HookPreToolUse {
+	if !event.HookName.CanBlock() {
 		return hook.Result{Decision: hook.DecisionAllow, Reason: reason}
 	}
 	if hookMode := normalizedHookMode(mode); hookMode != "" {

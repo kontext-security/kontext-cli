@@ -187,6 +187,20 @@ func TestLifecycleHealthySocketDoesNotKickstart(t *testing.T) {
 	}
 }
 
+func TestObserveResultFormatsBlockingPromptSubmit(t *testing.T) {
+	result := observeResult(hook.Event{HookName: hook.HookUserPromptSubmit}, hook.Result{
+		Decision: hook.DecisionDeny,
+		Reason:   "prompt policy",
+	})
+
+	if result.Decision != hook.DecisionAllow || result.Mode != string(guardhookruntime.ModeObserve) {
+		t.Fatalf("result = %+v, want observe allow", result)
+	}
+	if result.Reason != "Kontext observe mode: would deny; prompt policy" {
+		t.Fatalf("reason = %q, want observe deny reason", result.Reason)
+	}
+}
+
 func TestActiveRequiresValidManagedConfig(t *testing.T) {
 	t.Setenv("KONTEXT_MANAGED_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
 	if Active() {

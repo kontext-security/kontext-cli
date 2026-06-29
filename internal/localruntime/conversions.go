@@ -144,7 +144,7 @@ func rawMap(data json.RawMessage) (map[string]any, error) {
 
 func normalizeHookName(value string) (hook.HookName, bool) {
 	switch hookName := hook.HookName(strings.TrimSpace(value)); hookName {
-	case hook.HookSessionStart, hook.HookPreToolUse, hook.HookPostToolUse, hook.HookPostToolUseFailed, hook.HookSessionEnd, hook.HookUserPromptSubmit:
+	case hook.HookSessionStart, hook.HookPreToolUse, hook.HookPostToolUse, hook.HookPostToolUseFailed, hook.HookSessionEnd, hook.HookUserPromptSubmit, hook.HookStop:
 		return hookName, true
 	default:
 		return "", false
