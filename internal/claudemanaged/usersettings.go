@@ -9,13 +9,16 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/kontext-security/kontext-cli/internal/agenthooks"
+	"github.com/kontext-security/kontext-cli/internal/hook"
 )
 
 // User-level Claude Code settings (~/.claude/settings.json) integration for
 // self-serve installs. Unlike the MDM managed-settings drop-in (root-owned,
 // tamper-resistant), this file belongs to the user: the merge must preserve
-// every byte of foreign content (their hooks, permissions, env, unknown
-// keys), be idempotent, and be cleanly reversible.
+// foreign JSON content (their hooks, permissions, env, unknown keys), be
+// idempotent, and be cleanly reversible.
 
 // UserSettingsPath returns ~/.claude/settings.json, creating ~/.claude.
 func UserSettingsPath() (string, error) {
@@ -154,8 +157,69 @@ func IsGuardHookCommand(command string) bool {
 // entries. Matching on the alias rather than the exact binary path means a
 // re-run after the binary moved (brew prefix change) replaces stale entries.
 func IsManagedHookCommand(command string) bool {
-	fields, ok := splitHookCommand(command)
-	if !ok || len(fields) != 3 {
+	fields, ok := agenthooks.SplitCommand(command)
+	if !ok {
+		return false
+	}
+	return isManagedHookFields(fields)
+}
+
+func isGuardHookHandler(handler agenthooks.CommandHandler) bool {
+	if len(handler.Args) == 0 {
+		return IsGuardHookCommand(handler.Command)
+	}
+	fields, ok := commandHandlerFields(handler)
+	if !ok {
+		return false
+	}
+	return isGuardHookFields(fields)
+}
+
+func isManagedHookHandler(handler agenthooks.CommandHandler) bool {
+	if len(handler.Args) == 0 {
+		return IsManagedHookCommand(handler.Command)
+	}
+	fields, ok := commandHandlerFields(handler)
+	if !ok {
+		return false
+	}
+	return isManagedHookFields(fields)
+}
+
+func commandHandlerFields(handler agenthooks.CommandHandler) ([]string, bool) {
+	command := strings.TrimSpace(handler.Command)
+	if command == "" {
+		return nil, false
+	}
+	if fields, ok := agenthooks.SplitCommand(command); ok && len(fields) == 1 {
+		command = fields[0]
+	}
+	fields := make([]string, 0, 1+len(handler.Args))
+	fields = append(fields, command)
+	fields = append(fields, handler.Args...)
+	return fields, true
+}
+
+func isGuardHookFields(fields []string) bool {
+	if len(fields) < 4 || filepath.Base(fields[0]) != "kontext" {
+		return false
+	}
+	if fields[1] == "guard" && fields[2] == "hook" && fields[3] == "claude-code" {
+		return true
+	}
+	if fields[1] != "hook" || fields[2] != "--agent" || fields[3] != "claude" {
+		return false
+	}
+	for _, field := range fields[4:] {
+		if field == "--mode" {
+			return true
+		}
+	}
+	return false
+}
+
+func isManagedHookFields(fields []string) bool {
+	if len(fields) != 3 {
 		return false
 	}
 	for _, field := range fields {
@@ -174,134 +238,85 @@ func IsManagedHookCommand(command string) bool {
 	return false
 }
 
-func splitHookCommand(command string) ([]string, bool) {
-	var fields []string
-	var builder strings.Builder
-	var quote rune
-	inField := false
+// MergeManagedHooks installs/refreshes the five managed-observe hooks in the
+// settings map: for each supported event it removes any existing Kontext
+// managed handlers (stale binary paths included) and appends the canonical
+// group from Template. Everything else in the map is untouched. Idempotent:
+// merging twice is a fixpoint. Returns non-fatal warnings for conditions the
+// user should know about.
+func MergeManagedHooks(settings map[string]any, kontextBinary string) ([]string, error) {
+	var warnings []string
 
-	runes := []rune(command)
-	for i := 0; i < len(runes); i++ {
-		char := runes[i]
-		switch {
-		case quote != 0:
-			if char == quote {
-				quote = 0
-				continue
-			}
-			if quote == '"' && char == '\\' && i+1 < len(runes) {
-				i++
-				builder.WriteRune(runes[i])
-				inField = true
-				continue
-			}
-			builder.WriteRune(char)
-			inField = true
-		case char == '\\':
-			if i+1 >= len(runes) {
-				return nil, false
-			}
-			i++
-			builder.WriteRune(runes[i])
-			inField = true
-		case char == '\'' || char == '"':
-			quote = char
-			inField = true
-		case char == ' ' || char == '\t' || char == '\n' || char == '\r':
-			if inField {
-				fields = append(fields, builder.String())
-				builder.Reset()
-				inField = false
-			}
-		default:
-			builder.WriteRune(char)
-			inField = true
+	if disabled, ok := settings["disableAllHooks"].(bool); ok && disabled {
+		warnings = append(warnings, "Claude Code hooks are globally disabled (disableAllHooks) in settings.json; Kontext hooks will not fire until you remove that setting")
+	}
+
+	config := agenthooks.Config{
+		Settings:         settings,
+		HooksDescription: "settings.json hooks",
+	}
+	hooks, err := config.HooksMap()
+	if err != nil {
+		return nil, err
+	}
+
+	if agenthooks.HasCommand(hooks, isGuardHookHandler) {
+		warnings = append(warnings, "Kontext Guard hooks are also installed; consider `kontext guard hooks uninstall claude-code` to avoid duplicate processing")
+	}
+
+	// Build the typed plan before touching the map, so an error can
+	// never leave the caller's settings half-merged.
+	plan := managedHookPlan(kontextBinary)
+	if err := plan.Validate(); err != nil {
+		return nil, err
+	}
+
+	if err := config.Merge(plan, isManagedHookHandler); err != nil {
+		return nil, err
+	}
+	return warnings, nil
+}
+
+func managedHookPlan(kontextBinary string) agenthooks.Plan {
+	kontextBinary = strings.TrimSpace(kontextBinary)
+	if kontextBinary == "" {
+		kontextBinary = DefaultKontextBinary
+	}
+
+	events := make(map[hook.HookName]agenthooks.EventPlan, len(SupportedEvents))
+	for _, event := range SupportedEvents {
+		handler := agenthooks.CommandHook{
+			Command: hookCommand(kontextBinary, event.Alias),
+			Timeout: DefaultHookTimeout,
+		}
+		if event.Async {
+			value := true
+			handler.Async = &value
+		}
+		events[event.Name] = agenthooks.EventPlan{
+			Match: agenthooks.MatchSpec{
+				Pattern: "",
+			},
+			Command:   handler,
+			Placement: agenthooks.PlacementAppend,
 		}
 	}
-	if quote != 0 {
-		return nil, false
+
+	return agenthooks.Plan{
+		Version:  agenthooks.SchemaVersionV1,
+		Provider: agenthooks.ProviderClaudeCode,
+		Owner:    agenthooks.OwnerKontextManagedObserve,
+		Events:   events,
 	}
-	if inField {
-		fields = append(fields, builder.String())
-	}
-	return fields, true
 }
 
 // RemoveManagedHooks strips OUR handlers (and only ours) from the settings
 // map, pruning groups and event keys that end up empty. Foreign hooks,
 // including Guard's, survive untouched. Idempotent.
 func RemoveManagedHooks(settings map[string]any) error {
-	hooks, err := hooksMap(settings)
-	if err != nil {
-		return err
+	config := agenthooks.Config{
+		Settings:         settings,
+		HooksDescription: "settings.json hooks",
 	}
-	for _, event := range SupportedEvents {
-		name := event.Name.String()
-		if _, present := hooks[name]; !present {
-			continue
-		}
-		groups := withoutManagedHandlers(hooks[name])
-		if len(groups) == 0 {
-			delete(hooks, name)
-			continue
-		}
-		hooks[name] = groups
-	}
-	if len(hooks) == 0 {
-		delete(settings, "hooks")
-	}
-	return nil
-}
-
-func hooksMap(settings map[string]any) (map[string]any, error) {
-	switch value := settings["hooks"].(type) {
-	case nil:
-		return map[string]any{}, nil
-	case map[string]any:
-		return value, nil
-	default:
-		// Never clobber a shape we don't understand — the file is the user's.
-		return nil, errors.New("settings.json hooks must be a JSON object")
-	}
-}
-
-// withoutManagedHandlers filters our handlers out of every matcher group of
-// an event's group list, dropping groups left without handlers. Unparseable
-// entries are kept verbatim (they are the user's data, not ours to judge).
-func withoutManagedHandlers(raw any) []any {
-	list, ok := raw.([]any)
-	if !ok {
-		if raw == nil {
-			return nil
-		}
-		return []any{raw}
-	}
-	filtered := make([]any, 0, len(list))
-	for _, entry := range list {
-		group, ok := entry.(map[string]any)
-		if !ok {
-			filtered = append(filtered, entry)
-			continue
-		}
-		handlers, ok := group["hooks"].([]any)
-		if !ok {
-			filtered = append(filtered, entry)
-			continue
-		}
-		kept := make([]any, 0, len(handlers))
-		for _, handler := range handlers {
-			if handlerMap, ok := handler.(map[string]any); ok {
-				if command, ok := handlerMap["command"].(string); ok && IsManagedHookCommand(command) {
-					continue
-				}
-			}
-			kept = append(kept, handler)
-		}
-		if len(kept) == 0 {
-			continue
-		}
-		group["hooks"] = kept
-		filtered = append(filtered, group)
-	}
-	return filtered
+	return config.Remove(managedHookPlan(DefaultKontextBinary), isManagedHookHandler)
 }
