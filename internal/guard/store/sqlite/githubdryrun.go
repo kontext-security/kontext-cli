@@ -38,12 +38,14 @@ func githubDryRunActionValues(actionID, sessionID string, event risk.HookEvent, 
 		"request_summary": riskEvent.RequestSummary,
 		"path_class":      riskEvent.PathClass,
 	})
-	// The managed endpoint's trusted identity is the service account +
-	// installation; hook payloads are session telemetry, not human identity.
-	identityJSON, identityHash := mustHashJSON(map[string]any{
-		"agent":          event.Agent,
-		"principal_kind": "service_account",
-	})
+	agentProvider, canonicalAgent := hostedAgentIdentity(event.Agent)
+	identityPayload := map[string]any{
+		"agent": canonicalAgent,
+	}
+	if agentProvider != "" {
+		identityPayload["agent_provider"] = agentProvider
+	}
+	identityJSON, identityHash := mustHashJSON(identityPayload)
 
 	githubContext := map[string]any{}
 	if owner, repo, ok := splitRepoSlug(evaluation.Request.Resource); ok {

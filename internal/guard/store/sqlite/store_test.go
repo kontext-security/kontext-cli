@@ -808,6 +808,9 @@ func TestLedgerBatchExportsSessionsActionsAndReceipts(t *testing.T) {
 	if batch.Sessions[0]["mode"] != "observe" {
 		t.Fatalf("session export mode = %q, want observe", batch.Sessions[0]["mode"])
 	}
+	if batch.Sessions[0]["agent_provider"] != "anthropic" || batch.Sessions[0]["agent"] != "claude_code" {
+		t.Fatalf("session export identity = provider %q agent %q, want anthropic claude_code", batch.Sessions[0]["agent_provider"], batch.Sessions[0]["agent"])
+	}
 	decided := ledgerRecordByID(batch.Actions, record.ID)
 	if decided == nil ||
 		decided["canonical_event_type"] != "request.decided" ||
@@ -1378,7 +1381,8 @@ func TestOpenAndCloseSessionRecordsLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if opened.ID != "session-123" ||
-		opened.Agent != "claude" ||
+		opened.AgentProvider != "anthropic" ||
+		opened.Agent != "claude_code" ||
 		opened.CWD != "/tmp/project" ||
 		opened.Source != "wrapper_owned" ||
 		opened.Status != "open" ||

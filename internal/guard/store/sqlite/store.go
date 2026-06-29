@@ -62,16 +62,17 @@ type SessionSummary struct {
 }
 
 type SessionRecord struct {
-	ID         string     `json:"id"`
-	Agent      string     `json:"agent,omitempty"`
-	CWD        string     `json:"cwd,omitempty"`
-	Source     string     `json:"source,omitempty"`
-	Status     string     `json:"status,omitempty"`
-	ExternalID string     `json:"external_id,omitempty"`
-	Mode       string     `json:"mode,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	ClosedAt   *time.Time `json:"closed_at,omitempty"`
+	ID            string     `json:"id"`
+	AgentProvider string     `json:"agent_provider,omitempty"`
+	Agent         string     `json:"agent,omitempty"`
+	CWD           string     `json:"cwd,omitempty"`
+	Source        string     `json:"source,omitempty"`
+	Status        string     `json:"status,omitempty"`
+	ExternalID    string     `json:"external_id,omitempty"`
+	Mode          string     `json:"mode,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	ClosedAt      *time.Time `json:"closed_at,omitempty"`
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -116,6 +117,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		  runtime_instance_id text,
 		  adapter_kind text,
 		  adapter_version text,
+		  agent_provider text,
 		  agent text,
 		  conversation_id text,
 		  trace_id text,
@@ -278,6 +280,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		{name: "runtime_instance_id", def: "text"},
 		{name: "adapter_kind", def: "text"},
 		{name: "adapter_version", def: "text"},
+		{name: "agent_provider", def: "text"},
 		{name: "conversation_id", def: "text"},
 		{name: "trace_id", def: "text"},
 		{name: "principal_id", def: "text"},
@@ -612,13 +615,15 @@ func (s *Store) OpenSession(ctx context.Context, sessionID, agent, cwd, source, 
 func (s *Store) OpenSessionWithMode(ctx context.Context, sessionID, agent, cwd, source, externalID, mode string) (SessionRecord, error) {
 	now := time.Now().UTC()
 	sessionID = normalizeSessionID(sessionID)
+	agentProvider, canonicalAgent := hostedAgentIdentity(agent)
 	if source == "" {
 		source = "daemon_observed"
 	}
 	_, err := s.db.ExecContext(ctx, `
-insert into agent_sessions(id, agent, cwd, source, status, external_id, mode, closed_at, created_at, updated_at)
-values(?, ?, ?, ?, 'open', ?, ?, null, ?, ?)
+insert into agent_sessions(id, agent_provider, agent, cwd, source, status, external_id, mode, closed_at, created_at, updated_at)
+values(?, ?, ?, ?, ?, 'open', ?, ?, null, ?, ?)
 on conflict(id) do update set
+  agent_provider = coalesce(nullif(excluded.agent_provider, ''), agent_sessions.agent_provider),
   agent = coalesce(nullif(excluded.agent, ''), agent_sessions.agent),
   cwd = coalesce(nullif(excluded.cwd, ''), agent_sessions.cwd),
   source = case
@@ -631,7 +636,7 @@ on conflict(id) do update set
   mode = coalesce(nullif(excluded.mode, ''), agent_sessions.mode),
   closed_at = null,
   updated_at = excluded.updated_at
-	`, sessionID, agent, cwd, source, externalID, mode, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	`, sessionID, agentProvider, canonicalAgent, cwd, source, externalID, mode, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	if err != nil {
 		return SessionRecord{}, err
 	}
@@ -645,10 +650,12 @@ func (s *Store) EnsureObservedSession(ctx context.Context, sessionID, agent, cwd
 func (s *Store) EnsureObservedSessionWithMode(ctx context.Context, sessionID, agent, cwd, mode string) (SessionRecord, error) {
 	now := time.Now().UTC()
 	sessionID = normalizeSessionID(sessionID)
+	agentProvider, canonicalAgent := hostedAgentIdentity(agent)
 	_, err := s.db.ExecContext(ctx, `
-insert into agent_sessions(id, agent, cwd, source, status, mode, created_at, updated_at)
-values(?, ?, ?, 'daemon_observed', 'open', ?, ?, ?)
+insert into agent_sessions(id, agent_provider, agent, cwd, source, status, mode, created_at, updated_at)
+values(?, ?, ?, ?, 'daemon_observed', 'open', ?, ?, ?)
 on conflict(id) do update set
+  agent_provider = coalesce(nullif(excluded.agent_provider, ''), agent_sessions.agent_provider),
   agent = coalesce(nullif(excluded.agent, ''), agent_sessions.agent),
   cwd = coalesce(nullif(excluded.cwd, ''), agent_sessions.cwd),
   mode = coalesce(nullif(excluded.mode, ''), agent_sessions.mode),
@@ -661,7 +668,7 @@ on conflict(id) do update set
     else null
   end,
   updated_at = excluded.updated_at
-	`, sessionID, agent, cwd, mode, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	`, sessionID, agentProvider, canonicalAgent, cwd, mode, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	if err != nil {
 		return SessionRecord{}, err
 	}
@@ -693,7 +700,7 @@ where source = 'daemon_observed'
 
 func (s *Store) Session(ctx context.Context, sessionID string) (SessionRecord, error) {
 	row := s.db.QueryRowContext(ctx, `
-select id, coalesce(agent, ''), coalesce(cwd, ''), source, status, coalesce(external_id, ''),
+select id, coalesce(agent_provider, ''), coalesce(agent, ''), coalesce(cwd, ''), source, status, coalesce(external_id, ''),
   coalesce(mode, ''), created_at, updated_at, closed_at
 from agent_sessions
 where id = ?
@@ -712,14 +719,16 @@ func (s *Store) SaveDecision(ctx context.Context, event risk.HookEvent, decision
 	defer func() {
 		_ = tx.Rollback()
 	}()
+	agentProvider, canonicalAgent := hostedAgentIdentity(event.Agent)
 	_, err = tx.ExecContext(ctx, `
-insert into agent_sessions(id, agent, cwd, source, status, created_at, updated_at)
-values(?, ?, ?, 'daemon_observed', 'open', ?, ?)
+insert into agent_sessions(id, agent_provider, agent, cwd, source, status, created_at, updated_at)
+values(?, ?, ?, ?, 'daemon_observed', 'open', ?, ?)
 on conflict(id) do update set
+  agent_provider = coalesce(nullif(excluded.agent_provider, ''), agent_sessions.agent_provider),
   agent = coalesce(nullif(excluded.agent, ''), agent_sessions.agent),
   cwd = coalesce(nullif(excluded.cwd, ''), agent_sessions.cwd),
   updated_at = excluded.updated_at
-	`, sessionID, event.Agent, event.CWD, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	`, sessionID, agentProvider, canonicalAgent, event.CWD, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	if err != nil {
 		return DecisionRecord{}, err
 	}
@@ -828,9 +837,14 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		"request_summary": riskEvent.RequestSummary,
 		"path_class":      riskEvent.PathClass,
 	})
-	identityJSON, identityHash := mustHashJSON(map[string]any{
-		"agent": event.Agent,
-	})
+	agentProvider, canonicalAgent := hostedAgentIdentity(event.Agent)
+	identityPayload := map[string]any{
+		"agent": canonicalAgent,
+	}
+	if agentProvider != "" {
+		identityPayload["agent_provider"] = agentProvider
+	}
+	identityJSON, identityHash := mustHashJSON(identityPayload)
 	contextPayload := map[string]any{
 		"cwd":             event.CWD,
 		"hook_event_name": event.HookEventName,
@@ -1573,6 +1587,7 @@ func scanSession(scanner interface{ Scan(...any) error }) (SessionRecord, error)
 	var closed sql.NullString
 	if err := scanner.Scan(
 		&record.ID,
+		&record.AgentProvider,
 		&record.Agent,
 		&record.CWD,
 		&record.Source,
@@ -1603,6 +1618,17 @@ func scanSession(scanner interface{ Scan(...any) error }) (SessionRecord, error)
 		record.ClosedAt = &closedAt
 	}
 	return record, nil
+}
+
+func hostedAgentIdentity(agent string) (string, string) {
+	switch strings.ToLower(strings.TrimSpace(agent)) {
+	case "claude", "claude-code", "claude_code":
+		return "anthropic", "claude_code"
+	case "cowork", "claude-cowork", "claude_cowork":
+		return "anthropic", "claude_cowork"
+	default:
+		return "", strings.TrimSpace(agent)
+	}
 }
 
 func parseSessionSummaryTimes(item *SessionSummary, latest, created, updated string, closed sql.NullString) error {

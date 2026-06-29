@@ -322,7 +322,10 @@ func TestProcessHookEventEnsuresDaemonObservedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.Source != "daemon_observed" || session.Status != "open" || session.Agent != "claude" {
+	if session.Source != "daemon_observed" ||
+		session.Status != "open" ||
+		session.AgentProvider != "anthropic" ||
+		session.Agent != "claude_code" {
 		t.Fatalf("session = %+v, want daemon-observed local session", session)
 	}
 	events, err := store.Events(context.Background(), "local")
