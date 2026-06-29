@@ -32,6 +32,18 @@ func ReadJSONFile(path, description string) (map[string]any, error) {
 // permission bits. If path is a symlink, the symlink is left in place and its
 // resolved target is rewritten.
 func WriteJSONFile(path string, settings map[string]any) error {
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return WriteRawFile(path, append(data, '\n'))
+}
+
+// WriteRawFile writes data to path atomically (temp file + rename), preserving
+// the existing file's permission bits (new files are 0600). If path is a
+// symlink, the symlink is left in place and its resolved target is rewritten.
+// The bytes are written verbatim, so the caller owns trailing-newline handling.
+func WriteRawFile(path string, data []byte) error {
 	writePath := path
 	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		target, err := filepath.EvalSymlinks(path)
@@ -49,10 +61,6 @@ func WriteJSONFile(path string, settings map[string]any) error {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return err
-	}
 
 	temp, err := os.CreateTemp(filepath.Dir(writePath), ".settings-*.tmp")
 	if err != nil {
@@ -64,7 +72,7 @@ func WriteJSONFile(path string, settings map[string]any) error {
 		temp.Close()
 		return err
 	}
-	if _, err := temp.Write(append(data, '\n')); err != nil {
+	if _, err := temp.Write(data); err != nil {
 		temp.Close()
 		return err
 	}

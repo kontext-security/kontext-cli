@@ -210,6 +210,11 @@ func Run(ctx context.Context, opts Options) error {
 		return fmt.Errorf("install Codex hooks: %w\n\nFix or move ~/.codex/hooks.json, then rerun setup.", err)
 	}
 	fmt.Fprintf(opts.Stdout, "  ✓ Codex hooks installed (%s)\n", codexHooksPath)
+	if configPath, enabled, err := enableCodexHooksFeature(); err != nil {
+		fmt.Fprintf(opts.Stderr, "note: could not enable the Codex hooks feature automatically (%v); set `[features].hooks = true` in ~/.codex/config.toml or the hooks will not run.\n", err)
+	} else if enabled {
+		fmt.Fprintf(opts.Stdout, "  ✓ Codex hooks feature enabled ([features].hooks in %s)\n", configPath)
+	}
 	fmt.Fprintln(opts.Stderr, "note: Codex hooks require review before they run; open `/hooks` in Codex to trust the Kontext hooks.")
 
 	var plistPath, logPath string
@@ -748,6 +753,22 @@ func installCodexUserHooks(binary string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// enableCodexHooksFeature turns on `[features].hooks` in ~/.codex/config.toml so
+// the hooks we just installed actually fire — Codex gates its hook engine off
+// by default. Non-fatal in the caller: a failure here should warn, not abort a
+// setup whose durable state is already written.
+func enableCodexHooksFeature() (configPath string, enabled bool, err error) {
+	path, err := codexmanaged.UserConfigPath()
+	if err != nil {
+		return "", false, err
+	}
+	enabled, err = codexmanaged.EnsureHooksEnabled(path, settingsBackupLabel)
+	if err != nil {
+		return "", false, err
+	}
+	return path, enabled, nil
 }
 
 func waitForDaemon(out io.Writer) error {
