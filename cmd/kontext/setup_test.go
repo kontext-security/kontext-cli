@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/kontext-security/kontext-cli/internal/setup"
@@ -40,6 +41,9 @@ func TestSetupCmdRegistered(t *testing.T) {
 	}
 	if cmd.Use != "setup" {
 		t.Fatalf("Use = %q", cmd.Use)
+	}
+	if !strings.Contains(cmd.Long, "hooks for supported local agents") {
+		t.Fatalf("setup long help is not agent-oriented:\n%s", cmd.Long)
 	}
 }
 
