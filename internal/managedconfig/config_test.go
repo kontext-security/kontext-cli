@@ -26,7 +26,8 @@ func TestParseValidConfigNormalizesStrings(t *testing.T) {
     "install_token_ref": " keychain:kontext-managed-install-token "
   },
   "device": {
-    "label": " Engineering Mac "
+    "label": " Engineering Mac ",
+    "user_email": " Anna@Katana.com "
   }
 }`))
 	if err != nil {
@@ -40,6 +41,10 @@ func TestParseValidConfigNormalizesStrings(t *testing.T) {
 	}
 	if cfg.Device.Label != "Engineering Mac" {
 		t.Fatalf("device label = %q", cfg.Device.Label)
+	}
+	// Trimmed but not lowercased — normalization to lowercase happens at ingest.
+	if cfg.Device.UserEmail != "Anna@Katana.com" {
+		t.Fatalf("device user_email = %q", cfg.Device.UserEmail)
 	}
 }
 

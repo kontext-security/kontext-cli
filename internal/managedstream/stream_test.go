@@ -33,6 +33,7 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		DeviceLabel:    "michel-macbook",
+		UserEmail:      " anna@katana.com ",
 		HTTPClient:     server.Client(),
 	}); err != nil {
 		t.Fatalf("Flush() error = %v", err)
@@ -46,6 +47,9 @@ func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	}
 	if got.Device == nil || got.Device.Label != "michel-macbook" {
 		t.Fatalf("device = %+v", got.Device)
+	}
+	if got.Device.UserEmail != "anna@katana.com" {
+		t.Fatalf("device user_email = %q, want trimmed anna@katana.com", got.Device.UserEmail)
 	}
 	if len(got.Sessions) != 1 || len(got.Actions) != 2 || len(got.Receipts) != 2 {
 		t.Fatalf("batch counts = sessions %d actions %d receipts %d", len(got.Sessions), len(got.Actions), len(got.Receipts))
@@ -83,6 +87,7 @@ func TestFlushOmitsBlankDeviceLabel(t *testing.T) {
 		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
 		InstallToken:   "test-install-token",
 		DeviceLabel:    " \t\n ",
+		UserEmail:      " \t\n ",
 		HTTPClient:     server.Client(),
 	}); err != nil {
 		t.Fatalf("Flush() error = %v", err)
@@ -90,6 +95,31 @@ func TestFlushOmitsBlankDeviceLabel(t *testing.T) {
 
 	if got.Device != nil {
 		t.Fatalf("device = %+v, want omitted", got.Device)
+	}
+}
+
+func TestFlushEmitsDeviceForUserEmailAlone(t *testing.T) {
+	store, dbPath := testStore(t)
+	saveTestDecision(t, store, "session-1", "toolu_1")
+
+	var got Payload
+	server := capturePayloadServer(t, &got)
+	t.Cleanup(server.Close)
+
+	if err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      filepath.Join(t.TempDir(), "stream-state.json"),
+		CloudURL:       server.URL,
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		UserEmail:      "anna@katana.com",
+		HTTPClient:     server.Client(),
+	}); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	if got.Device == nil || got.Device.UserEmail != "anna@katana.com" || got.Device.Label != "" {
+		t.Fatalf("device = %+v, want user_email only", got.Device)
 	}
 }
 
