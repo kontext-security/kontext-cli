@@ -16,7 +16,7 @@ func orgAllowAll(id string) Rule {
 
 func snapshotWithRules(rules ...Rule) Snapshot {
 	return Snapshot{
-		SchemaVersion:  SchemaVersion,
+		SchemaVersion:  SchemaVersionV2,
 		OrganizationID: testOrgID,
 		ProviderKey:    "github",
 		Mode:           ModeObserve,

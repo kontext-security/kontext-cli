@@ -59,12 +59,13 @@ func githubDryRunActionValues(actionID, sessionID string, event risk.HookEvent, 
 		"cwd":             event.CWD,
 		"hook_event_name": event.HookEventName,
 		"github_policy": map[string]any{
-			"schema_version":    githubpolicy.SchemaVersion,
+			"schema_version":    evaluation.SchemaVersion,
 			"mode":              evaluation.Mode,
 			"epoch":             evaluation.Epoch,
 			"hash":              evaluation.Hash,
 			"stale":             evaluation.Stale,
 			"subjects_resolved": evaluation.SubjectsResolved,
+			"groups_resolved":   evaluation.GroupsResolved,
 		},
 	}
 	if len(githubContext) > 0 {

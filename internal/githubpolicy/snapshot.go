@@ -15,10 +15,19 @@
 // kontext cloud repository.
 package githubpolicy
 
-// SchemaVersion identifies the snapshot wire format. v2 added the endpoint
-// layer and most-specific-wins evaluation; a snapshot at any other version is
-// rejected (fail closed) rather than misread under the wrong semantics.
-const SchemaVersion = "github-policy-snapshot-v2"
+// Snapshot wire-format versions. v2 added the endpoint layer and
+// most-specific-wins evaluation. v3 added the group layer (SCIM directory
+// groups) and the endpointDirectory block carrying this endpoint's resolved
+// directory identity.
+//
+// The client requests v3 but accepts v2 for one release: a pre-v3 server
+// ignores the negotiation query params and answers v2 (with group-layer rules
+// filtered out server-side). Any other version is rejected (fail closed)
+// rather than misread under the wrong semantics.
+const (
+	SchemaVersionV2 = "github-policy-snapshot-v2"
+	SchemaVersionV3 = "github-policy-snapshot-v3"
+)
 
 // Enforcement directive for the local engine.
 //
@@ -42,6 +51,12 @@ const (
 	// the managed endpoint, so it is how device-scoped policy is enforced
 	// locally.
 	LayerEndpoint = "endpoint"
+	// LayerGroup (v3+) binds a rule to a SCIM directory group's uuid. It
+	// matches when the id is in the snapshot's EndpointDirectory.GroupIDs —
+	// the cloud resolves this endpoint's user email against the org's SCIM
+	// directory at snapshot-generation time. v2 snapshots never contain
+	// group-layer rules.
+	LayerGroup = "group"
 )
 
 // Rule effects.
@@ -88,11 +103,30 @@ type Snapshot struct {
 	Mode        string  `json:"mode"`
 	// Epoch is the active policy epoch; 0 when the org has no active policy.
 	Epoch int `json:"epoch"`
-	// Hash is a stable content hash over {epoch, rules}, independent of
-	// GeneratedAt, so an unchanged policy keeps an unchanged hash.
-	Hash        string `json:"hash"`
-	Rules       []Rule `json:"rules"`
-	GeneratedAt string `json:"generatedAt"`
+	// Hash is a stable content hash over {epoch, rules} (v2) or {epoch,
+	// rules, endpointDirectory} (v3 — a directory membership change changes
+	// the hash), independent of GeneratedAt, so an unchanged policy keeps an
+	// unchanged hash.
+	Hash  string `json:"hash"`
+	Rules []Rule `json:"rules"`
+	// EndpointDirectory is this endpoint's resolved directory identity (v3
+	// only; nil on v2 or when the request carried no installation id).
+	EndpointDirectory *EndpointDirectory `json:"endpointDirectory,omitempty"`
+	GeneratedAt       string             `json:"generatedAt"`
+}
+
+// EndpointDirectory is the endpoint's directory identity, resolved by the
+// cloud at snapshot-generation time from the endpoint-reported user email and
+// the org's SCIM directory. Membership is deliberately not baked into policy
+// epochs: a SCIM change shows up here on the next snapshot refresh.
+//
+// DirectoryUserID is nil when the email was missing, unmatched, or ambiguous
+// (ambiguity fails closed — never a union of candidate groups); GroupIDs is
+// then empty and group-layer rules can never match.
+type EndpointDirectory struct {
+	InstallationID  string   `json:"installationId"`
+	DirectoryUserID *string  `json:"directoryUserId"`
+	GroupIDs        []string `json:"groupIds"`
 }
 
 // Enforce reports whether the snapshot explicitly directs enforcement.
