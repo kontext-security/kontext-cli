@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.0](https://github.com/kontext-security/kontext-cli/compare/v0.12.1...v0.13.0) (2026-06-29)
+
+
+### Features
+
+* add codex agent adapter ([#319](https://github.com/kontext-security/kontext-cli/issues/319)) ([49cc356](https://github.com/kontext-security/kontext-cli/commit/49cc3569f64a2b2d036b876f3138765516cc58b0))
+* emit claude agent identities ([#342](https://github.com/kontext-security/kontext-cli/issues/342)) ([41d6d1b](https://github.com/kontext-security/kontext-cli/commit/41d6d1b4b94a7bf3ef78e0ee24ab98e7ca837fb9))
+* install codex self-serve hooks ([#320](https://github.com/kontext-security/kontext-cli/issues/320)) ([512faea](https://github.com/kontext-security/kontext-cli/commit/512faeaa46f9b0300a7eabefa9380e75ba8d18d7))
+
 ## [0.12.1](https://github.com/kontext-security/kontext-cli/compare/v0.12.0...v0.12.1) (2026-06-24)
 
 
