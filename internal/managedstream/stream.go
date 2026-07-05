@@ -147,8 +147,10 @@ func Flush(ctx context.Context, opts Options) error {
 	}
 
 	limit := batchLimit(opts.BatchLimit)
-	now := time.Now().UTC()
 	for {
+		// Stamped per page: a full drain can run for minutes, and sent_at /
+		// heartbeat marks should reflect when each batch actually shipped.
+		now := time.Now().UTC()
 		batch, err := store.LedgerBatch(ctx, sqlite.LedgerExportOptions{
 			UpdatedAfter:   state.UpdatedAfter,
 			UpdatedAfterID: state.ActionID,
@@ -207,12 +209,23 @@ func Flush(ctx context.Context, opts Options) error {
 			opts.OnFlushSuccess()
 		}
 
-		if batch.Cursor != nil {
-			state.LastHeartbeatAttemptAt = now.Format(time.RFC3339Nano)
-			state.LastHeartbeatAt = now.Format(time.RFC3339Nano)
-			return saveCursor(statePath, batch, state)
+		if batch.Cursor == nil {
+			return nil
 		}
-		return nil
+		state.LastHeartbeatAttemptAt = now.Format(time.RFC3339Nano)
+		state.LastHeartbeatAt = now.Format(time.RFC3339Nano)
+		updatedAfter := batch.Cursor.UpdatedAt.UTC()
+		state.UpdatedAfter = &updatedAfter
+		state.ActionID = batch.Cursor.ActionID
+		if err := SaveState(statePath, state); err != nil {
+			return err
+		}
+		// Keep draining: one call empties the queue instead of shipping a
+		// single batch per tick. A 40-subagent burst generates events ~20x
+		// faster than one capped batch per 10s interval can ship them, which
+		// left the hosted dashboard reading a partial session for ~45 minutes
+		// (ENG-474). The cursor is persisted per batch, so an interrupted
+		// drain resumes where it stopped.
 	}
 }
 
