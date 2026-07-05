@@ -30,6 +30,15 @@ const (
 	DefaultInterval          = 10 * time.Second
 	DefaultHeartbeatInterval = 60 * time.Second
 
+	// cursorSafetyLag holds the persisted export cursor this far behind the
+	// newest exported row. Rows are stamped with a timestamp captured before
+	// their write queues on the store's single serialized connection, so
+	// under concurrent hook load a row can COMMIT after a flush has already
+	// advanced the cursor past its stamp — a strict cursor would then skip it
+	// forever. Re-reading the lag window re-sends recent rows instead; the
+	// hosted upsert is idempotent per action id, so duplicates are harmless.
+	cursorSafetyLag = 30 * time.Second
+
 	maxPayloadSessions = 100
 	maxPayloadActions  = 1000
 	maxPayloadReceipts = 2000
@@ -147,13 +156,18 @@ func Flush(ctx context.Context, opts Options) error {
 	}
 
 	limit := batchLimit(opts.BatchLimit)
+	// Pagination within this call uses the true batch cursor so the drain
+	// makes forward progress; only the PERSISTED cursor is held back by
+	// cursorSafetyLag (see clampCursor).
+	pageUpdatedAfter := state.UpdatedAfter
+	pageActionID := state.ActionID
 	for {
 		// Stamped per page: a full drain can run for minutes, and sent_at /
 		// heartbeat marks should reflect when each batch actually shipped.
 		now := time.Now().UTC()
 		batch, err := store.LedgerBatch(ctx, sqlite.LedgerExportOptions{
-			UpdatedAfter:   state.UpdatedAfter,
-			UpdatedAfterID: state.ActionID,
+			UpdatedAfter:   pageUpdatedAfter,
+			UpdatedAfterID: pageActionID,
 			Limit:          limit,
 		})
 		if err != nil {
@@ -214,12 +228,21 @@ func Flush(ctx context.Context, opts Options) error {
 		}
 		state.LastHeartbeatAttemptAt = now.Format(time.RFC3339Nano)
 		state.LastHeartbeatAt = now.Format(time.RFC3339Nano)
-		updatedAfter := batch.Cursor.UpdatedAt.UTC()
-		state.UpdatedAfter = &updatedAfter
-		state.ActionID = batch.Cursor.ActionID
+		cursorAt := batch.Cursor.UpdatedAt.UTC()
+		safeAt, safeID := clampCursor(cursorAt, batch.Cursor.ActionID, now)
+		// Never regress the persisted cursor: advancePastMinimumBatch may have
+		// deliberately advanced it past a poison row, and clamping back behind
+		// that row would re-fetch it (and re-fail) until it ages out of the
+		// lag window.
+		if cursorAdvances(state, safeAt, safeID) {
+			state.UpdatedAfter = &safeAt
+			state.ActionID = safeID
+		}
 		if err := SaveState(statePath, state); err != nil {
 			return err
 		}
+		pageUpdatedAfter = &cursorAt
+		pageActionID = batch.Cursor.ActionID
 		// Keep draining: one call empties the queue instead of shipping a
 		// single batch per tick. A 40-subagent burst generates events ~20x
 		// faster than one capped batch per 10s interval can ship them, which
@@ -395,11 +418,40 @@ func advancePastMinimumBatch(statePath string, batch sqlite.LedgerBatch, state S
 	return fmt.Errorf("managed stream advanced cursor past oversized minimum batch: %s", reason)
 }
 
+// saveCursor persists the TRUE cursor, without the safety lag. It is only
+// used to advance past a poison minimum batch — clamping there could pin the
+// cursor before the rejected row and re-fetch it forever.
 func saveCursor(statePath string, batch sqlite.LedgerBatch, state State) error {
 	updatedAfter := batch.Cursor.UpdatedAt.UTC()
 	state.UpdatedAfter = &updatedAfter
 	state.ActionID = batch.Cursor.ActionID
 	return SaveState(statePath, state)
+}
+
+// clampCursor holds the persisted cursor back to now-cursorSafetyLag so rows
+// whose writes commit after the flush read (but with an earlier timestamp
+// stamp) are re-scanned on the next flush instead of being skipped forever.
+// A clamped cursor does not correspond to a stored row, so the id tiebreak
+// is cleared.
+func clampCursor(cursorAt time.Time, actionID string, now time.Time) (time.Time, string) {
+	maxSafe := now.Add(-cursorSafetyLag)
+	if cursorAt.After(maxSafe) {
+		return maxSafe, ""
+	}
+	return cursorAt, actionID
+}
+
+// cursorAdvances reports whether (at, id) sorts strictly after the cursor
+// already persisted in state, matching the (updated_at_cursor_key, id)
+// export ordering.
+func cursorAdvances(state State, at time.Time, id string) bool {
+	if state.UpdatedAfter == nil {
+		return true
+	}
+	if at.After(*state.UpdatedAfter) {
+		return true
+	}
+	return at.Equal(*state.UpdatedAfter) && id > state.ActionID
 }
 
 func parseStateUpdatedAfter(value string) (time.Time, error) {
