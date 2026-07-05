@@ -49,6 +49,7 @@ type Options struct {
 	InstallationID    string
 	InstallToken      string
 	DeviceLabel       string
+	UserEmail         string
 	DeploymentVersion func() string
 	Interval          time.Duration
 	HeartbeatInterval time.Duration
@@ -89,6 +90,7 @@ type Payload struct {
 type Device struct {
 	Label             string `json:"label,omitempty"`
 	DeploymentVersion string `json:"deployment_version,omitempty"`
+	UserEmail         string `json:"user_email,omitempty"`
 }
 
 type State struct {
@@ -261,12 +263,13 @@ func newPayload(
 	// Resolve the deployment version per flush so an in-place package upgrade
 	// is reflected without restarting the daemon.
 	label := strings.TrimSpace(opts.DeviceLabel)
+	userEmail := strings.TrimSpace(opts.UserEmail)
 	deploymentVersion := ""
 	if opts.DeploymentVersion != nil {
 		deploymentVersion = strings.TrimSpace(opts.DeploymentVersion())
 	}
-	if label != "" || deploymentVersion != "" {
-		payload.Device = &Device{Label: label, DeploymentVersion: deploymentVersion}
+	if label != "" || deploymentVersion != "" || userEmail != "" {
+		payload.Device = &Device{Label: label, DeploymentVersion: deploymentVersion, UserEmail: userEmail}
 	}
 	return payload
 }

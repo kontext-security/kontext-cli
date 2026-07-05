@@ -351,6 +351,7 @@ func flushManagedStream(ctx context.Context, opts DaemonOptions, dbPath, install
 		InstallationID:    installationID,
 		InstallToken:      installToken,
 		DeviceLabel:       loadedConfig.Config.Device.Label,
+		UserEmail:         loadedConfig.Config.Device.UserEmail,
 		DeploymentVersion: deploymentVersionWithFallback(opts.FallbackDeploymentVersion),
 		HTTPClient:        opts.StreamHTTPClient,
 		Diagnostic:        opts.Diagnostic,

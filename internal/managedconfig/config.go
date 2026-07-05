@@ -122,6 +122,10 @@ type TokenRef struct {
 
 type Device struct {
 	Label string `json:"label,omitempty"`
+	// UserEmail is the device user's email as known by the MDM (e.g. an
+	// Addigy fact written by the pkg postinstall). The hosted API matches it
+	// against the SCIM-provisioned directory to resolve group policies.
+	UserEmail string `json:"user_email,omitempty"`
 }
 
 type LoadedConfig struct {
@@ -270,6 +274,7 @@ func normalizeAndValidate(cfg Config) (Config, error) {
 	cfg.Credentials.InstallTokenRef.Source = strings.TrimSpace(cfg.Credentials.InstallTokenRef.Source)
 	cfg.Credentials.InstallTokenRef.Name = strings.TrimSpace(cfg.Credentials.InstallTokenRef.Name)
 	cfg.Device.Label = strings.TrimSpace(cfg.Device.Label)
+	cfg.Device.UserEmail = strings.TrimSpace(cfg.Device.UserEmail)
 
 	if cfg.Version != Version {
 		return Config{}, fmt.Errorf("version must be %q", Version)
