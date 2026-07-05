@@ -12,25 +12,31 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
+	"github.com/kontext-security/kontext-cli/internal/guard/app/server"
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
+	"github.com/kontext-security/kontext-cli/internal/hubspotpolicy"
 	"github.com/kontext-security/kontext-cli/internal/installation"
 	"github.com/kontext-security/kontext-cli/internal/managedconfig"
 	"github.com/kontext-security/kontext-cli/internal/managedstream"
 	"github.com/kontext-security/kontext-cli/internal/payloadcapture"
+	"github.com/kontext-security/kontext-cli/internal/providerpolicy"
 	"github.com/kontext-security/kontext-cli/internal/runtimehost"
 )
 
 type DaemonOptions struct {
-	SocketPath            string
-	DBPath                string
-	IdleTimeout           time.Duration
-	StreamStatePath       string
-	StreamInterval        time.Duration
-	StreamHTTPClient      *http.Client
-	GithubPolicyCachePath string
-	GithubPolicyInterval  time.Duration
-	GithubPolicyClient    *http.Client
+	SocketPath             string
+	DBPath                 string
+	IdleTimeout            time.Duration
+	StreamStatePath        string
+	StreamInterval         time.Duration
+	StreamHTTPClient       *http.Client
+	GithubPolicyCachePath  string
+	HubspotPolicyCachePath string
+	// PolicyRefreshInterval and PolicyHTTPClient apply to every provider's
+	// snapshot refresh loop (test knobs; zero values use defaults).
+	PolicyRefreshInterval time.Duration
+	PolicyHTTPClient      *http.Client
 	Diagnostic            diagnostic.Logger
 	// FallbackDeploymentVersion is reported to the ledger when no MDM
 	// deployment-version marker exists (self-serve brew installs).
@@ -110,20 +116,17 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		return fmt.Errorf("parse managed mode: %w", err)
 	}
 
-	policyCachePath := opts.GithubPolicyCachePath
-	if policyCachePath == "" {
-		policyCachePath = githubpolicy.DefaultCachePathForDB(dbPath)
-	}
-	policyCache := githubpolicy.NewCache(policyCachePath)
-	if err := policyCache.LoadPersisted(); err != nil {
-		opts.Diagnostic.Printf("github policy cache load: %v\n", err)
-	}
+	githubCache := newProviderPolicyCache(opts.GithubPolicyCachePath, dbPath, githubpolicy.Config, opts.Diagnostic)
+	hubspotCache := newProviderPolicyCache(opts.HubspotPolicyCachePath, dbPath, hubspotpolicy.Config, opts.Diagnostic)
 
 	host, err := runtimehost.Start(ctx, runtimehost.Options{
-		AgentName:          managedconfig.Agent,
-		DBPath:             dbPath,
-		SocketPath:         socketPath,
-		GithubPolicy:       policyCache,
+		AgentName:  managedconfig.Agent,
+		DBPath:     dbPath,
+		SocketPath: socketPath,
+		ProviderPolicies: []server.ProviderPolicyBinding{
+			server.GithubPolicyBinding(githubCache),
+			server.HubspotPolicyBinding(hubspotCache),
+		},
 		EndpointID:         installationState.InstallationID,
 		Mode:               mode,
 		Diagnostic:         opts.Diagnostic,
@@ -144,13 +147,16 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	// Restore the capture mode from the persisted snapshot before the first
 	// fetch completes, so an offline restart keeps the org's last-known
 	// directive instead of silently reverting to the "summary" default.
-	if snapshot, _, ok := policyCache.CurrentSnapshot(); ok {
+	if snapshot, _, ok := githubCache.CurrentSnapshot(); ok {
 		host.SetPayloadCaptureMode(payloadcapture.NormalizeMode(snapshot.PayloadCaptureMode))
 	}
 
 	policyCtx, stopPolicyRefresh := context.WithCancel(ctx)
 	defer stopPolicyRefresh()
-	go runGithubPolicy(policyCtx, opts, policyCache, installationState.InstallationID, host.SetPayloadCaptureMode)
+	// Capture mode rides the github snapshot only (the org-level directive);
+	// other providers' refreshers pass nil and never touch the gate.
+	go runProviderPolicy(policyCtx, opts, githubpolicy.Config, githubCache, installationState.InstallationID, host.SetPayloadCaptureMode)
+	go runProviderPolicy(policyCtx, opts, hubspotpolicy.Config, hubspotCache, installationState.InstallationID, nil)
 
 	streamCtx, stopStream := context.WithCancel(ctx)
 	defer stopStream()
@@ -281,12 +287,25 @@ func loadManagedConfig(ctx context.Context) (managedconfig.LoadedConfig, string,
 	return loadedConfig, installToken, nil
 }
 
-func runGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache, installationID string, applyCaptureMode func(payloadcapture.Mode)) {
-	interval := opts.GithubPolicyInterval
-	if interval == 0 {
-		interval = githubpolicy.DefaultIntervalFromEnv()
+// newProviderPolicyCache builds and disk-primes one provider's snapshot
+// cache, defaulting the path next to the guard DB.
+func newProviderPolicyCache(path, dbPath string, config providerpolicy.Config, diag diagnostic.Logger) *providerpolicy.Cache {
+	if path == "" {
+		path = providerpolicy.DefaultCachePathForDB(dbPath, config)
 	}
-	refreshGithubPolicy(ctx, opts, cache, installationID, applyCaptureMode)
+	cache := providerpolicy.NewCache(path, config)
+	if err := cache.LoadPersisted(); err != nil {
+		diag.Printf("%s policy cache load: %v\n", config.ProviderKey, err)
+	}
+	return cache
+}
+
+func runProviderPolicy(ctx context.Context, opts DaemonOptions, config providerpolicy.Config, cache *providerpolicy.Cache, installationID string, applyCaptureMode func(payloadcapture.Mode)) {
+	interval := opts.PolicyRefreshInterval
+	if interval == 0 {
+		interval = providerpolicy.IntervalFromEnv(config)
+	}
+	refreshProviderPolicy(ctx, opts, config, cache, installationID, applyCaptureMode)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -294,26 +313,31 @@ func runGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolic
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			refreshGithubPolicy(ctx, opts, cache, installationID, applyCaptureMode)
+			refreshProviderPolicy(ctx, opts, config, cache, installationID, applyCaptureMode)
 		}
 	}
 }
 
-func refreshGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache, installationID string, applyCaptureMode func(payloadcapture.Mode)) {
+func refreshProviderPolicy(ctx context.Context, opts DaemonOptions, config providerpolicy.Config, cache *providerpolicy.Cache, installationID string, applyCaptureMode func(payloadcapture.Mode)) {
 	loadedConfig, installToken, err := loadManagedConfig(ctx)
 	if err != nil {
 		cache.MarkFetchFailed(err)
-		opts.Diagnostic.Printf("github policy config reload: %v\n", err)
+		opts.Diagnostic.Printf("%s policy config reload: %v\n", config.ProviderKey, err)
 		return
 	}
-	snapshot, err := githubpolicy.FetchSnapshot(ctx, opts.GithubPolicyClient, loadedConfig.Config.CloudURL, installToken, installationID)
+	snapshot, err := providerpolicy.FetchSnapshot(ctx, opts.PolicyHTTPClient, loadedConfig.Config.CloudURL, installToken, installationID, config)
+	if errors.Is(err, providerpolicy.ErrNotConfigured) {
+		// The org has not activated this provider — no policy to sync and
+		// nothing to alarm on. The cache keeps whatever state it had.
+		return
+	}
 	if err != nil {
 		cache.MarkFetchFailed(err)
-		opts.Diagnostic.Printf("github policy refresh: %v\n", err)
+		opts.Diagnostic.Printf("%s policy refresh: %v\n", config.ProviderKey, err)
 		return
 	}
 	if err := cache.Apply(snapshot, time.Now().UTC()); err != nil {
-		opts.Diagnostic.Printf("github policy persist: %v\n", err)
+		opts.Diagnostic.Printf("%s policy persist: %v\n", config.ProviderKey, err)
 	}
 	// Applied from the freshly fetched snapshot, not re-read from the cache:
 	// payloadCaptureMode is excluded from the snapshot hash, so the fetched

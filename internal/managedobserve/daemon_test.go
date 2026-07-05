@@ -393,6 +393,10 @@ func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
 				"rules":          []any{},
 				"generatedAt":    "2026-06-15T00:00:00.000Z",
 			})
+		case "/api/v1/policy/hubspot/snapshot":
+			// Org without an activated HubSpot provider: the daemon must
+			// treat this as quietly-not-configured, not a fetch failure.
+			w.WriteHeader(http.StatusNotFound)
 		case "/api/v1/authorization-ledger/batches":
 			w.WriteHeader(http.StatusAccepted)
 		default:
@@ -422,8 +426,8 @@ func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
 			IdleTimeout:          time.Hour,
 			StreamInterval:       time.Hour,
 			StreamHTTPClient:     server.Client(),
-			GithubPolicyInterval: 20 * time.Millisecond,
-			GithubPolicyClient:   server.Client(),
+			PolicyRefreshInterval: 20 * time.Millisecond,
+			PolicyHTTPClient:   server.Client(),
 		})
 	}()
 	stopped := false

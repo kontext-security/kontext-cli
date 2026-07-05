@@ -30,7 +30,7 @@ func TestSaveDecisionRecordsGithubDryRunRows(t *testing.T) {
 		Reason:     "observed",
 		ReasonCode: "deterministic_allow",
 		RiskEvent:  risk.RiskEvent{CommandSummary: "git push origin main"},
-		GithubPolicy: []githubpolicy.Evaluation{{
+		ProviderPolicy: []risk.ProviderPolicyEvaluations{{Provider: "github", Evaluations: []githubpolicy.Evaluation{{
 			Request:    githubpolicy.Request{Action: "github.repo.write", Resource: "acme/api", BranchOrRef: "main"},
 			Result:     "deny",
 			ReasonCode: githubpolicy.ReasonCodeDeny,
@@ -43,7 +43,7 @@ func TestSaveDecisionRecordsGithubDryRunRows(t *testing.T) {
 			Mode:           githubpolicy.ModeObserve,
 			Epoch:          5,
 			Hash:           "hash-5",
-		}},
+		}}}},
 	}
 	if _, err := store.SaveDecision(context.Background(), event, decision); err != nil {
 		t.Fatalf("SaveDecision() error = %v", err)
@@ -168,14 +168,14 @@ func TestDryRunRowsDoNotCountAsCriticalActions(t *testing.T) {
 	}
 	decision := risk.RiskDecision{
 		Decision: risk.DecisionAllow,
-		GithubPolicy: []githubpolicy.Evaluation{{
+		ProviderPolicy: []risk.ProviderPolicyEvaluations{{Provider: "github", Evaluations: []githubpolicy.Evaluation{{
 			Request:    githubpolicy.Request{Action: "github.repo.write", Resource: "acme/api"},
 			Result:     "deny",
 			ReasonCode: githubpolicy.ReasonCodeDeny,
 			Reason:     "would deny",
 			Epoch:      5,
 			Hash:       "hash-5",
-		}},
+		}}}},
 	}
 	if _, err := store.SaveDecision(context.Background(), event, decision); err != nil {
 		t.Fatalf("SaveDecision() error = %v", err)
@@ -234,5 +234,79 @@ func TestSaveDecisionWithoutGithubPolicyAddsNoExtraRows(t *testing.T) {
 	}
 	if len(batch.Actions) != 2 {
 		t.Fatalf("actions = %d, want proposed + decided only", len(batch.Actions))
+	}
+}
+
+func TestSaveDecisionRecordsHubspotDryRunRow(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+
+	event := risk.HookEvent{
+		SessionID:     "session-1",
+		Agent:         "cowork",
+		HookEventName: "PreToolUse",
+		ToolName:      "mcp__5c56899e-3e6c-4803-85ca-ff1912393966__manage_crm_objects",
+		ToolInput:     map[string]any{"updateRequest": map[string]any{"objects": []any{map[string]any{"objectType": "deals"}}}},
+		ToolUseID:     "toolu_hs",
+	}
+	decision := risk.RiskDecision{
+		Decision: risk.DecisionAllow,
+		ProviderPolicy: []risk.ProviderPolicyEvaluations{{Provider: "hubspot", Evaluations: []githubpolicy.Evaluation{{
+			Request:        githubpolicy.Request{Action: "hubspot.object.write", Resource: "deals"},
+			Result:         "deny",
+			ReasonCode:     githubpolicy.ReasonCodeDeny,
+			Reason:         "would deny",
+			DecidingRuleID: "rule-deny-deals",
+			Mode:           githubpolicy.ModeObserve,
+			Epoch:          2,
+			Hash:           "hash-2",
+			SchemaVersion:  "hubspot-policy-snapshot-v1",
+		}}}},
+	}
+	if _, err := store.SaveDecision(context.Background(), event, decision); err != nil {
+		t.Fatalf("SaveDecision() error = %v", err)
+	}
+
+	batch, err := store.LedgerBatch(context.Background(), LedgerExportOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("LedgerBatch() error = %v", err)
+	}
+	var dryRun LedgerRecord
+	for _, action := range batch.Actions {
+		if action["decision_category"] == "dry_run" {
+			dryRun = action
+		}
+	}
+	if dryRun == nil {
+		t.Fatal("no dry_run row found")
+	}
+
+	expectations := map[string]any{
+		"provider":        "hubspot",
+		"resource_class":  "object",
+		"resource_id":     "deals",
+		"operation":       "hubspot.object.write",
+		"operation_class": "write",
+		"decision_result": "deny",
+		"policy_id":       "rule-deny-deals",
+		"policy_hash":     "hash-2",
+	}
+	for key, want := range expectations {
+		if got := dryRun[key]; got != want {
+			t.Errorf("dry run %s = %v, want %v", key, got, want)
+		}
+	}
+
+	contextJSON, _ := dryRun["context_json"].(map[string]any)
+	policyContext, _ := contextJSON["hubspot_policy"].(map[string]any)
+	if policyContext["schema_version"] != "hubspot-policy-snapshot-v1" || policyContext["mode"] != "observe" {
+		t.Fatalf("context_json.hubspot_policy = %v", policyContext)
+	}
+	// The github repo-slug context block is github-only.
+	if _, present := contextJSON["github"]; present {
+		t.Fatalf("context_json.github present on a hubspot row: %v", contextJSON)
 	}
 }

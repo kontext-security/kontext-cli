@@ -73,7 +73,11 @@ func ClassifyProviderActionsWithCWD(toolName string, toolInput map[string]any, c
 	}
 	loadGitContext := memoizedGitContext(gitContext)
 	switch strings.ToLower(toolName) {
-	case "bash", "shell":
+	// "mcp__workspace__bash" is Claude Cowork's shell: commands run in its
+	// sandbox VM through an MCP tool instead of the native Bash tool, with
+	// the command string in the same input field. Unwrapping it here is what
+	// makes GitHub activity inside Cowork sessions classifiable at all.
+	case "bash", "shell", "mcp__workspace__bash":
 		command := commandFromToolInput(toolInput)
 		if command == "" {
 			return nil

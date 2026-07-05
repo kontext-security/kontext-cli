@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
+	"github.com/kontext-security/kontext-cli/internal/providerpolicy"
 	"github.com/kontext-security/kontext-cli/internal/guard/decision"
 )
 
@@ -103,9 +103,17 @@ type RiskDecision struct {
 	ModelVersion string    `json:"model_version,omitempty"`
 	GuardID      string    `json:"guard_id,omitempty"`
 	RiskEvent    RiskEvent `json:"risk_event"`
-	// GithubPolicy carries the synced-policy dry-run evaluations for this
-	// event; each one is recorded as a separate request.decided ledger row.
-	GithubPolicy []githubpolicy.Evaluation `json:"github_policy,omitempty"`
+	// ProviderPolicy carries the synced-policy dry-run evaluations for this
+	// event, grouped per provider; each evaluation is recorded as a separate
+	// request.decided ledger row.
+	ProviderPolicy []ProviderPolicyEvaluations `json:"provider_policy,omitempty"`
+}
+
+// ProviderPolicyEvaluations groups one provider's synced-policy evaluations
+// for an event.
+type ProviderPolicyEvaluations struct {
+	Provider    string                      `json:"provider"`
+	Evaluations []providerpolicy.Evaluation `json:"evaluations"`
 }
 
 func MarshalInput(value map[string]any) string {
