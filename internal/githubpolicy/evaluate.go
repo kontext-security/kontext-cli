@@ -55,6 +55,15 @@ type Evaluation struct {
 	// SubjectsResolved is false when no Kontext user/application identity was
 	// available, so user/agent-layer rules could not match their subject.
 	SubjectsResolved bool
+	// GroupsResolved is true when this endpoint's directory identity was
+	// resolved to a user (even one with zero group memberships). False means
+	// group-layer rules could not have matched for identity reasons: v2
+	// snapshot, no installation id sent, directory for another endpoint, or
+	// a missing/unmatched/ambiguous email.
+	GroupsResolved bool
+	// SchemaVersion is the wire format of the snapshot that produced this
+	// evaluation (v2 or v3 during the negotiation window).
+	SchemaVersion string
 }
 
 // Evaluate mirrors the cloud evaluator exactly. It is most-specific-wins:
@@ -63,8 +72,10 @@ type Evaluation struct {
 //     dimension equals the request value exactly (null = wildcard, no globs).
 //  2. Among the matching rules the most specific one decides, by this order:
 //     (a) more pinned dimensions (action/resource/branch) beats fewer; then
-//     (b) a user- or agent-layer rule beats an org-layer rule; then
-//     (c) on an exact tie of (a) and (b), deny beats allow.
+//     (b) layer rank: org < group < user/agent/endpoint — a group rule beats
+//     an org rule and is beaten by a user/agent/endpoint rule; then
+//     (c) on an exact tie of (a) and (b) — including two groups this
+//     endpoint belongs to — deny beats allow.
 //     A broad org deny is therefore overridden by a more specific user/agent
 //     allow, which is in turn overridden by an even more specific deny.
 //  3. If no rule matches the request, it is denied (default deny).
@@ -76,6 +87,17 @@ func Evaluate(snapshot Snapshot, status Status, request Request) (Evaluation, bo
 		return Evaluation{}, false
 	}
 
+	// Group memberships apply only when the snapshot's directory identity is
+	// for THIS endpoint. Persisted caches survive re-enrollment and fetched
+	// bodies can be cross-served, so this is the fail-closed choke point: a
+	// directory for any other installation id yields no group matches.
+	var groupIDs []string
+	directoryResolved := false
+	if snapshot.EndpointDirectory != nil && request.EndpointID != "" &&
+		snapshot.EndpointDirectory.InstallationID == request.EndpointID {
+		groupIDs = snapshot.EndpointDirectory.GroupIDs
+		directoryResolved = snapshot.EndpointDirectory.DirectoryUserID != nil
+	}
 	evaluation := Evaluation{
 		Request:          request,
 		Mode:             snapshot.Mode,
@@ -83,6 +105,8 @@ func Evaluate(snapshot Snapshot, status Status, request Request) (Evaluation, bo
 		Hash:             snapshot.Hash,
 		Stale:            status.Stale,
 		SubjectsResolved: request.UserID != "" || request.ApplicationID != "",
+		GroupsResolved:   directoryResolved,
+		SchemaVersion:    snapshot.SchemaVersion,
 	}
 
 	layerSubjects := map[string]string{
@@ -96,8 +120,13 @@ func Evaluate(snapshot Snapshot, status Status, request Request) (Evaluation, bo
 	var winner *Rule
 	for i := range snapshot.Rules {
 		rule := &snapshot.Rules[i]
-		subject := layerSubjects[rule.Layer]
-		if subject == "" || rule.SubjectID != subject || !ruleMatchesRequest(rule, request) {
+		// Group rules match against the endpoint's directory-group set, a
+		// snapshot-scoped fact; every other layer matches a single subject.
+		if rule.Layer == LayerGroup {
+			if !containsString(groupIDs, rule.SubjectID) || !ruleMatchesRequest(rule, request) {
+				continue
+			}
+		} else if subject := layerSubjects[rule.Layer]; subject == "" || rule.SubjectID != subject || !ruleMatchesRequest(rule, request) {
 			continue
 		}
 		matched = append(matched, MatchedRule{ID: rule.ID, Layer: rule.Layer, Effect: rule.Effect})
@@ -173,15 +202,28 @@ func ruleDimensions(rule *Rule) int {
 	return count
 }
 
-// layerRank orders subjects from least to most specific. A rule bound to a
-// specific user, application, or endpoint is more specific than an org-wide
-// rule; those specific-principal layers rank equally, so a conflict between
-// them falls through to deny-wins.
+// layerRank orders subjects from least to most specific: org-wide, then a
+// directory group the endpoint's user belongs to, then a specific user,
+// application, or endpoint. The specific-principal layers rank equally, so a
+// conflict between them falls through to deny-wins.
 func layerRank(layer string) int {
-	if layer == LayerOrg {
+	switch layer {
+	case LayerOrg:
 		return 0
+	case LayerGroup:
+		return 1
+	default:
+		return 2
 	}
-	return 1
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func effectIsAllow(effect string) bool {

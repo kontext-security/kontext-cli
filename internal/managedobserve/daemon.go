@@ -136,7 +136,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 
 	policyCtx, stopPolicyRefresh := context.WithCancel(ctx)
 	defer stopPolicyRefresh()
-	go runGithubPolicy(policyCtx, opts, policyCache)
+	go runGithubPolicy(policyCtx, opts, policyCache, installationState.InstallationID)
 
 	streamCtx, stopStream := context.WithCancel(ctx)
 	defer stopStream()
@@ -267,12 +267,12 @@ func loadManagedConfig(ctx context.Context) (managedconfig.LoadedConfig, string,
 	return loadedConfig, installToken, nil
 }
 
-func runGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache) {
+func runGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache, installationID string) {
 	interval := opts.GithubPolicyInterval
 	if interval == 0 {
 		interval = githubpolicy.DefaultIntervalFromEnv()
 	}
-	refreshGithubPolicy(ctx, opts, cache)
+	refreshGithubPolicy(ctx, opts, cache, installationID)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -280,19 +280,19 @@ func runGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolic
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			refreshGithubPolicy(ctx, opts, cache)
+			refreshGithubPolicy(ctx, opts, cache, installationID)
 		}
 	}
 }
 
-func refreshGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache) {
+func refreshGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache, installationID string) {
 	loadedConfig, installToken, err := loadManagedConfig(ctx)
 	if err != nil {
 		cache.MarkFetchFailed(err)
 		opts.Diagnostic.Printf("github policy config reload: %v\n", err)
 		return
 	}
-	snapshot, err := githubpolicy.FetchSnapshot(ctx, opts.GithubPolicyClient, loadedConfig.Config.CloudURL, installToken)
+	snapshot, err := githubpolicy.FetchSnapshot(ctx, opts.GithubPolicyClient, loadedConfig.Config.CloudURL, installToken, installationID)
 	if err != nil {
 		cache.MarkFetchFailed(err)
 		opts.Diagnostic.Printf("github policy refresh: %v\n", err)

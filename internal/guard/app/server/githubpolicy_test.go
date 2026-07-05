@@ -20,7 +20,7 @@ func (p staticGithubPolicy) CurrentSnapshot() (githubpolicy.Snapshot, githubpoli
 
 func githubTestSnapshot(mode string, rules ...githubpolicy.Rule) githubpolicy.Snapshot {
 	return githubpolicy.Snapshot{
-		SchemaVersion:  githubpolicy.SchemaVersion,
+		SchemaVersion:  githubpolicy.SchemaVersionV2,
 		OrganizationID: "org_test",
 		ProviderKey:    "github",
 		Mode:           mode,

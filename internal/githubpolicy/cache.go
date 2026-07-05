@@ -90,7 +90,7 @@ func (c *Cache) LoadPersisted() error {
 	if err := json.Unmarshal(data, &file); err != nil {
 		return err
 	}
-	if file.Snapshot.SchemaVersion != SchemaVersion {
+	if file.Snapshot.SchemaVersion != SchemaVersionV2 && file.Snapshot.SchemaVersion != SchemaVersionV3 {
 		return nil
 	}
 	fetchedAt, _ := time.Parse(time.RFC3339Nano, file.FetchedAt)
@@ -106,7 +106,10 @@ func (c *Cache) LoadPersisted() error {
 // rules are not re-applied or re-persisted; only freshness is updated.
 func (c *Cache) Apply(snapshot Snapshot, fetchedAt time.Time) error {
 	c.mu.Lock()
-	unchanged := c.loaded && c.snapshot.Hash == snapshot.Hash
+	// SchemaVersion is part of the identity check so a v2→v3 transition is
+	// adopted even if the server ever produced colliding hashes across
+	// versions — the CLI must not depend on that cross-version promise.
+	unchanged := c.loaded && c.snapshot.Hash == snapshot.Hash && c.snapshot.SchemaVersion == snapshot.SchemaVersion
 	if !unchanged {
 		c.snapshot = snapshot
 	}
@@ -138,7 +141,7 @@ func (c *Cache) persist(snapshot Snapshot, fetchedAt time.Time) error {
 		return err
 	}
 	data, err := json.MarshalIndent(cacheFile{
-		SchemaVersion: SchemaVersion,
+		SchemaVersion: snapshot.SchemaVersion,
 		FetchedAt:     fetchedAt.UTC().Format(time.RFC3339Nano),
 		Snapshot:      snapshot,
 	}, "", "  ")

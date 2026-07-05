@@ -13,7 +13,7 @@ import (
 
 func testSnapshot(epoch int, hash string) Snapshot {
 	return Snapshot{
-		SchemaVersion:  SchemaVersion,
+		SchemaVersion:  SchemaVersionV2,
 		OrganizationID: testOrgID,
 		ProviderKey:    "github",
 		Mode:           ModeObserve,
@@ -36,7 +36,7 @@ func TestFetchSnapshotSendsInstallTokenAndDecodes(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	snapshot, err := FetchSnapshot(context.Background(), server.Client(), server.URL, "test-install-token")
+	snapshot, err := FetchSnapshot(context.Background(), server.Client(), server.URL, "test-install-token", "ins_0123456789abcdefghijklmnopqrstuv")
 	if err != nil {
 		t.Fatalf("FetchSnapshot() error = %v", err)
 	}
@@ -51,7 +51,7 @@ func TestFetchSnapshotRejectsOversizedBody(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	_, err := FetchSnapshot(context.Background(), server.Client(), server.URL, "test-install-token")
+	_, err := FetchSnapshot(context.Background(), server.Client(), server.URL, "test-install-token", "ins_0123456789abcdefghijklmnopqrstuv")
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("FetchSnapshot() error = %v, want explicit size-limit failure", err)
 	}
@@ -63,7 +63,7 @@ func TestFetchSnapshotRejectsUnauthorized(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	if _, err := FetchSnapshot(context.Background(), server.Client(), server.URL, "revoked"); err == nil {
+	if _, err := FetchSnapshot(context.Background(), server.Client(), server.URL, "revoked", ""); err == nil {
 		t.Fatal("FetchSnapshot() with revoked token should fail")
 	}
 }

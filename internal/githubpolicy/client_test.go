@@ -7,7 +7,7 @@ import (
 
 func snapshotForValidation(rules ...Rule) Snapshot {
 	return Snapshot{
-		SchemaVersion:  SchemaVersion,
+		SchemaVersion:  SchemaVersionV2,
 		OrganizationID: "org_test",
 		ProviderKey:    "github",
 		Mode:           ModeObserve,
@@ -26,7 +26,7 @@ func TestValidateSnapshotAcceptsEndpointLayer(t *testing.T) {
 		Rule{ID: "r-user", Layer: LayerUser, SubjectID: "user-1", Effect: EffectAllow},
 		Rule{ID: "r-agent", Layer: LayerAgent, SubjectID: "app-1", Effect: EffectAllow},
 	)
-	if err := validateSnapshot(snapshot); err != nil {
+	if err := validateSnapshot(snapshot, ""); err != nil {
 		t.Fatalf("validateSnapshot() = %v, want nil for all known layers", err)
 	}
 }
@@ -35,7 +35,7 @@ func TestValidateSnapshotRejectsUnknownLayer(t *testing.T) {
 	snapshot := snapshotForValidation(
 		Rule{ID: "r-bad", Layer: "device", SubjectID: "x", Effect: EffectAllow},
 	)
-	err := validateSnapshot(snapshot)
+	err := validateSnapshot(snapshot, "")
 	if err == nil || !strings.Contains(err.Error(), "unknown layer") {
 		t.Fatalf("validateSnapshot() = %v, want unknown-layer error", err)
 	}
