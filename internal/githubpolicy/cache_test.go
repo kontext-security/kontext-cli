@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kontext-security/kontext-cli/internal/providerpolicy"
 )
 
 func testSnapshot(epoch int, hash string) Snapshot {
@@ -47,7 +49,7 @@ func TestFetchSnapshotSendsInstallTokenAndDecodes(t *testing.T) {
 
 func TestFetchSnapshotRejectsOversizedBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(make([]byte, maxSnapshotBodyBytes+1))
+		_, _ = w.Write(make([]byte, providerpolicy.MaxSnapshotBodyBytes+1))
 	}))
 	t.Cleanup(server.Close)
 

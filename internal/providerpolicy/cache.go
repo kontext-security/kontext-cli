@@ -1,4 +1,4 @@
-package githubpolicy
+package providerpolicy
 
 import (
 	"encoding/json"
@@ -13,8 +13,6 @@ import (
 // DefaultRefreshInterval is how often the managed daemon re-fetches the
 // snapshot. Hash-unchanged responses are cheap: they only bump freshness.
 const DefaultRefreshInterval = 60 * time.Second
-
-const envRefreshInterval = "KONTEXT_GITHUB_POLICY_REFRESH_INTERVAL"
 
 // Status describes how trustworthy the cached snapshot currently is. A stale
 // snapshot keeps being evaluated — stale-but-deterministic beats unavailable —
@@ -39,7 +37,8 @@ type SnapshotProvider interface {
 // Cache holds the per-installation snapshot in memory and mirrors it to disk
 // so the policy survives daemon restarts and cloud outages.
 type Cache struct {
-	path string
+	path   string
+	config Config
 
 	mu       sync.RWMutex
 	snapshot Snapshot
@@ -53,17 +52,17 @@ type cacheFile struct {
 	Snapshot      Snapshot `json:"snapshot"`
 }
 
-func NewCache(path string) *Cache {
-	return &Cache{path: path}
+func NewCache(path string, config Config) *Cache {
+	return &Cache{path: path, config: config}
 }
 
 // DefaultCachePathForDB stores the snapshot next to the guard database, the
 // same convention managedstream uses for its cursor state.
-func DefaultCachePathForDB(dbPath string) string {
+func DefaultCachePathForDB(dbPath string, config Config) string {
 	if dbPath = strings.TrimSpace(dbPath); dbPath != "" {
-		return filepath.Join(filepath.Dir(dbPath), "github-policy-snapshot.json")
+		return filepath.Join(filepath.Dir(dbPath), config.CacheFileName)
 	}
-	return "github-policy-snapshot.json"
+	return config.CacheFileName
 }
 
 func (c *Cache) CurrentSnapshot() (Snapshot, Status, bool) {
@@ -90,7 +89,7 @@ func (c *Cache) LoadPersisted() error {
 	if err := json.Unmarshal(data, &file); err != nil {
 		return err
 	}
-	if file.Snapshot.SchemaVersion != SchemaVersionV2 && file.Snapshot.SchemaVersion != SchemaVersionV3 {
+	if _, ok := c.config.schemaSupport(file.Snapshot.SchemaVersion); !ok {
 		return nil
 	}
 	fetchedAt, _ := time.Parse(time.RFC3339Nano, file.FetchedAt)
@@ -106,7 +105,7 @@ func (c *Cache) LoadPersisted() error {
 // the rules are not re-applied or re-persisted; only freshness is updated.
 func (c *Cache) Apply(snapshot Snapshot, fetchedAt time.Time) error {
 	c.mu.Lock()
-	// SchemaVersion is part of the identity check so a v2→v3 transition is
+	// SchemaVersion is part of the identity check so a version transition is
 	// adopted even if the server ever produced colliding hashes across
 	// versions — the CLI must not depend on that cross-version promise.
 	// Mode and PayloadCaptureMode are excluded from the server-side hash, so
@@ -157,7 +156,7 @@ func (c *Cache) persist(snapshot Snapshot, fetchedAt time.Time) error {
 		return err
 	}
 	data = append(data, '\n')
-	temp, err := os.CreateTemp(filepath.Dir(c.path), ".github-policy-*.tmp")
+	temp, err := os.CreateTemp(filepath.Dir(c.path), c.config.CacheTempPattern)
 	if err != nil {
 		return err
 	}
@@ -186,10 +185,14 @@ func (c *Cache) persist(snapshot Snapshot, fetchedAt time.Time) error {
 	return nil
 }
 
-func DefaultIntervalFromEnv() time.Duration {
-	if value := strings.TrimSpace(os.Getenv(envRefreshInterval)); value != "" {
-		if parsed, err := time.ParseDuration(value); err == nil && parsed > 0 {
-			return parsed
+// IntervalFromEnv returns the refresh interval, honoring the provider's env
+// override when set to a positive duration.
+func IntervalFromEnv(config Config) time.Duration {
+	if config.RefreshEnvVar != "" {
+		if value := strings.TrimSpace(os.Getenv(config.RefreshEnvVar)); value != "" {
+			if parsed, err := time.ParseDuration(value); err == nil && parsed > 0 {
+				return parsed
+			}
 		}
 	}
 	return DefaultRefreshInterval

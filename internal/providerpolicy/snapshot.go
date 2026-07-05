@@ -1,33 +1,4 @@
-// Package githubpolicy syncs the cloud-hosted GitHub access-control policy
-// down to the managed endpoint and evaluates classified GitHub activity
-// against it locally.
-//
-// The cloud authors GitHub policy as versioned, epoched rules. The managed
-// endpoint fetches the snapshot, caches it by epoch/hash, and evaluates
-// GitHub CLI / MCP / API activity locally. For ENG-426 the directive is
-// observe-only: the engine records what it *would* allow or deny, but never
-// blocks.
-//
-// Precedence in the local engine is: general deterministic guardrails >
-// this synced policy > probabilistic signals.
-//
-// The contract mirrors packages/shared/src/github-policy-snapshot.ts in the
-// kontext cloud repository.
-package githubpolicy
-
-// Snapshot wire-format versions. v2 added the endpoint layer and
-// most-specific-wins evaluation. v3 added the group layer (SCIM directory
-// groups) and the endpointDirectory block carrying this endpoint's resolved
-// directory identity.
-//
-// The client requests v3 but accepts v2 for one release: a pre-v3 server
-// ignores the negotiation query params and answers v2 (with group-layer rules
-// filtered out server-side). Any other version is rejected (fail closed)
-// rather than misread under the wrong semantics.
-const (
-	SchemaVersionV2 = "github-policy-snapshot-v2"
-	SchemaVersionV3 = "github-policy-snapshot-v3"
-)
+package providerpolicy
 
 // Enforcement directive for the local engine.
 //
@@ -51,11 +22,11 @@ const (
 	// the managed endpoint, so it is how device-scoped policy is enforced
 	// locally.
 	LayerEndpoint = "endpoint"
-	// LayerGroup (v3+) binds a rule to a SCIM directory group's uuid. It
-	// matches when the id is in the snapshot's EndpointDirectory.GroupIDs —
-	// the cloud resolves this endpoint's user email against the org's SCIM
-	// directory at snapshot-generation time. v2 snapshots never contain
-	// group-layer rules.
+	// LayerGroup binds a rule to a SCIM directory group's uuid. It matches
+	// when the id is in the snapshot's EndpointDirectory.GroupIDs — the cloud
+	// resolves this endpoint's user email against the org's SCIM directory at
+	// snapshot-generation time. Only schema versions with GroupLayer support
+	// carry group-layer rules.
 	LayerGroup = "group"
 )
 
@@ -67,19 +38,19 @@ const (
 
 // Rule is a single matchable rule. nil on ResourceID / ActionName /
 // BranchOrRef means "matches any" for that dimension; non-nil dimensions are
-// exact string matches. For the first GitHub pilot, policy matching uses repo
-// (ResourceID) + branch (BranchOrRef) + action; file path and API endpoint
-// details are audit context only.
+// exact string matches. What ResourceID and BranchOrRef mean is up to the
+// provider (GitHub: repository slug + branch; HubSpot: CRM object type, with
+// BranchOrRef unused and always nil).
 type Rule struct {
 	ID    string `json:"id"`
 	Layer string `json:"layer"`
-	// SubjectID is the org id, kontext user id, application id, or endpoint
-	// installation id depending on Layer.
+	// SubjectID is the org id, kontext user id, application id, endpoint
+	// installation id, or directory group uuid depending on Layer.
 	SubjectID string `json:"subjectId"`
-	// ResourceID is a repository slug "owner/repo", or nil for any repository.
+	// ResourceID is the provider resource anchor, or nil for any resource.
 	ResourceID *string `json:"resourceId"`
-	// ActionName is a canonical action name (e.g. "github.pr.write"), or nil
-	// for any action.
+	// ActionName is a canonical action name (e.g. "github.pr.write",
+	// "hubspot.object.write"), or nil for any action.
 	ActionName *string `json:"actionName"`
 	// BranchOrRef is a branch or ref constraint, or nil for any branch.
 	BranchOrRef *string `json:"branchOrRef"`
@@ -90,35 +61,37 @@ type Rule struct {
 	Specificity int `json:"specificity"`
 }
 
-// Snapshot is the response body of GET /api/v1/policy/github/snapshot. The
-// server resolves the organization from the install token; there is no
-// organization parameter.
+// Snapshot is the response body of a provider's snapshot endpoint. The server
+// resolves the organization from the install token; there is no organization
+// parameter.
 type Snapshot struct {
 	SchemaVersion  string `json:"schemaVersion"`
 	OrganizationID string `json:"organizationId"`
-	// ProviderID is the GitHub provider id, or nil when the org has no GitHub
-	// provider configured.
+	// ProviderID is the provider row id, or nil when the org's policy is
+	// key-only.
 	ProviderID  *string `json:"providerId"`
 	ProviderKey string  `json:"providerKey"`
 	Mode        string  `json:"mode"`
 	// Epoch is the active policy epoch; 0 when the org has no active policy.
 	Epoch int `json:"epoch"`
-	// Hash is a stable content hash over {epoch, rules} (v2) or {epoch,
-	// rules, endpointDirectory} (v3 — a directory membership change changes
-	// the hash), independent of GeneratedAt, so an unchanged policy keeps an
-	// unchanged hash.
+	// Hash is a stable content hash over the epoch, rules, and (when the
+	// contract carries one) the endpoint directory — a directory membership
+	// change changes the hash. Independent of GeneratedAt, so an unchanged
+	// policy keeps an unchanged hash.
 	Hash  string `json:"hash"`
 	Rules []Rule `json:"rules"`
 	// PayloadCaptureMode is the org's tool-payload capture directive
-	// ("omitted" | "summary" | "full"). Absent on pre-capture servers.
+	// ("omitted" | "summary" | "full"). Absent on pre-capture servers and on
+	// providers that do not carry it (the github snapshot is authoritative).
 	// Deliberately EXCLUDED from Hash (server-side decision), so a mode
 	// flip arrives on a snapshot whose hash is unchanged — consumers must
 	// not gate mode application on hash inequality (see Cache.Apply).
 	// Normalize via payloadcapture.NormalizeMode; unknown values fall back
 	// to "summary" (never capture on an unrecognized directive).
 	PayloadCaptureMode string `json:"payloadCaptureMode,omitempty"`
-	// EndpointDirectory is this endpoint's resolved directory identity (v3
-	// only; nil on v2 or when the request carried no installation id).
+	// EndpointDirectory is this endpoint's resolved directory identity (nil
+	// on versions without directory support or when the request carried no
+	// installation id).
 	EndpointDirectory *EndpointDirectory `json:"endpointDirectory,omitempty"`
 	GeneratedAt       string             `json:"generatedAt"`
 }
