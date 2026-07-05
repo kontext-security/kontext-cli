@@ -172,9 +172,13 @@ func (s *Service) handleConn(ctx context.Context, conn net.Conn) {
 
 	if s.asyncIngest && shouldAsyncIngest(&req) {
 		s.wg.Add(1)
+		// Detach from the accept-loop context: shutdown cancels it, and a
+		// pending telemetry write must drain rather than abort — Shutdown
+		// already bounds the drain with its own context via wg.Wait.
+		ingestCtx := context.WithoutCancel(ctx)
 		go func() {
 			defer s.wg.Done()
-			s.ingestEvent(ctx, &req)
+			s.ingestEvent(ingestCtx, &req)
 		}()
 	}
 }
