@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -215,6 +216,58 @@ func TestFlushCapsBatchLimitBeforePosting(t *testing.T) {
 	}
 }
 
+func TestFlushDrainsBacklogInOneCall(t *testing.T) {
+	store, dbPath := testStore(t)
+	// 5 decisions -> 10 action rows; with a batch limit of 4 the backlog
+	// needs 3 posts. One Flush call must ship all of them, not one per tick.
+	for i := 0; i < 5; i++ {
+		saveTestDecision(t, store, fmt.Sprintf("session-%03d", i), fmt.Sprintf("toolu_%03d", i))
+	}
+
+	var mu sync.Mutex
+	var posts int
+	shipped := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload Payload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		mu.Lock()
+		posts++
+		for _, action := range payload.Actions {
+			if id, ok := action["id"].(string); ok {
+				shipped[id] = true
+			}
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+
+	if err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      filepath.Join(t.TempDir(), "stream-state.json"),
+		CloudURL:       server.URL,
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     4,
+		HTTPClient:     server.Client(),
+	}); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Batches may overlap (receipt-chain continuity pulls referenced actions
+	// into a page), so assert distinct coverage rather than summed counts.
+	if len(shipped) != 10 {
+		t.Fatalf("shipped %d distinct actions in one Flush, want the whole backlog (10)", len(shipped))
+	}
+	if posts != 3 {
+		t.Fatalf("posts = %d, want 3 cursor pages of at most 4 actions", posts)
+	}
+}
+
 func TestFlushRetriesWithSmallerBatchWhenHostedBackendRejectsSize(t *testing.T) {
 	store, dbPath := testStore(t)
 	for i := 0; i < 4; i++ {
@@ -250,11 +303,22 @@ func TestFlushRetriesWithSmallerBatchWhenHostedBackendRejectsSize(t *testing.T) 
 		t.Fatalf("Flush() error = %v", err)
 	}
 
-	if len(actionCounts) != 2 {
-		t.Fatalf("request count = %d, want 2", len(actionCounts))
+	// The first post is rejected (413) and retried at half size; the same
+	// call then drains the remaining backlog at the reduced size.
+	if len(actionCounts) != 5 {
+		t.Fatalf("request count = %d, want 5 (1 rejected + 4 reduced batches)", len(actionCounts))
 	}
 	if actionCounts[0] <= actionCounts[1] {
 		t.Fatalf("action counts = %v, want retry with a smaller batch", actionCounts)
+	}
+	accepted := 0
+	for _, count := range actionCounts[1:] {
+		accepted += count
+	}
+	// Pages can overlap via receipt-chain continuity, so require at least
+	// full coverage of the 8-action backlog.
+	if accepted < 8 {
+		t.Fatalf("accepted %d actions, want at least the whole backlog (8)", accepted)
 	}
 	state, err := LoadState(statePath)
 	if err != nil {
