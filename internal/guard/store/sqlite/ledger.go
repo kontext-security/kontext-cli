@@ -54,6 +54,7 @@ select id, session_id, turn_id, tool_use_id, trace_id, span_id, parent_span_id,
   matched_rules_json, risk_signals_json, risk_event_json, modifications_json,
   approval_context_json, approval_channel, approval_request_id, approval_expires_at,
   deferral_context_json, status, outcome, output_summary, output_hash, error_redacted,
+  tool_input_captured_json, tool_output_captured_json,
   proposed_at, decision_at, completed_at, created_at, updated_at
 from authorization_actions`
 
@@ -262,12 +263,24 @@ func queryLedgerRecords(ctx context.Context, db *sql.DB, query string, args ...a
 		}
 		record := LedgerRecord{}
 		for i, column := range columns {
-			record[column] = normalizeLedgerValue(column, values[i])
+			value := normalizeLedgerValue(column, values[i])
+			// Captured payload fields are optional on the wire: consumers
+			// that predate them reject records carrying unknown fields, so
+			// rows that captured nothing must not mention them at all.
+			if value == nil && omitWhenEmptyLedgerColumns[column] {
+				continue
+			}
+			record[column] = value
 		}
 		normalizeLedgerRecord(record)
 		records = append(records, record)
 	}
 	return records, rows.Err()
+}
+
+var omitWhenEmptyLedgerColumns = map[string]bool{
+	"tool_input_captured_json":  true,
+	"tool_output_captured_json": true,
 }
 
 func normalizeLedgerValue(column string, value any) any {
