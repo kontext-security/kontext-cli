@@ -65,6 +65,11 @@ type Payload struct {
 }
 
 // MarshalJSON emits only the fields that belong to the record's mode.
+//
+// It uses a value receiver on purpose: encoding/json only finds
+// pointer-receiver marshalers on addressable values, and a value receiver
+// works for both Payload and *Payload. Output is encoded without HTML
+// escaping so serializedSize measures what JSON consumers measure.
 func (p Payload) MarshalJSON() ([]byte, error) {
 	record := map[string]any{"mode": p.Mode}
 	switch p.Mode {
@@ -85,7 +90,17 @@ func (p Payload) MarshalJSON() ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("payloadcapture: unknown mode %q", p.Mode)
 	}
-	return json.Marshal(record)
+	return marshalNoEscape(record)
+}
+
+func marshalNoEscape(value any) ([]byte, error) {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 func (p Payload) fillContentFields(record map[string]any) {
@@ -101,7 +116,9 @@ func (p Payload) fillContentFields(record map[string]any) {
 //
 // It returns nil when nothing should be recorded: empty input, summary mode,
 // or an unrecognized mode (unknown never means "send content"). Every error
-// path returns a capture_failed record and never any input content.
+// path returns a capture_failed record and never any input content. The
+// returned record does not alias the input: mutating input after Capture
+// cannot change the record, and vice versa.
 func Capture(input map[string]any, mode Mode) *Payload {
 	if len(input) == 0 {
 		return nil
@@ -155,7 +172,13 @@ func captureFull(input map[string]any, sourceSha string, sourceLen int) (payload
 		StoredSha256:     sha256Hex(redactedCanonical),
 		StoredByteLength: len(redactedCanonical),
 	}
-	if size, err := serializedSize(full); err == nil && size <= MaxPayloadBytes {
+	size, err := serializedSize(full)
+	if err != nil {
+		// A record we cannot serialize must not degrade into a bogus
+		// truncation of content that was never too large.
+		return failedWithCommitment(ReasonSerializationError, sourceSha, sourceLen)
+	}
+	if size <= MaxPayloadBytes {
 		return full
 	}
 
@@ -187,6 +210,13 @@ func truncatedPayload(redactedCanonical []byte, changed bool, sourceSha string, 
 		return err == nil && size <= MaxPayloadBytes
 	}
 
+	// The envelope plus marker is a few hundred bytes; if even a
+	// content-free preview cannot fit, something is structurally wrong
+	// with the record — fail closed rather than emit an oversized one.
+	if !fits(0) {
+		return failedWithCommitment(ReasonSerializationError, sourceSha, sourceLen)
+	}
+
 	low, high, best := 0, len(redactedCanonical), 0
 	for low <= high {
 		mid := utf8Boundary(redactedCanonical, (low+high)/2)
@@ -201,17 +231,26 @@ func truncatedPayload(redactedCanonical []byte, changed bool, sourceSha string, 
 	return build(utf8Boundary(redactedCanonical, best))
 }
 
-// utf8Boundary moves cut backwards until it does not split a multi-byte rune.
+// utf8Boundary clamps cut into range and moves it backwards until it does
+// not split a multi-byte rune. A cut may still land inside a JSON escape
+// sequence within the canonical string; the preview is an opaque string, not
+// parseable JSON, so that is accepted.
 func utf8Boundary(data []byte, cut int) int {
+	if cut > len(data) {
+		cut = len(data)
+	}
 	for cut > 0 && cut < len(data) && !utf8.RuneStart(data[cut]) {
 		cut--
 	}
 	return cut
 }
 
-// serializedSize measures the record the way its consumers do: standard JSON
-// without HTML escaping. encoding/json escapes <, >, and & by default, which
-// would overstate the size against the shared byte cap.
+// serializedSize measures the record the way JSON consumers measure it:
+// JSON without HTML escaping (MarshalJSON emits unescaped bytes and the
+// escape-free encoder here preserves them). One remaining divergence is
+// accepted as conservative: encoding/json always escapes U+2028/U+2029
+// (6 bytes) where other serializers emit them raw (3 bytes), so this
+// measurement can only overcount, never undercount, against the cap.
 func serializedSize(payload *Payload) (int, error) {
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)

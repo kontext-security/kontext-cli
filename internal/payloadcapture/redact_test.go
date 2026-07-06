@@ -83,6 +83,40 @@ func TestRedactionCoverage(t *testing.T) {
 	}
 }
 
+// TestRedactionCoverageIsOrderIndependent guards the coverage invariant
+// against rule interference: an earlier rule's placeholder substitution must
+// not prevent a later rule from catching its secret, regardless of the order
+// rules run in.
+func TestRedactionCoverageIsOrderIndependent(t *testing.T) {
+	t.Parallel()
+
+	var vectors coverageVectors
+	loadTestdata(t, "redaction-coverage-vectors.json", &vectors)
+
+	apply := func(rules []compiledRule, input string) string {
+		for _, rule := range rules {
+			input = rule.re.ReplaceAllString(input, RedactedPlaceholder)
+		}
+		return input
+	}
+
+	reversed := make([]compiledRule, len(compiledValueRules))
+	for index, rule := range compiledValueRules {
+		reversed[len(reversed)-1-index] = rule
+	}
+
+	for _, vector := range vectors.ValueVectors {
+		for _, order := range [][]compiledRule{compiledValueRules, reversed} {
+			redacted := apply(order, vector.Input)
+			for _, secret := range vector.MustNotSurvive {
+				if strings.Contains(redacted, secret) {
+					t.Fatalf("secret %q survived under rule order variation in %s", secret, vector.Name)
+				}
+			}
+		}
+	}
+}
+
 func TestRedactJSONDoesNotMutateInput(t *testing.T) {
 	t.Parallel()
 

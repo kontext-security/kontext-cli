@@ -95,13 +95,19 @@ func TestCaptureAgainstSharedVectors(t *testing.T) {
 				if got, want := record["sourceByteLength"], vector.Expected["sourceByteLength"]; got != want {
 					t.Fatalf("sourceByteLength = %v, want %v", got, want)
 				}
+				if got, want := record["redactorVersion"], RedactorVersion; got != want {
+					t.Fatalf("redactorVersion = %v, want %v", got, want)
+				}
 				assertStoredConsistency(t, payload)
 			default:
 				// Truncation and failure vectors document the record shape;
 				// their inputs are placeholders that cannot drive this
 				// engine into those states. Dedicated tests below cover the
-				// real triggers.
-				t.Skipf("shape-only vector (mode %s)", expectedMode)
+				// real triggers. Still pin the mode-independent fields so
+				// fixture drift cannot hide here.
+				if version, ok := vector.Expected["redactorVersion"]; ok && version != RedactorVersion {
+					t.Fatalf("fixture redactorVersion = %v, engine emits %v", version, RedactorVersion)
+				}
 			}
 		})
 	}
@@ -261,6 +267,50 @@ func TestCaptureSkipsSummaryUnknownAndEmpty(t *testing.T) {
 	}
 	if Capture(nil, ModeFull) != nil {
 		t.Fatal("empty input must produce no record")
+	}
+}
+
+func TestSerializedSizeDoesNotEscapeHTMLCharacters(t *testing.T) {
+	t.Parallel()
+
+	base := Capture(map[string]any{"content": strings.Repeat("a", 100)}, ModeFull)
+	angled := Capture(map[string]any{"content": strings.Repeat("<", 100)}, ModeFull)
+	baseSize, err := serializedSize(base)
+	if err != nil {
+		t.Fatalf("serializedSize: %v", err)
+	}
+	angledSize, err := serializedSize(angled)
+	if err != nil {
+		t.Fatalf("serializedSize: %v", err)
+	}
+	// '<' must count as one byte like any other ASCII character; HTML
+	// escaping would count it as six and force needless truncation.
+	if baseSize != angledSize {
+		t.Fatalf("size diverged: %d (plain) vs %d (angle brackets)", baseSize, angledSize)
+	}
+}
+
+func TestUtf8Boundary(t *testing.T) {
+	t.Parallel()
+
+	data := []byte("a😀b") // 1 + 4 + 1 bytes
+	cases := []struct{ cut, want int }{
+		{0, 0},
+		{1, 1},
+		{2, 1}, // inside the emoji
+		{3, 1},
+		{4, 1},
+		{5, 5},
+		{6, 6},
+		{99, 6}, // past the end clamps
+	}
+	for _, tc := range cases {
+		if got := utf8Boundary(data, tc.cut); got != tc.want {
+			t.Errorf("utf8Boundary(%d) = %d, want %d", tc.cut, got, tc.want)
+		}
+	}
+	if got := utf8Boundary(nil, 3); got != 0 {
+		t.Errorf("utf8Boundary(nil, 3) = %d, want 0", got)
 	}
 }
 
