@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/kontext-security/kontext-cli/internal/providerpolicy"
 	"github.com/kontext-security/kontext-cli/internal/guard/decision"
+	"github.com/kontext-security/kontext-cli/internal/providerpolicy"
 )
 
 type HookEvent struct {

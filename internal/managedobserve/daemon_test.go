@@ -421,13 +421,13 @@ func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- RunDaemon(ctx, DaemonOptions{
-			SocketPath:           socketPath,
-			DBPath:               dbPath,
-			IdleTimeout:          time.Hour,
-			StreamInterval:       time.Hour,
-			StreamHTTPClient:     server.Client(),
+			SocketPath:            socketPath,
+			DBPath:                dbPath,
+			IdleTimeout:           time.Hour,
+			StreamInterval:        time.Hour,
+			StreamHTTPClient:      server.Client(),
 			PolicyRefreshInterval: 20 * time.Millisecond,
-			PolicyHTTPClient:   server.Client(),
+			PolicyHTTPClient:      server.Client(),
 		})
 	}()
 	stopped := false
