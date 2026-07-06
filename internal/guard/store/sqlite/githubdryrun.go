@@ -126,12 +126,16 @@ func githubDryRunActionValues(actionID, sessionID string, event risk.HookEvent, 
 		"output_summary":           "",
 		"output_hash":              "",
 		"error_redacted":           "",
-		"proposed_at":              nil,
-		"decision_at":              nullIfEmpty(timestamp),
-		"completed_at":             nil,
-		"created_at":               timestamp,
-		"updated_at":               timestamp,
-		"updated_at_cursor_key":    ledgerTimestampCursorKeyFromValues(timestamp),
+		// Dry-run evaluations never capture payloads in any mode; the real
+		// tool call's own rows carry them.
+		"tool_input_captured_json":  nil,
+		"tool_output_captured_json": nil,
+		"proposed_at":               nil,
+		"decision_at":               nullIfEmpty(timestamp),
+		"completed_at":              nil,
+		"created_at":                timestamp,
+		"updated_at":                timestamp,
+		"updated_at_cursor_key":     ledgerTimestampCursorKeyFromValues(timestamp),
 	}, nil
 }
 

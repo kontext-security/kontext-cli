@@ -25,6 +25,9 @@ type Store struct {
 	path   string
 	signer receiptSigner
 
+	// captureMode lives on Store (a mutable setter) rather than flowing
+	// through the policy-provider chain: what gets persisted is a storage
+	// concern, and the synced-policy layer only needs to flip it.
 	captureMu   sync.RWMutex
 	captureMode payloadcapture.Mode
 }
@@ -762,20 +765,24 @@ on conflict(id) do update set
 		return DecisionRecord{}, err
 	}
 
+	// Snapshot the mode once so every row of this decision is captured
+	// under the same policy, even if the mode flips concurrently.
+	captureMode := s.payloadCaptureMode()
+
 	actionID := "act_" + uuid.NewString()
 	if event.HookEventName == "PreToolUse" {
 		proposedID := "act_" + uuid.NewString()
-		if err := s.insertAction(ctx, tx, proposedID, sessionID, event, decision, canonicalEventRequestProposed, "event", now); err != nil {
+		if err := s.insertAction(ctx, tx, proposedID, sessionID, event, decision, canonicalEventRequestProposed, "event", captureMode, now); err != nil {
 			return DecisionRecord{}, err
 		}
-		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventRequestDecided, "decision", now.Add(time.Millisecond)); err != nil {
+		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventRequestDecided, "decision", captureMode, now.Add(time.Millisecond)); err != nil {
 			return DecisionRecord{}, err
 		}
 		if err := s.insertGithubDryRunActions(ctx, tx, sessionID, event, decision, now.Add(2*time.Millisecond)); err != nil {
 			return DecisionRecord{}, err
 		}
 	} else {
-		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventType(event.HookEventName), "outcome", now); err != nil {
+		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventType(event.HookEventName), "outcome", captureMode, now); err != nil {
 			return DecisionRecord{}, err
 		}
 	}
@@ -801,8 +808,8 @@ on conflict(id) do update set
 	}, nil
 }
 
-func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, canonicalEvent, receiptType string, now time.Time) error {
-	action, err := actionValues(actionID, sessionID, event, decision, canonicalEvent, s.payloadCaptureMode(), now)
+func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, canonicalEvent, receiptType string, captureMode payloadcapture.Mode, now time.Time) error {
+	action, err := actionValues(actionID, sessionID, event, decision, canonicalEvent, captureMode, now)
 	if err != nil {
 		return err
 	}
@@ -853,21 +860,35 @@ func (s *Store) insertActionRecord(ctx context.Context, tx *sql.Tx, action map[s
 	return s.appendReceipt(ctx, tx, receiptInputFromAction(action, receiptType, now))
 }
 
-// capturedPayloadJSON returns the serialized captured payload record, or nil
-// when nothing is recorded. Tool input is recorded once per tool call (on the
-// request.proposed row, not again on the decision row); tool output on the
-// observed/failed rows.
-func capturedPayloadJSON(payload map[string]any, mode payloadcapture.Mode, applies bool) any {
-	if !applies {
+// capturedInputJSON records tool input once per tool call, on the
+// request.proposed row — the decision row correlates via tool_use_id and
+// must not duplicate it.
+func capturedInputJSON(event risk.HookEvent, canonicalEvent string, mode payloadcapture.Mode) any {
+	if canonicalEvent != canonicalEventRequestProposed {
 		return nil
 	}
+	return capturedRecordJSON(event.ToolInput, mode)
+}
+
+// capturedOutputJSON records tool output on the observed/failed rows.
+func capturedOutputJSON(event risk.HookEvent, canonicalEvent string, mode payloadcapture.Mode) any {
+	if canonicalEvent != canonicalEventRequestObserved && canonicalEvent != canonicalEventRequestFailed {
+		return nil
+	}
+	return capturedRecordJSON(event.ToolResponse, mode)
+}
+
+func capturedRecordJSON(payload map[string]any, mode payloadcapture.Mode) any {
 	record := payloadcapture.Capture(payload, mode)
 	if record == nil {
 		return nil
 	}
 	raw, err := record.MarshalJSON()
 	if err != nil {
-		return nil
+		// Unreachable for records produced by Capture; if it ever happens,
+		// surface the failure in the ledger rather than dropping silently —
+		// the ledger is this package's log.
+		return `{"mode":"capture_failed","reason":"serialization_error"}`
 	}
 	return string(raw)
 }
@@ -932,14 +953,8 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		decisionResult = canonicalDecisionResult(decision.Decision)
 	}
 	outcome, outputSummary, outputHash, errorRedacted := outcomeValues(event, decision)
-	toolInputCaptured := capturedPayloadJSON(
-		event.ToolInput, captureMode,
-		canonicalEvent == canonicalEventRequestProposed,
-	)
-	toolOutputCaptured := capturedPayloadJSON(
-		event.ToolResponse, captureMode,
-		canonicalEvent == canonicalEventRequestObserved || canonicalEvent == canonicalEventRequestFailed,
-	)
+	toolInputCaptured := capturedInputJSON(event, canonicalEvent, captureMode)
+	toolOutputCaptured := capturedOutputJSON(event, canonicalEvent, captureMode)
 	proposedAt := ""
 	decisionAt := ""
 	completedAt := ""
