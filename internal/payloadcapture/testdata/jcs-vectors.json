@@ -1,0 +1,57 @@
+[
+  {
+    "name": "key-ordering",
+    "description": "Object properties sort by UTF-16 code units, not insertion order or locale.",
+    "input": { "b": 2, "a": 1 },
+    "canonicalString": "{\"a\":1,\"b\":2}",
+    "sha256Hex": "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+  },
+  {
+    "name": "nested-containers",
+    "description": "Nested objects are sorted recursively while array order is preserved.",
+    "input": { "z": [3, { "b": true, "a": null }], "a": {} },
+    "canonicalString": "{\"a\":{},\"z\":[3,{\"a\":null,\"b\":true}]}",
+    "sha256Hex": "0584515407f8e38baaacb512626b207542cf0d097057ff68febf3a55fafa05dc"
+  },
+  {
+    "name": "unicode-and-html-sensitive-characters",
+    "description": "Unicode is not NFC-normalized and HTML-sensitive characters are not escaped.",
+    "input": {
+      "emoji": "😀",
+      "html": "<>&",
+      "combining": "é",
+      "precomposed": "é"
+    },
+    "canonicalString": "{\"combining\":\"é\",\"emoji\":\"😀\",\"html\":\"<>&\",\"precomposed\":\"é\"}",
+    "sha256Hex": "72b815458835d1ea6a8d4d4ee3492ff67e52cbadf27caad37ff96677a3898824"
+  },
+  {
+    "name": "number-formatting",
+    "description": "ECMAScript number serialization covers -0 normalization and exponent boundaries.",
+    "input": {
+      "negZero": -0,
+      "small": 0.000001,
+      "tiny": 1e-7,
+      "big": 1e21,
+      "fraction": 333333333.3333333
+    },
+    "canonicalString": "{\"big\":1e+21,\"fraction\":333333333.3333333,\"negZero\":0,\"small\":0.000001,\"tiny\":1e-7}",
+    "sha256Hex": "13a7d8043aff4c53a63a42225415933442d20b2c3282d2226a15ce14b484267f"
+  },
+  {
+    "name": "utf16-code-unit-key-ordering",
+    "description": "RFC 8785 sorts keys by UTF-16 code units: an astral-plane key (surrogate pair) sorts before high-BMP keys like U+FB00, unlike code-point order.",
+    "input": { "ﬀ": "high-bmp", "😀": "astral", "z": "ascii" },
+    "canonicalString": "{\"z\":\"ascii\",\"😀\":\"astral\",\"ﬀ\":\"high-bmp\"}",
+    "sha256Hex": "0013a95b76a0b1d1ef6106992c0a1c3ca7c65fb6a45d4da9c98733b4871220d5"
+  },
+  {
+    "name": "adversarial-control-character-escaping",
+    "description": "Control-character-heavy payloads expand after JSON escaping; producers must fit the final serialized envelope.",
+    "input": {
+      "control": "\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f"
+    },
+    "canonicalString": "{\"control\":\"\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"}",
+    "sha256Hex": "8f8207600b1aa5aad3ba5f9572f262363c321d3719a26dfdb2f3ce029fad6890"
+  }
+]

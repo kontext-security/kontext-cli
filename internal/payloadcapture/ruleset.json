@@ -1,0 +1,113 @@
+{
+  "version": "rules/1",
+  "keyNormalization": "camel_to_snake",
+  "keyPatterns": [
+    {
+      "id": "sensitive-key",
+      "description": "Object keys that denote credentials; their values are replaced wholesale.",
+      "pattern": "(^|[_-])(authorization|auth|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|token|secret|password|credential|private[_-]?key|session[_-]?key)($|[_-])",
+      "caseInsensitive": true,
+      "provenance": "structural"
+    }
+  ],
+  "valuePatterns": [
+    {
+      "id": "private-key-block",
+      "description": "PEM private key blocks.",
+      "pattern": "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----",
+      "caseInsensitive": false,
+      "provenance": "gitleaks:private-key"
+    },
+    {
+      "id": "bearer-basic-auth",
+      "description": "Bearer/Basic authorization values.",
+      "pattern": "\\b(?:Bearer|Basic)\\s+[A-Za-z0-9._~+/=-]{8,}",
+      "caseInsensitive": true,
+      "provenance": "structural"
+    },
+    {
+      "id": "github-token",
+      "description": "GitHub classic tokens (ghp/gho/ghu/ghs/ghr).",
+      "pattern": "\\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\\b",
+      "caseInsensitive": false,
+      "provenance": "gitleaks:github-pat"
+    },
+    {
+      "id": "github-fine-grained-pat",
+      "description": "GitHub fine-grained personal access tokens.",
+      "pattern": "\\bgithub_pat_[A-Za-z0-9_]{16,}\\b",
+      "caseInsensitive": false,
+      "provenance": "gitleaks:github-fine-grained-pat"
+    },
+    {
+      "id": "openai-api-key",
+      "description": "OpenAI-style secret keys.",
+      "pattern": "\\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\\b",
+      "caseInsensitive": false,
+      "provenance": "gitleaks:openai-api-key"
+    },
+    {
+      "id": "aws-access-key-id",
+      "description": "AWS access key identifiers.",
+      "pattern": "\\b(?:AKIA|ASIA)[A-Z0-9]{16}\\b",
+      "caseInsensitive": false,
+      "provenance": "gitleaks:aws-access-token"
+    },
+    {
+      "id": "slack-token",
+      "description": "Slack bot/app/user tokens.",
+      "pattern": "\\bxox[baprs]-[A-Za-z0-9-]{16,}\\b",
+      "caseInsensitive": false,
+      "provenance": "gitleaks:slack-bot-token"
+    },
+    {
+      "id": "npm-token",
+      "description": "npm access tokens.",
+      "pattern": "\\bnpm_[A-Za-z0-9]{16,}\\b",
+      "caseInsensitive": false,
+      "provenance": "gitleaks:npm-access-token"
+    },
+    {
+      "id": "gcp-api-key",
+      "description": "Google Cloud API keys.",
+      "pattern": "\\bAIza[0-9A-Za-z_-]{20,}\\b",
+      "caseInsensitive": false,
+      "provenance": "gitleaks:gcp-api-key"
+    },
+    {
+      "id": "jwt",
+      "description": "JSON Web Tokens.",
+      "pattern": "\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\b",
+      "caseInsensitive": false,
+      "provenance": "gitleaks:jwt"
+    },
+    {
+      "id": "url-userinfo",
+      "description": "Credentials embedded in URLs (scheme plus userinfo up to and including the @).",
+      "pattern": "https?://[^/?#\\s\"'<>@]+@",
+      "caseInsensitive": true,
+      "provenance": "structural"
+    },
+    {
+      "id": "sensitive-assignment",
+      "description": "key=value / key: value assignments where the key names a credential.",
+      "pattern": "(?:^|[\\s\"'`;&|(])[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|token|secret|password|credential|private[_-]?key)[A-Za-z0-9_-]*\\s*[:=]\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s&;|)]+)",
+      "caseInsensitive": true,
+      "provenance": "structural"
+    },
+    {
+      "id": "sensitive-cli-flag",
+      "description": "CLI flags carrying credentials (--token x, --token=x).",
+      "pattern": "--(?:api[-_]?key|access[-_]?token|refresh[-_]?token|client[-_]?secret|token|secret|password|credential|private[-_]?key)[= ](?:\"[^\"]*\"|'[^']*'|[^\\s&;|)]+)",
+      "caseInsensitive": true,
+      "provenance": "structural"
+    },
+    {
+      "id": "sensitive-query-param",
+      "description": "Credential-bearing URL query parameters.",
+      "pattern": "[?&](?:access[-_]?token|api[-_]?key|client[-_]?secret|code|key|password|refresh[-_]?token|secret|token)=[^&\\s\"']+",
+      "caseInsensitive": true,
+      "provenance": "structural"
+    }
+  ]
+}

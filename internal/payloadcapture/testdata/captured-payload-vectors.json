@@ -1,0 +1,129 @@
+[
+  {
+    "name": "summary-mode-emits-nothing",
+    "description": "Summary is a setting value only; there is no CapturedToolPayload union member.",
+    "input": { "command": "git status --short" },
+    "captureMode": "summary",
+    "expected": null
+  },
+  {
+    "name": "omitted-mode-envelope-without-hash",
+    "description": "Omitted mode preserves source byte length but no brute-forceable hash commitment.",
+    "input": { "command": "git status --short" },
+    "captureMode": "omitted",
+    "expected": {
+      "mode": "omitted",
+      "sourceByteLength": 32
+    }
+  },
+  {
+    "name": "full-redacted-tool-input",
+    "description": "Full mode stores a redacted JSON object with separate source and stored hashes.",
+    "input": {
+      "command": "curl -H \"Authorization: Bearer raw-token\" https://example.test",
+      "api_key": "raw-token"
+    },
+    "captureMode": "full",
+    "expected": {
+      "mode": "full",
+      "value": {
+        "command": "curl -H \"Authorization: Bearer [REDACTED_SECRET]\" https://example.test",
+        "api_key": "[REDACTED_SECRET]"
+      },
+      "redacted": true,
+      "redactorVersion": "go/1",
+      "sourceSha256": "20405a150fcc952bd842c712cedce00008a0a2ffa1b8f97e2dd7c64582da98c3",
+      "sourceByteLength": 100,
+      "storedSha256": "48f9bd23d7f0664c798bf15c1019df883fc2dd82a2f67573730c86683df85b82",
+      "storedByteLength": 116
+    }
+  },
+  {
+    "name": "full-truncated-preview-with-marker",
+    "description": "Oversized full payloads retain source commitment and store a UTF-8 preview with marker.",
+    "input": {
+      "content": "prefix 😀 suffix with additional output that exceeds the producer preview budget"
+    },
+    "captureMode": "full",
+    "expected": {
+      "mode": "full_truncated",
+      "preview": "{\"content\":\"prefix 😀 suffix[truncated 96 bytes total]",
+      "redacted": false,
+      "redactorVersion": "go/1",
+      "sourceSha256": "37ca2d752945d115d2d07d69e4bc0a897dfe220ba90081acfa3e6764d4772cfb",
+      "sourceByteLength": 96,
+      "storedSha256": "38aae67c2662090f4fa46f4e108d608728dad050917c2ef4939c6a7d70a0e409",
+      "storedByteLength": 56
+    }
+  },
+  {
+    "name": "capture-failed-with-source-commitment",
+    "description": "Failure after storage was policy-approved can carry source commitment metadata without content.",
+    "input": { "command": "cat ./secret.txt" },
+    "captureMode": "full",
+    "expected": {
+      "mode": "capture_failed",
+      "reason": "redaction_error",
+      "sourceSha256": "457d5db845b59c940671b9860d9681f61f386595a169231afbd19158715e9783",
+      "sourceByteLength": 30
+    }
+  },
+  {
+    "name": "serialization-error",
+    "description": "Producer-side serialization failures are content-free failure envelopes.",
+    "input": {
+      "description": "fixture placeholder; real producer input was not serializable"
+    },
+    "captureMode": "full",
+    "expected": {
+      "mode": "capture_failed",
+      "reason": "serialization_error"
+    }
+  },
+  {
+    "name": "size-precheck-exceeded",
+    "description": "Payloads above the hard input cap fail before source hashing.",
+    "input": { "description": "fixture placeholder for >1MiB source input" },
+    "captureMode": "full",
+    "expected": {
+      "mode": "capture_failed",
+      "reason": "size_precheck_exceeded"
+    }
+  },
+  {
+    "name": "invalid-payload",
+    "description": "Producer-side invalid decoded payloads are explicit failures.",
+    "input": {
+      "description": "fixture placeholder for invalid decoded hook payload"
+    },
+    "captureMode": "full",
+    "expected": {
+      "mode": "capture_failed",
+      "reason": "invalid_payload"
+    }
+  },
+  {
+    "name": "server-validation-error",
+    "description": "Server-side schema validation failures degrade per field, not per batch.",
+    "input": {
+      "description": "fixture placeholder for malformed captured field at ingest"
+    },
+    "captureMode": "full",
+    "expected": {
+      "mode": "capture_failed",
+      "reason": "server_validation_error"
+    }
+  },
+  {
+    "name": "server-redaction-error",
+    "description": "Server-side re-redaction failures degrade to a content-free envelope.",
+    "input": {
+      "description": "fixture placeholder for ingest redaction failure"
+    },
+    "captureMode": "full",
+    "expected": {
+      "mode": "capture_failed",
+      "reason": "server_redaction_error"
+    }
+  }
+]
