@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"unicode/utf8"
 )
 
@@ -217,26 +218,14 @@ func truncatedPayload(redactedCanonical []byte, changed bool, sourceSha string, 
 		return failedWithCommitment(ReasonSerializationError, sourceSha, sourceLen)
 	}
 
-	// Bounds advance from the arithmetic probe, never from the snapped
-	// boundary: snapping can pull mid below low, and advancing from the
-	// snapped value would stop making progress inside a long multi-byte
-	// run. Nothing is skipped — (mid, probe] contains no rune boundaries
-	// by definition of the snap.
-	low, high, best := 0, len(redactedCanonical), 0
-	for low <= high {
-		probe := (low + high) / 2
-		mid := utf8Boundary(redactedCanonical, probe)
-		if fits(mid) {
-			if mid > best {
-				best = mid
-			}
-			low = probe + 1
-		} else {
-			high = mid - 1
-		}
-	}
+	// fits is monotone in the cut (larger preview, larger record), so
+	// sort.Search finds the first cut that no longer fits; the largest
+	// fitting cut is its boundary-snapped predecessor.
+	firstTooBig := sort.Search(len(redactedCanonical)+1, func(cut int) bool {
+		return !fits(utf8Boundary(redactedCanonical, cut))
+	})
 
-	return build(best)
+	return build(utf8Boundary(redactedCanonical, firstTooBig-1))
 }
 
 // utf8Boundary clamps cut into range and moves it backwards until it does
@@ -254,19 +243,16 @@ func utf8Boundary(data []byte, cut int) int {
 }
 
 // serializedSize measures the record the way JSON consumers measure it:
-// JSON without HTML escaping (MarshalJSON emits unescaped bytes and the
-// escape-free encoder here preserves them). One remaining divergence is
-// accepted as conservative: encoding/json always escapes U+2028/U+2029
-// (6 bytes) where other serializers emit them raw (3 bytes), so this
-// measurement can only overcount, never undercount, against the cap.
+// MarshalJSON already emits the final, HTML-escape-free bytes. One remaining
+// divergence is accepted as conservative: encoding/json always escapes
+// U+2028/U+2029 (6 bytes) where other serializers emit them raw (3 bytes),
+// so this measurement can only overcount, never undercount, against the cap.
 func serializedSize(payload *Payload) (int, error) {
-	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(payload); err != nil {
+	raw, err := payload.MarshalJSON()
+	if err != nil {
 		return 0, err
 	}
-	return len(bytes.TrimRight(buf.Bytes(), "\n")), nil
+	return len(raw), nil
 }
 
 func failedPayload(reason FailureReason) *Payload {
