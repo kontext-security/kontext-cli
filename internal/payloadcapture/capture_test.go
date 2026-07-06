@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -267,6 +268,41 @@ func TestCaptureSkipsSummaryUnknownAndEmpty(t *testing.T) {
 	}
 	if Capture(nil, ModeFull) != nil {
 		t.Fatal("empty input must produce no record")
+	}
+}
+
+// Regression test: the truncation search previously advanced its lower bound
+// from the boundary-snapped probe, which stops making progress when the
+// probe window sits inside a long run of multi-byte runes — an infinite loop
+// on the hook path for emoji-heavy payloads.
+func TestCaptureTruncatesMultiByteHeavyPayloadsWithoutHanging(t *testing.T) {
+	t.Parallel()
+
+	done := make(chan *Payload, 1)
+	go func() {
+		done <- Capture(map[string]any{
+			"content": strings.Repeat("😀", 80_000),
+		}, ModeFull)
+	}()
+
+	select {
+	case payload := <-done:
+		if payload == nil || payload.Mode != modeFullTruncated {
+			t.Fatalf("expected truncated record, got %v", payload)
+		}
+		size, err := serializedSize(payload)
+		if err != nil {
+			t.Fatalf("serializedSize: %v", err)
+		}
+		if size > MaxPayloadBytes {
+			t.Fatalf("serialized record is %d bytes, cap is %d", size, MaxPayloadBytes)
+		}
+		if !utf8.ValidString(payload.Preview) {
+			t.Fatal("preview is not valid UTF-8")
+		}
+		assertStoredConsistency(t, payload)
+	case <-time.After(30 * time.Second):
+		t.Fatal("truncation did not terminate")
 	}
 }
 

@@ -217,18 +217,26 @@ func truncatedPayload(redactedCanonical []byte, changed bool, sourceSha string, 
 		return failedWithCommitment(ReasonSerializationError, sourceSha, sourceLen)
 	}
 
+	// Bounds advance from the arithmetic probe, never from the snapped
+	// boundary: snapping can pull mid below low, and advancing from the
+	// snapped value would stop making progress inside a long multi-byte
+	// run. Nothing is skipped — (mid, probe] contains no rune boundaries
+	// by definition of the snap.
 	low, high, best := 0, len(redactedCanonical), 0
 	for low <= high {
-		mid := utf8Boundary(redactedCanonical, (low+high)/2)
+		probe := (low + high) / 2
+		mid := utf8Boundary(redactedCanonical, probe)
 		if fits(mid) {
-			best = mid
-			low = mid + 1
+			if mid > best {
+				best = mid
+			}
+			low = probe + 1
 		} else {
 			high = mid - 1
 		}
 	}
 
-	return build(utf8Boundary(redactedCanonical, best))
+	return build(best)
 }
 
 // utf8Boundary clamps cut into range and moves it backwards until it does
