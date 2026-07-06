@@ -192,9 +192,14 @@ func (p RiskPolicyProvider) evaluateProviderPolicies(event risk.HookEvent) ([]ri
 		if len(evaluations) == 0 {
 			continue
 		}
-		all = append(all, risk.ProviderPolicyEvaluations{Provider: binding.Provider, Evaluations: evaluations})
+		group := risk.ProviderPolicyEvaluations{Provider: binding.Provider, Evaluations: evaluations}
+		all = append(all, group)
 		if snapshot.Enforce() && enforcing == nil {
-			enforcing = &all[len(all)-1]
+			// Point at a local copy, never into `all`'s backing array — a
+			// later append() may reallocate it and leave a slice-element
+			// pointer dangling at a stale array.
+			g := group
+			enforcing = &g
 		}
 	}
 	return all, enforcing

@@ -89,6 +89,13 @@ func TestClassifyProviderActions(t *testing.T) {
 			want:     []ProviderAction{{Action: ActionAPIRead}},
 		},
 		{
+			name:     "submit_feedback is an api write (egress side effect)",
+			toolName: coworkUUIDTool("submit_feedback"),
+			input:    map[string]any{"feedback": "great"},
+			resolver: resolveAlwaysHubspot,
+			want:     []ProviderAction{{Action: ActionAPIWrite}},
+		},
+		{
 			name:     "landing page read action classifies as api read",
 			toolName: coworkUUIDTool("manage_landing_page"),
 			input:    map[string]any{"action": "TEMPLATES"},

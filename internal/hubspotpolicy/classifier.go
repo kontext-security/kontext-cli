@@ -74,7 +74,10 @@ var hubspotTools = map[string]toolClassification{
 	"get_content_analytics_report":  {action: ActionAPIRead},
 	"render_landing_page_ui":        {action: ActionAPIRead},
 	"tool_guidance":                 {action: ActionAPIRead},
-	"submit_feedback":               {action: ActionAPIRead},
+	// submit_feedback sends data to HubSpot — an egress side effect, so it is
+	// a write for policy purposes (a deny on hubspot.api.write should catch
+	// it), even though it touches no CRM data.
+	"submit_feedback": {action: ActionAPIWrite},
 	// Landing pages: one tool for both directions; the "action" input value
 	// decides read vs write.
 	"manage_landing_page": {action: ActionAPIWrite, actionInput: true},
