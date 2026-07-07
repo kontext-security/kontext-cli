@@ -781,6 +781,15 @@ func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionI
 }
 
 func (s *Store) insertActionRecord(ctx context.Context, tx *sql.Tx, action map[string]any, receiptType string, now time.Time) error {
+	// The cursor key orders the hosted export. Stamp it at write time: the
+	// event timestamps in the record are captured before this write queues on
+	// the store's single serialized connection, and under load a stale stamp
+	// can land behind an already-persisted export cursor. Re-stamping here
+	// shrinks that stamp-to-commit gap to the instant before COMMIT, well
+	// inside the exporter's cursorSafetyLag. This intentionally overwrites any
+	// updated_at_cursor_key the caller set in actionValues; `now` is still the
+	// business timestamp used for the receipt appended below.
+	action["updated_at_cursor_key"] = ledgerTimestampCursorKeyFromTime(time.Now().UTC())
 	columns := []string{
 		"id", "session_id", "tool_use_id", "canonical_event_type", "adapter_event_name", "correlation_key",
 		"tool_name", "provider", "operation", "operation_class", "resource_class", "resource_id", "parameters_redacted_json", "parameters_hash",

@@ -2,6 +2,7 @@ package managedstream
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -265,6 +266,94 @@ func TestFlushDrainsBacklogInOneCall(t *testing.T) {
 	}
 	if posts != 3 {
 		t.Fatalf("posts = %d, want 3 cursor pages of at most 4 actions", posts)
+	}
+}
+
+func TestFlushReexportsRowsThatCommitAfterCursorAdvance(t *testing.T) {
+	store, dbPath := testStore(t)
+	saveTestDecision(t, store, "session-1", "toolu_1")
+
+	var mu sync.Mutex
+	shippedToolUseIDs := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload Payload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode payload: %v", err)
+		}
+		mu.Lock()
+		for _, action := range payload.Actions {
+			if id, ok := action["tool_use_id"].(string); ok {
+				shippedToolUseIDs[id] = true
+			}
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	flush := func() {
+		t.Helper()
+		if err := Flush(context.Background(), Options{
+			DBPath:         dbPath,
+			StatePath:      statePath,
+			CloudURL:       server.URL,
+			InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+			InstallToken:   "test-install-token",
+			HTTPClient:     server.Client(),
+		}); err != nil {
+			t.Fatalf("Flush() error = %v", err)
+		}
+	}
+
+	flush()
+
+	// Simulate the concurrency race: a hook write captures its timestamp
+	// before the flush above reads the queue, but only COMMITs afterwards.
+	// Its cursor key then sorts BEFORE the cursor the flush persisted.
+	saveTestDecision(t, store, "session-1", "toolu_late")
+	backdated := time.Now().UTC().Add(-5 * time.Second).Format("2006-01-02T15:04:05.000000000Z07:00")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if _, err := db.Exec(
+		`update authorization_actions set updated_at_cursor_key = ? where tool_use_id = 'toolu_late'`,
+		backdated,
+	); err != nil {
+		t.Fatalf("backdate cursor key: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	flush()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !shippedToolUseIDs["toolu_late"] {
+		t.Fatal("late-committed row was never exported: strict cursor skipped it")
+	}
+}
+
+func TestCursorAdvancesIsMonotonic(t *testing.T) {
+	base := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	persisted := State{UpdatedAfter: &base, ActionID: "act_b"}
+
+	if cursorAdvances(persisted, base.Add(-time.Second), "act_z") {
+		t.Fatal("cursor must not regress behind the persisted timestamp (poison-row skip would be undone)")
+	}
+	if cursorAdvances(persisted, base, "act_a") {
+		t.Fatal("cursor must not regress behind the persisted id tiebreak")
+	}
+	if !cursorAdvances(persisted, base, "act_c") {
+		t.Fatal("same timestamp with a later id must advance")
+	}
+	if !cursorAdvances(persisted, base.Add(time.Second), "") {
+		t.Fatal("later timestamp must advance")
+	}
+	if !cursorAdvances(State{}, base, "act_a") {
+		t.Fatal("empty state must always advance")
 	}
 }
 
