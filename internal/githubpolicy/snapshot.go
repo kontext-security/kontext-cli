@@ -109,6 +109,14 @@ type Snapshot struct {
 	// unchanged hash.
 	Hash  string `json:"hash"`
 	Rules []Rule `json:"rules"`
+	// PayloadCaptureMode is the org's tool-payload capture directive
+	// ("omitted" | "summary" | "full"). Absent on pre-capture servers.
+	// Deliberately EXCLUDED from Hash (server-side decision), so a mode
+	// flip arrives on a snapshot whose hash is unchanged — consumers must
+	// not gate mode application on hash inequality (see Cache.Apply).
+	// Normalize via payloadcapture.NormalizeMode; unknown values fall back
+	// to "summary" (never capture on an unrecognized directive).
+	PayloadCaptureMode string `json:"payloadCaptureMode,omitempty"`
 	// EndpointDirectory is this endpoint's resolved directory identity (v3
 	// only; nil on v2 or when the request carried no installation id).
 	EndpointDirectory *EndpointDirectory `json:"endpointDirectory,omitempty"`

@@ -17,6 +17,7 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/installation"
 	"github.com/kontext-security/kontext-cli/internal/managedconfig"
 	"github.com/kontext-security/kontext-cli/internal/managedstream"
+	"github.com/kontext-security/kontext-cli/internal/payloadcapture"
 	"github.com/kontext-security/kontext-cli/internal/runtimehost"
 )
 
@@ -140,9 +141,16 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	}
 	defer host.Close(context.Background())
 
+	// Restore the capture mode from the persisted snapshot before the first
+	// fetch completes, so an offline restart keeps the org's last-known
+	// directive instead of silently reverting to the "summary" default.
+	if snapshot, _, ok := policyCache.CurrentSnapshot(); ok {
+		host.SetPayloadCaptureMode(payloadcapture.NormalizeMode(snapshot.PayloadCaptureMode))
+	}
+
 	policyCtx, stopPolicyRefresh := context.WithCancel(ctx)
 	defer stopPolicyRefresh()
-	go runGithubPolicy(policyCtx, opts, policyCache, installationState.InstallationID)
+	go runGithubPolicy(policyCtx, opts, policyCache, installationState.InstallationID, host.SetPayloadCaptureMode)
 
 	streamCtx, stopStream := context.WithCancel(ctx)
 	defer stopStream()
@@ -273,12 +281,12 @@ func loadManagedConfig(ctx context.Context) (managedconfig.LoadedConfig, string,
 	return loadedConfig, installToken, nil
 }
 
-func runGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache, installationID string) {
+func runGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache, installationID string, applyCaptureMode func(payloadcapture.Mode)) {
 	interval := opts.GithubPolicyInterval
 	if interval == 0 {
 		interval = githubpolicy.DefaultIntervalFromEnv()
 	}
-	refreshGithubPolicy(ctx, opts, cache, installationID)
+	refreshGithubPolicy(ctx, opts, cache, installationID, applyCaptureMode)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -286,12 +294,12 @@ func runGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolic
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			refreshGithubPolicy(ctx, opts, cache, installationID)
+			refreshGithubPolicy(ctx, opts, cache, installationID, applyCaptureMode)
 		}
 	}
 }
 
-func refreshGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache, installationID string) {
+func refreshGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubpolicy.Cache, installationID string, applyCaptureMode func(payloadcapture.Mode)) {
 	loadedConfig, installToken, err := loadManagedConfig(ctx)
 	if err != nil {
 		cache.MarkFetchFailed(err)
@@ -306,6 +314,12 @@ func refreshGithubPolicy(ctx context.Context, opts DaemonOptions, cache *githubp
 	}
 	if err := cache.Apply(snapshot, time.Now().UTC()); err != nil {
 		opts.Diagnostic.Printf("github policy persist: %v\n", err)
+	}
+	// Applied from the freshly fetched snapshot, not re-read from the cache:
+	// payloadCaptureMode is excluded from the snapshot hash, so the fetched
+	// value must win regardless of any hash-based short-circuit.
+	if applyCaptureMode != nil {
+		applyCaptureMode(payloadcapture.NormalizeMode(snapshot.PayloadCaptureMode))
 	}
 }
 

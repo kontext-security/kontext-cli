@@ -102,14 +102,20 @@ func (c *Cache) LoadPersisted() error {
 	return nil
 }
 
-// Apply installs a freshly fetched snapshot. When the hash is unchanged the
-// rules are not re-applied or re-persisted; only freshness is updated.
+// Apply installs a freshly fetched snapshot. When the identity is unchanged
+// the rules are not re-applied or re-persisted; only freshness is updated.
 func (c *Cache) Apply(snapshot Snapshot, fetchedAt time.Time) error {
 	c.mu.Lock()
 	// SchemaVersion is part of the identity check so a v2→v3 transition is
 	// adopted even if the server ever produced colliding hashes across
 	// versions — the CLI must not depend on that cross-version promise.
-	unchanged := c.loaded && c.snapshot.Hash == snapshot.Hash && c.snapshot.SchemaVersion == snapshot.SchemaVersion
+	// PayloadCaptureMode is excluded from the server-side hash, so it needs
+	// its own identity term: a mode flip arrives on an unchanged hash and
+	// must still be adopted and persisted to survive an offline restart.
+	unchanged := c.loaded &&
+		c.snapshot.Hash == snapshot.Hash &&
+		c.snapshot.SchemaVersion == snapshot.SchemaVersion &&
+		c.snapshot.PayloadCaptureMode == snapshot.PayloadCaptureMode
 	if !unchanged {
 		c.snapshot = snapshot
 	}

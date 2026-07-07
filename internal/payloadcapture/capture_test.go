@@ -404,3 +404,25 @@ func TestTruncatedPayloadAlwaysCutsContent(t *testing.T) {
 		t.Fatalf("preview content %q is not a prefix of the canonical content", content)
 	}
 }
+
+func TestNormalizeMode(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		raw  string
+		want Mode
+	}{
+		{"omitted", ModeOmitted},
+		{"summary", ModeSummary},
+		{"full", ModeFull},
+		{"", ModeSummary},     // pre-capture server: field absent
+		{"FULL", ModeSummary}, // case-sensitive: no fuzzy matching toward capture
+		{"everything", ModeSummary},
+		{" full", ModeSummary},
+	}
+	for _, tc := range cases {
+		if got := NormalizeMode(tc.raw); got != tc.want {
+			t.Errorf("NormalizeMode(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}

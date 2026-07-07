@@ -23,6 +23,7 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/guard/judgeruntime"
 	"github.com/kontext-security/kontext-cli/internal/hook"
 	"github.com/kontext-security/kontext-cli/internal/localruntime"
+	"github.com/kontext-security/kontext-cli/internal/payloadcapture"
 	"github.com/kontext-security/kontext-cli/internal/runtimecore"
 )
 
@@ -235,6 +236,15 @@ func clientResultTransform(mode guardhookruntime.Mode) func(hook.Event, hook.Res
 		result.Decision = hook.DecisionAllow
 		return result
 	}
+}
+
+// SetPayloadCaptureMode forwards the org's payload-capture directive to the
+// guard server's store. Safe on a nil host (no-op).
+func (h *Host) SetPayloadCaptureMode(mode payloadcapture.Mode) {
+	if h == nil || h.server == nil {
+		return
+	}
+	h.server.SetPayloadCaptureMode(mode)
 }
 
 func (h *Host) Close(ctx context.Context) error {

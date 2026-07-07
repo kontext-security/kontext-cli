@@ -22,6 +22,18 @@ const (
 	ModeFull Mode = "full"
 )
 
+// NormalizeMode maps an org-policy mode string to a Mode. Absent ("") or
+// unrecognized values normalize to ModeSummary: an unknown mode must never
+// mean "send content".
+func NormalizeMode(raw string) Mode {
+	switch Mode(raw) {
+	case ModeOmitted, ModeSummary, ModeFull:
+		return Mode(raw)
+	default:
+		return ModeSummary
+	}
+}
+
 // FailureReason explains a capture_failed record. Failures never carry
 // payload content.
 type FailureReason string

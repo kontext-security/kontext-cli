@@ -258,3 +258,46 @@ func TestCaptureFailedFallbackLiteralMatchesWireFormat(t *testing.T) {
 		t.Fatalf("fallback literal diverged from wire format:\nliteral: %s\nwire:    %s", fallback, canonical)
 	}
 }
+
+// The managed daemon flips the capture mode via SetPayloadCaptureMode whenever
+// the policy snapshot refreshes (~60s). The store must read the CURRENT mode
+// per recorded event — no restart, no per-session pinning.
+func TestSaveDecisionModeChangeAppliesToNextEvent(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	capturedProposedRows := func() int {
+		t.Helper()
+		var count int
+		err := store.db.QueryRowContext(context.Background(),
+			"select count(*) from authorization_actions where canonical_event_type = 'request.proposed' and tool_input_captured_json is not null",
+		).Scan(&count)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+
+	// Default (summary): nothing captured.
+	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{"command": "git status"}, nil)
+	if got := capturedProposedRows(); got != 0 {
+		t.Fatalf("captured rows before mode flip = %d, want 0", got)
+	}
+
+	// Snapshot flips to full: the very next event captures.
+	store.SetPayloadCaptureMode(payloadcapture.ModeFull)
+	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{"command": "git diff"}, nil)
+	if got := capturedProposedRows(); got != 1 {
+		t.Fatalf("captured rows after flip to full = %d, want 1", got)
+	}
+
+	// Snapshot flips back to summary: capture stops again.
+	store.SetPayloadCaptureMode(payloadcapture.ModeSummary)
+	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{"command": "git log"}, nil)
+	if got := capturedProposedRows(); got != 1 {
+		t.Fatalf("captured rows after flip back to summary = %d, want 1", got)
+	}
+}
