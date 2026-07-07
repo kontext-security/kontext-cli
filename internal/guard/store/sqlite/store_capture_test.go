@@ -106,8 +106,13 @@ func TestSaveDecisionDefaultModeWritesNoCapturedPayloads(t *testing.T) {
 	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{
 		"command": "git status",
 	}, nil)
+	saveCaptureFixtureDecision(t, store, "PostToolUse", map[string]any{
+		"command": "git status",
+	}, map[string]any{
+		"content": "clean working tree",
+	})
 
-	for _, canonicalEvent := range []string{"request.proposed", "request.decided"} {
+	for _, canonicalEvent := range []string{"request.proposed", "request.decided", "request.observed"} {
 		for _, column := range []string{"tool_input_captured_json", "tool_output_captured_json"} {
 			if value := capturedColumn(t, store, canonicalEvent, column); value.Valid {
 				t.Fatalf("%s.%s = %q, want NULL in default mode", canonicalEvent, column, value.String)
@@ -233,5 +238,23 @@ select count(*) from pragma_table_info('authorization_actions') where name = ?
 
 	if value := capturedColumn(t, store, "request.decided", "tool_input_captured_json"); value.Valid {
 		t.Fatalf("pre-capture row gained a value: %q", value.String)
+	}
+}
+
+// capturedRecordJSON falls back to a hardcoded capture_failed literal when
+// MarshalJSON fails — a path unreachable for records produced by Capture, so
+// it cannot be exercised end-to-end. Pin the literal to the wire format the
+// package actually emits so the two cannot drift apart silently.
+func TestCaptureFailedFallbackLiteralMatchesWireFormat(t *testing.T) {
+	canonical, err := payloadcapture.Payload{
+		Mode:   "capture_failed",
+		Reason: payloadcapture.ReasonSerializationError,
+	}.MarshalJSON()
+	if err != nil {
+		t.Fatalf("marshal canonical capture_failed record: %v", err)
+	}
+	const fallback = `{"mode":"capture_failed","reason":"serialization_error"}`
+	if string(canonical) != fallback {
+		t.Fatalf("fallback literal diverged from wire format:\nliteral: %s\nwire:    %s", fallback, canonical)
 	}
 }
