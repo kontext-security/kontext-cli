@@ -127,7 +127,13 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		Mode:               mode,
 		Diagnostic:         opts.Diagnostic,
 		SkipInitialSession: true,
-		DisableAsyncIngest: true,
+		// Async ingest: non-blocking hooks (PostToolUse, session lifecycle)
+		// are acked immediately and written in the background. Synchronous
+		// writes queue on the store's single SQLite connection, and under a
+		// concurrent subagent burst that queueing blew the hook connection
+		// deadline — Claude Code timed the hook out and the event was lost
+		// (ENG-474). Decision-gating hooks (PreToolUse, UserPromptSubmit)
+		// stay synchronous, and Shutdown drains pending writes.
 	})
 	if err != nil {
 		return err
