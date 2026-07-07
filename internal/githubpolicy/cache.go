@@ -109,12 +109,14 @@ func (c *Cache) Apply(snapshot Snapshot, fetchedAt time.Time) error {
 	// SchemaVersion is part of the identity check so a v2→v3 transition is
 	// adopted even if the server ever produced colliding hashes across
 	// versions — the CLI must not depend on that cross-version promise.
-	// PayloadCaptureMode is excluded from the server-side hash, so it needs
-	// its own identity term: a mode flip arrives on an unchanged hash and
-	// must still be adopted and persisted to survive an offline restart.
+	// Mode and PayloadCaptureMode are excluded from the server-side hash, so
+	// they need their own identity terms: a directive flip arrives on an
+	// unchanged hash and must still be adopted and persisted to survive an
+	// offline restart.
 	unchanged := c.loaded &&
 		c.snapshot.Hash == snapshot.Hash &&
 		c.snapshot.SchemaVersion == snapshot.SchemaVersion &&
+		c.snapshot.Mode == snapshot.Mode &&
 		c.snapshot.PayloadCaptureMode == snapshot.PayloadCaptureMode
 	if !unchanged {
 		c.snapshot = snapshot
