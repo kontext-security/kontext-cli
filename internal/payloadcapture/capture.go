@@ -220,8 +220,12 @@ func truncatedPayload(redactedCanonical []byte, changed bool, sourceSha string, 
 
 	// fits is monotone in the cut (larger preview, larger record), so
 	// sort.Search finds the first cut that no longer fits; the largest
-	// fitting cut is its boundary-snapped predecessor.
-	firstTooBig := sort.Search(len(redactedCanonical)+1, func(cut int) bool {
+	// fitting cut is its boundary-snapped predecessor. The search space
+	// deliberately stops at len-1: a full_truncated record must always
+	// remove at least one byte, so the mode stays honest even if the
+	// string-preview envelope happens to be smaller than the full record's
+	// object envelope for the same content.
+	firstTooBig := sort.Search(len(redactedCanonical), func(cut int) bool {
 		return !fits(utf8Boundary(redactedCanonical, cut))
 	})
 

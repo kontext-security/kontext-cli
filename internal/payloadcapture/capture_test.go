@@ -3,6 +3,7 @@ package payloadcapture
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -373,5 +374,33 @@ func TestCaptureIsDeterministic(t *testing.T) {
 		if !bytes.Equal(first, next) {
 			t.Fatalf("capture output diverged:\n%s\n%s", first, next)
 		}
+	}
+}
+
+// Regression: when the string-preview envelope is smaller than the full
+// record's object envelope, every cut position — including the full content
+// length — can fit under MaxPayloadBytes. A full_truncated record must still
+// remove at least one byte: emitting the complete content under a truncation
+// marker would misstate what consumers received.
+func TestTruncatedPayloadAlwaysCutsContent(t *testing.T) {
+	t.Parallel()
+
+	// Small canonical content: every cut fits, so an unbounded search would
+	// pick the full length and cut nothing.
+	canonical := []byte(`{"command":"git status"}`)
+	payload := truncatedPayload(canonical, false, "test-sha", len(canonical))
+	if payload.Mode != modeFullTruncated {
+		t.Fatalf("Mode = %q, want %q", payload.Mode, modeFullTruncated)
+	}
+	marker := "[truncated " + strconv.Itoa(len(canonical)) + " bytes total]"
+	content, found := strings.CutSuffix(payload.Preview, marker)
+	if !found {
+		t.Fatalf("Preview %q does not end in marker %q", payload.Preview, marker)
+	}
+	if len(content) >= len(canonical) {
+		t.Fatalf("preview content is %d bytes, want strictly less than the %d-byte canonical content", len(content), len(canonical))
+	}
+	if !strings.HasPrefix(string(canonical), content) {
+		t.Fatalf("preview content %q is not a prefix of the canonical content", content)
 	}
 }
