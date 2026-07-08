@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
+	"github.com/kontext-security/kontext-cli/internal/providerpolicy"
 )
 
 func TestSaveDecisionRecordsGithubDryRunRows(t *testing.T) {
@@ -30,17 +30,17 @@ func TestSaveDecisionRecordsGithubDryRunRows(t *testing.T) {
 		Reason:     "observed",
 		ReasonCode: "deterministic_allow",
 		RiskEvent:  risk.RiskEvent{CommandSummary: "git push origin main"},
-		ProviderPolicy: []risk.ProviderPolicyEvaluations{{Provider: "github", Evaluations: []githubpolicy.Evaluation{{
-			Request:    githubpolicy.Request{Action: "github.repo.write", Resource: "acme/api", BranchOrRef: "main"},
+		ProviderPolicy: []risk.ProviderPolicyEvaluations{{Provider: "github", Evaluations: []providerpolicy.Evaluation{{
+			Request:    providerpolicy.Request{Action: "github.repo.write", Resource: "acme/api", BranchOrRef: "main"},
 			Result:     "deny",
-			ReasonCode: githubpolicy.ReasonCodeDeny,
+			ReasonCode: providerpolicy.ReasonCodeDeny,
 			Reason:     "denied by org-layer deny rule on github.repo.write @ acme/api",
-			MatchedRules: []githubpolicy.MatchedRule{
+			MatchedRules: []providerpolicy.MatchedRule{
 				{ID: "rule-deny", Layer: "org", Effect: "deny", Decided: true},
 				{ID: "rule-allow", Layer: "org", Effect: "allow"},
 			},
 			DecidingRuleID: "rule-deny",
-			Mode:           githubpolicy.ModeObserve,
+			Mode:           providerpolicy.ModeObserve,
 			Epoch:          5,
 			Hash:           "hash-5",
 		}}}},
@@ -80,7 +80,7 @@ func TestSaveDecisionRecordsGithubDryRunRows(t *testing.T) {
 
 	expectations := map[string]any{
 		"decision_result": "deny",
-		"reason_code":     githubpolicy.ReasonCodeDeny,
+		"reason_code":     providerpolicy.ReasonCodeDeny,
 		"provider":        "github",
 		"resource_class":  "repo",
 		"resource_id":     "acme/api",
@@ -168,10 +168,10 @@ func TestDryRunRowsDoNotCountAsCriticalActions(t *testing.T) {
 	}
 	decision := risk.RiskDecision{
 		Decision: risk.DecisionAllow,
-		ProviderPolicy: []risk.ProviderPolicyEvaluations{{Provider: "github", Evaluations: []githubpolicy.Evaluation{{
-			Request:    githubpolicy.Request{Action: "github.repo.write", Resource: "acme/api"},
+		ProviderPolicy: []risk.ProviderPolicyEvaluations{{Provider: "github", Evaluations: []providerpolicy.Evaluation{{
+			Request:    providerpolicy.Request{Action: "github.repo.write", Resource: "acme/api"},
 			Result:     "deny",
-			ReasonCode: githubpolicy.ReasonCodeDeny,
+			ReasonCode: providerpolicy.ReasonCodeDeny,
 			Reason:     "would deny",
 			Epoch:      5,
 			Hash:       "hash-5",
@@ -254,13 +254,13 @@ func TestSaveDecisionRecordsHubspotDryRunRow(t *testing.T) {
 	}
 	decision := risk.RiskDecision{
 		Decision: risk.DecisionAllow,
-		ProviderPolicy: []risk.ProviderPolicyEvaluations{{Provider: "hubspot", Evaluations: []githubpolicy.Evaluation{{
-			Request:        githubpolicy.Request{Action: "hubspot.object.write", Resource: "deals"},
+		ProviderPolicy: []risk.ProviderPolicyEvaluations{{Provider: "hubspot", Evaluations: []providerpolicy.Evaluation{{
+			Request:        providerpolicy.Request{Action: "hubspot.object.write", Resource: "deals"},
 			Result:         "deny",
-			ReasonCode:     githubpolicy.ReasonCodeDeny,
+			ReasonCode:     providerpolicy.ReasonCodeDeny,
 			Reason:         "would deny",
 			DecidingRuleID: "rule-deny-deals",
-			Mode:           githubpolicy.ModeObserve,
+			Mode:           providerpolicy.ModeObserve,
 			Epoch:          2,
 			Hash:           "hash-2",
 			SchemaVersion:  "hubspot-policy-snapshot-v1",
