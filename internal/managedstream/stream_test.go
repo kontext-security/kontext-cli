@@ -19,6 +19,23 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 )
 
+func TestDefaultTimeoutFromEnv(t *testing.T) {
+	t.Setenv(envTimeout, "")
+	if got := DefaultTimeoutFromEnv(); got != 30*time.Second {
+		t.Fatalf("DefaultTimeoutFromEnv() = %s, want 30s", got)
+	}
+
+	t.Setenv(envTimeout, "45s")
+	if got := DefaultTimeoutFromEnv(); got != 45*time.Second {
+		t.Fatalf("DefaultTimeoutFromEnv(valid) = %s, want 45s", got)
+	}
+
+	t.Setenv(envTimeout, "garbage")
+	if got := DefaultTimeoutFromEnv(); got != DefaultTimeout {
+		t.Fatalf("DefaultTimeoutFromEnv(invalid) = %s, want %s", got, DefaultTimeout)
+	}
+}
+
 func TestFlushPostsLedgerBatchWithInstallationIdentity(t *testing.T) {
 	store, dbPath := testStore(t)
 	saveTestDecision(t, store, "session-1", "toolu_1")
