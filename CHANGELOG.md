@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.14.0](https://github.com/kontext-security/kontext-cli/compare/v0.13.0...v0.14.0) (2026-07-07)
+
+
+### Features
+
+* **githubpolicy:** snapshot v3 — group layer and endpoint directory identity ([#347](https://github.com/kontext-security/kontext-cli/issues/347)) ([6e7bda3](https://github.com/kontext-security/kontext-cli/commit/6e7bda3aadacf65973b5a994a931cc503d4dbf5d))
+* **managed:** report device user_email in hosted batches ([#346](https://github.com/kontext-security/kontext-cli/issues/346)) ([ff45775](https://github.com/kontext-security/kontext-cli/commit/ff45775e95e3bd67942fc44f79863bf37c8c37dd))
+
+
+### Bug Fixes
+
+* **daemon:** ack non-blocking hooks before the ledger write ([#362](https://github.com/kontext-security/kontext-cli/issues/362)) ([dad4e4d](https://github.com/kontext-security/kontext-cli/commit/dad4e4defce3014f1cc6b58ce6bcc55fabb9fdc0))
+* **managedstream:** drain the full export backlog in one flush ([#360](https://github.com/kontext-security/kontext-cli/issues/360)) ([f0e25a5](https://github.com/kontext-security/kontext-cli/commit/f0e25a515b0e6fa278e958b6f43916218519a153))
+* **managedstream:** hold the persisted export cursor back by a safety lag ([#361](https://github.com/kontext-security/kontext-cli/issues/361)) ([ebb2cf1](https://github.com/kontext-security/kontext-cli/commit/ebb2cf142ad66abb9dd0eec06c6c344465942946))
+
 ## [0.13.0](https://github.com/kontext-security/kontext-cli/compare/v0.12.1...v0.13.0) (2026-06-29)
 
 
