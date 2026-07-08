@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/kontext-security/kontext-cli/compare/v0.14.0...v0.14.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **managedstream:** raise flush client timeout to 30s, env-tunable (ENG-514) ([#368](https://github.com/kontext-security/kontext-cli/issues/368)) ([e38621f](https://github.com/kontext-security/kontext-cli/commit/e38621fbb551e6261f6fd61f428f3e4896ba2845))
+
 ## [0.14.0](https://github.com/kontext-security/kontext-cli/compare/v0.13.0...v0.14.0) (2026-07-07)
 
 
