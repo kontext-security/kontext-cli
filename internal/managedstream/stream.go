@@ -28,6 +28,7 @@ const (
 	DefaultBatchLimit        = 100
 	MaxPayloadBytes          = 192 * 1024
 	DefaultInterval          = 10 * time.Second
+	DefaultTimeout           = 30 * time.Second
 	DefaultHeartbeatInterval = 60 * time.Second
 
 	// cursorSafetyLag holds the persisted export cursor this far behind the
@@ -47,6 +48,7 @@ const (
 
 	envStatePath = "KONTEXT_MANAGED_STREAM_STATE"
 	envInterval  = "KONTEXT_MANAGED_STREAM_INTERVAL"
+	envTimeout   = "KONTEXT_MANAGED_STREAM_TIMEOUT"
 )
 
 var hostedErrorSecretPattern = regexp.MustCompile(`(?i)("(?:[^"]*(?:api[_-]?key|authorization|client[_-]?secret|credential|install[_-]?token|password|secret|token)[^"]*)"\s*:\s*")([^"]*)(")`)
@@ -331,7 +333,7 @@ func post(ctx context.Context, opts Options, body []byte) error {
 
 	client := opts.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second}
+		client = &http.Client{Timeout: DefaultTimeoutFromEnv()}
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -525,6 +527,15 @@ func DefaultIntervalFromEnv() time.Duration {
 		}
 	}
 	return DefaultInterval
+}
+
+func DefaultTimeoutFromEnv() time.Duration {
+	if value := strings.TrimSpace(os.Getenv(envTimeout)); value != "" {
+		if parsed, err := time.ParseDuration(value); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return DefaultTimeout
 }
 
 func heartbeatInterval(value time.Duration) time.Duration {
