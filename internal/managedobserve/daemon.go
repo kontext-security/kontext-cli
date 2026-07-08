@@ -327,8 +327,14 @@ func refreshProviderPolicy(ctx context.Context, opts DaemonOptions, config provi
 	}
 	snapshot, err := providerpolicy.FetchSnapshot(ctx, opts.PolicyHTTPClient, loadedConfig.Config.CloudURL, installToken, installationID, config)
 	if errors.Is(err, providerpolicy.ErrNotConfigured) {
-		// The org has not activated this provider — no policy to sync and
-		// nothing to alarm on. The cache keeps whatever state it had.
+		// Contract: the cloud signals "provider deactivated / no rules" with an
+		// EMPTY snapshot (epoch 0, zero rules), never a 404. A 404 therefore
+		// means the route does not exist yet (older cloud during rollout —
+		// nothing was ever cached) or a transient infra blip — in which case
+		// wiping the persisted snapshot would drop valid policy until the next
+		// successful refresh (or forever, if the daemon restarts first). Keep
+		// whatever is cached, mark it stale, and skip the per-tick alarm log.
+		cache.MarkFetchFailed(err)
 		return
 	}
 	if err != nil {
