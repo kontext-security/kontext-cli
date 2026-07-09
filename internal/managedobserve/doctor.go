@@ -96,6 +96,15 @@ func printStatus(out io.Writer, installedVersion string, opts doctorOptions) (st
 			}
 		} else {
 			fmt.Fprintln(out, "  daemon: running")
+			// A serving daemon with no live status breadcrumb predates the
+			// breadcrumb feature — which makes it older than the installed
+			// binary by definition. This is exactly the first upgrade into
+			// this feature, so it must be fixable; a verified restart of an
+			// already-current daemon is the harmless worst case.
+			if comparableVersion(installedVersion) {
+				fmt.Fprintf(out, "  WARNING: daemon version is unknown — it likely predates v%s; run 'kontext doctor --fix' to restart it\n", installedVersion)
+				staleDaemon = true
+			}
 		}
 	} else {
 		fmt.Fprintln(out, "  daemon: not running (it starts with your next Claude Code session)")

@@ -95,7 +95,7 @@ func TestPrintStatusDaemonDevVersionDoesNotWarn(t *testing.T) {
 	}
 }
 
-func TestPrintStatusDaemonDeadPIDFallsBackToPlainRunning(t *testing.T) {
+func TestPrintStatusDaemonDeadPIDTreatedAsUnknownAndFixable(t *testing.T) {
 	env := newDoctorTestEnv(t)
 	env.writeDaemonStatus(t, deadPID(t), "1.2.2")
 
@@ -103,14 +103,49 @@ func TestPrintStatusDaemonDeadPIDFallsBackToPlainRunning(t *testing.T) {
 	stale := printStatus(&out, "1.2.3", env.options())
 
 	output := out.String()
-	if stale {
-		t.Fatal("staleDaemon = true, want false")
+	if !stale {
+		t.Fatal("staleDaemon = false, want true")
 	}
 	if !strings.Contains(output, "  daemon: running\n") {
 		t.Fatalf("output = %q, want plain running line", output)
 	}
-	if strings.Contains(output, "pid ") || strings.Contains(output, "WARNING: daemon is running") {
-		t.Fatalf("output = %q, want no stale dead-pid status", output)
+	if strings.Contains(output, "pid ") {
+		t.Fatalf("output = %q, want no dead-pid status details", output)
+	}
+	if !strings.Contains(output, "WARNING: daemon version is unknown") {
+		t.Fatalf("output = %q, want unknown-version warning", output)
+	}
+}
+
+func TestPrintStatusDaemonWithoutBreadcrumbIsFixable(t *testing.T) {
+	// A serving daemon that never wrote daemon-status.json predates the
+	// breadcrumb feature — the first-upgrade case doctor --fix must handle.
+	env := newDoctorTestEnv(t)
+
+	var out bytes.Buffer
+	stale := printStatus(&out, "1.2.3", env.options())
+
+	output := out.String()
+	if !stale {
+		t.Fatal("staleDaemon = false, want true")
+	}
+	if !strings.Contains(output, "WARNING: daemon version is unknown — it likely predates v1.2.3") {
+		t.Fatalf("output = %q, want unknown-version warning", output)
+	}
+}
+
+func TestPrintStatusDaemonWithoutBreadcrumbDevInstallDoesNotWarn(t *testing.T) {
+	env := newDoctorTestEnv(t)
+
+	var out bytes.Buffer
+	stale := printStatus(&out, "dev", env.options())
+
+	output := out.String()
+	if stale {
+		t.Fatal("staleDaemon = true, want false")
+	}
+	if strings.Contains(output, "WARNING: daemon version is unknown") {
+		t.Fatalf("output = %q, want no warning for dev install", output)
 	}
 }
 
