@@ -23,6 +23,9 @@ import (
 
 func TestDaemonPreservesHookSessionIDs(t *testing.T) {
 	socketPath, dbPath, stop := startTestDaemon(t)
+	if status := LoadDaemonStatus(dbPath); status == nil || status.PID == 0 {
+		t.Fatalf("LoadDaemonStatus = %+v, want non-zero PID", status)
+	}
 
 	client := localruntime.NewClient(socketPath)
 	client.Timeout = time.Second

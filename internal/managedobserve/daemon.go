@@ -153,6 +153,9 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		return err
 	}
 	defer host.Close(context.Background())
+	if err := WriteDaemonStatus(dbPath, binaryVersion); err != nil {
+		opts.Diagnostic.Printf("write daemon-status breadcrumb: %v\n", err)
+	}
 
 	// Restore the capture mode from the persisted snapshot before the first
 	// fetch completes, so an offline restart keeps the org's last-known
