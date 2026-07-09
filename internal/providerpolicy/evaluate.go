@@ -1,4 +1,4 @@
-package githubpolicy
+package providerpolicy
 
 import (
 	"fmt"
@@ -244,7 +244,7 @@ func ruleScopeSummary(rule Rule) string {
 	if rule.ActionName != nil {
 		action = *rule.ActionName
 	}
-	resource := "any repo"
+	resource := "any resource"
 	if rule.ResourceID != nil {
 		resource = *rule.ResourceID
 	}
