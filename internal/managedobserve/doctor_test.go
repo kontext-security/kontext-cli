@@ -117,6 +117,14 @@ func TestPrintStatusDaemonDeadPIDTreatedAsUnknownAndFixable(t *testing.T) {
 	}
 }
 
+func TestPIDAliveRejectsNonPositivePID(t *testing.T) {
+	for _, pid := range []int{0, -1} {
+		if pidAlive(pid) {
+			t.Fatalf("pidAlive(%d) = true, want false", pid)
+		}
+	}
+}
+
 func TestPrintStatusDaemonWithoutBreadcrumbIsFixable(t *testing.T) {
 	// A serving daemon that never wrote daemon-status.json predates the
 	// breadcrumb feature — the first-upgrade case doctor --fix must handle.
@@ -310,8 +318,11 @@ func (e doctorTestEnv) writeDaemonStatus(t *testing.T, pid int, version string) 
 	if err := os.MkdirAll(filepath.Dir(DaemonStatusPath(e.dbPath)), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	data := []byte(`{"version":"` + version + `","pid":` + itoa(pid) + `,"started_at":"2026-07-09T12:00:00Z"}` + "\n")
-	if err := os.WriteFile(DaemonStatusPath(e.dbPath), data, 0o600); err != nil {
+	if err := writeJSONBreadcrumb(DaemonStatusPath(e.dbPath), DaemonStatus{
+		Version:   version,
+		PID:       pid,
+		StartedAt: "2026-07-09T12:00:00Z",
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

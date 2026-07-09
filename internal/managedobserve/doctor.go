@@ -194,7 +194,10 @@ func WaitForDaemonRestart(ctx context.Context, dbPath, socketPath, wantVersion s
 }
 
 func pidAlive(pid int) bool {
-	if pid <= 0 || runtime.GOOS == "windows" {
+	if pid <= 0 {
+		return false
+	}
+	if runtime.GOOS == "windows" {
 		return true
 	}
 	proc, err := os.FindProcess(pid)

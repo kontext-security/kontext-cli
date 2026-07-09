@@ -17,52 +17,74 @@ const (
 	defaultBinaryWatchInterval = 2 * time.Minute
 )
 
+var errBinaryWatchdogUnsupported = errors.New("binary watchdog is only supported on macOS")
+
+type binaryWatchdogConfigValue struct {
+	exe         string
+	resolved    string
+	initialInfo os.FileInfo
+	interval    time.Duration
+	stat        func(string) (os.FileInfo, error)
+	resolve     func(string) (string, error)
+}
+
 // startBinaryWatchdog exits after launchd KeepAlive leaves an old deleted
 // binary running across brew upgrades; a clean exit lets launchd respawn the
 // new binary. Replacement is detected three ways: the resolved binary file
 // disappears (brew removes the old Cellar version dir), its inode changes
-// (in-place overwrite), or the launch path resolves to a different target
+// (inode replacement), or the launch path resolves to a different target
 // (brew retargets the bin symlink but keeps the old keg, e.g. under
 // HOMEBREW_NO_INSTALL_CLEANUP).
 func startBinaryWatchdog(ctx context.Context, log diagnostic.Logger) <-chan struct{} {
 	replaced := make(chan struct{}, 1)
-	exe, resolved, initialInfo, ok := binaryWatchdogConfig(log)
-	if !ok {
+	cfg, err := binaryWatchdogConfig()
+	if errors.Is(err, fs.ErrNotExist) {
+		// The old binary can disappear after launchd starts this process but
+		// before the watchdog captures its baseline. That is already proof of an
+		// upgrade, so exit instead of disabling the watchdog for this run.
+		signalBinaryReplaced(cfg.exe, log, replaced)
+		return replaced
+	}
+	if err != nil {
+		if !errors.Is(err, errBinaryWatchdogUnsupported) {
+			logAlways(log, "binary watchdog eligibility: %v\n", err)
+		}
 		close(replaced)
 		return replaced
 	}
-	// Capture the seams once so the goroutine never reads package state
-	// concurrently with tests swapping the seams.
-	stat := statPath
-	resolve := evalSymlinksPath
-	go runBinaryWatchdog(ctx, exe, resolved, initialInfo, binaryWatchInterval(), stat, resolve, log, replaced)
+	go runBinaryWatchdog(ctx, cfg, log, replaced)
 	return replaced
 }
 
-func binaryWatchdogConfig(log diagnostic.Logger) (string, string, os.FileInfo, bool) {
+func binaryWatchdogConfig() (binaryWatchdogConfigValue, error) {
+	cfg := binaryWatchdogConfigValue{
+		interval: binaryWatchInterval(),
+		stat:     statPath,
+		resolve:  evalSymlinksPath,
+	}
 	if runtimeGOOS != "darwin" {
-		return "", "", nil, false
+		return cfg, errBinaryWatchdogUnsupported
 	}
 	exe, err := executablePath()
+	cfg.exe = exe
 	if err != nil {
-		logAlways(log, "binary watchdog eligibility: executable path: %v\n", err)
-		return "", "", nil, false
+		return cfg, fmt.Errorf("executable path: %w", err)
 	}
-	resolved, err := evalSymlinksPath(exe)
+	resolved, err := cfg.resolve(exe)
+	cfg.resolved = resolved
 	if err != nil {
-		logAlways(log, "binary watchdog eligibility: resolve executable: %v\n", err)
-		return "", "", nil, false
+		return cfg, fmt.Errorf("resolve executable %s: %w", exe, err)
 	}
-	info, err := statPath(resolved)
+	info, err := cfg.stat(resolved)
+	cfg.initialInfo = info
 	if err != nil {
-		logAlways(log, "binary watchdog eligibility: stat %s: %v\n", resolved, err)
-		return "", "", nil, false
+		return cfg, fmt.Errorf("stat executable %s: %w", resolved, err)
 	}
-	return exe, resolved, info, true
+	return cfg, nil
 }
 
-func runBinaryWatchdog(ctx context.Context, exe, resolved string, initialInfo os.FileInfo, interval time.Duration, stat func(string) (os.FileInfo, error), resolve func(string) (string, error), log diagnostic.Logger, replaced chan<- struct{}) {
-	ticker := time.NewTicker(interval)
+func runBinaryWatchdog(ctx context.Context, cfg binaryWatchdogConfigValue, log diagnostic.Logger, replaced chan<- struct{}) {
+	ticker := time.NewTicker(cfg.interval)
 	defer ticker.Stop()
 	loggedStatErr := false
 	for {
@@ -70,27 +92,30 @@ func runBinaryWatchdog(ctx context.Context, exe, resolved string, initialInfo os
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			currentInfo, err := stat(resolved)
+			currentInfo, err := cfg.stat(cfg.resolved)
 			if errors.Is(err, fs.ErrNotExist) {
-				signalBinaryReplaced(resolved, log, replaced)
+				signalBinaryReplaced(cfg.resolved, log, replaced)
 				return
 			}
 			if err != nil {
+				// Log once per error burst; reset below so a recurrence
+				// after recovery is surfaced again.
 				if !loggedStatErr {
-					logAlways(log, "binary watchdog: stat %s: %v\n", resolved, err)
+					logAlways(log, "binary watchdog: stat %s: %v\n", cfg.resolved, err)
 					loggedStatErr = true
 				}
 				continue
 			}
-			if !os.SameFile(initialInfo, currentInfo) {
-				signalBinaryReplaced(resolved, log, replaced)
+			loggedStatErr = false
+			if !os.SameFile(cfg.initialInfo, currentInfo) {
+				signalBinaryReplaced(cfg.resolved, log, replaced)
 				return
 			}
 			// Resolve errors are transient (brew swaps the symlink
 			// non-atomically); only a successful resolve to a new target
 			// counts as replacement.
-			if current, err := resolve(exe); err == nil && current != resolved {
-				signalBinaryReplaced(resolved, log, replaced)
+			if current, err := cfg.resolve(cfg.exe); err == nil && current != cfg.resolved {
+				signalBinaryReplaced(cfg.resolved, log, replaced)
 				return
 			}
 		}

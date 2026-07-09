@@ -88,7 +88,12 @@ func doctorCmd() *cobra.Command {
 				// serving on the installed version.
 				waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer waitCancel()
-				status, err := managedobserve.WaitForDaemonRestart(waitCtx, managedobserve.DefaultDBPath(), managedobserve.DefaultSocketPath(), version)
+				status, err := managedobserve.WaitForDaemonRestart(
+					waitCtx,
+					managedobserve.DefaultDBPath(),
+					managedobserve.DefaultSocketPath(),
+					version,
+				)
 				if err != nil {
 					fmt.Fprintln(cmd.ErrOrStderr(), "daemon has not come back within 10s — it may still be restarting; re-run `kontext doctor` in a minute and check ~/Library/Logs/Kontext/managed-observe.log")
 					return err

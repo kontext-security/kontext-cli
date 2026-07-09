@@ -11,7 +11,6 @@ import (
 // serving. It is written once at daemon startup; readers must verify the PID is
 // alive before trusting it. A stale file from a dead daemon is expected and
 // harmless.
-// ponytail: PID-reuse false positive possible; add a heartbeat-refreshed updated_at if it ever bites.
 type DaemonStatus struct {
 	Version   string `json:"version"`
 	PID       int    `json:"pid"`
