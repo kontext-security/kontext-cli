@@ -404,10 +404,11 @@ func managedObserveDaemonCmd() *cobra.Command {
 				timeout = parsed
 			}
 			return managedobserve.RunDaemon(context.Background(), managedobserve.DaemonOptions{
-				SocketPath:  socketPath,
-				DBPath:      dbPath,
-				IdleTimeout: timeout,
-				Diagnostic:  diagnostic.New(cmd.ErrOrStderr(), diagnostic.EnabledFromEnv()),
+				SocketPath:    socketPath,
+				DBPath:        dbPath,
+				IdleTimeout:   timeout,
+				Diagnostic:    diagnostic.New(cmd.ErrOrStderr(), diagnostic.EnabledFromEnv()),
+				BinaryVersion: version,
 				// "cli-" prefix lets the dashboard distinguish self-serve brew
 				// installs (no MDM deployment-version marker) from packages.
 				FallbackDeploymentVersion: "cli-" + version,
