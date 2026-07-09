@@ -394,8 +394,10 @@ func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
 				"generatedAt":    "2026-06-15T00:00:00.000Z",
 			})
 		case "/api/v1/policy/hubspot/snapshot":
-			// Org without an activated HubSpot provider: the daemon must
-			// treat this as quietly-not-configured, not a fetch failure.
+			// A cloud without the hubspot snapshot route yet answers 404.
+			// Contract: deactivation is signaled by an EMPTY snapshot, never
+			// 404 — so the daemon treats this as quietly-not-configured
+			// (keep any cache, mark stale, back off polling), not a failure.
 			w.WriteHeader(http.StatusNotFound)
 		case "/api/v1/authorization-ledger/batches":
 			w.WriteHeader(http.StatusAccepted)

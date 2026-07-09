@@ -300,12 +300,23 @@ func newProviderPolicyCache(path, dbPath string, config providerpolicy.Config, d
 	return cache
 }
 
+// notConfiguredBackoffTicks stretches the refresh interval while the cloud
+// answers 404 (route not deployed for this provider yet): every endpoint
+// polling every provider each minute doubles fleet-wide policy traffic per
+// added provider for orgs that never activate it. At the default 60s tick
+// this backs off to ~10 minutes; the one-time activation lag when a provider
+// route first ships is acceptable.
+const notConfiguredBackoffTicks = 10
+
 func runProviderPolicy(ctx context.Context, opts DaemonOptions, config providerpolicy.Config, cache *providerpolicy.Cache, installationID string, applyCaptureMode func(payloadcapture.Mode)) {
 	interval := opts.PolicyRefreshInterval
 	if interval == 0 {
 		interval = providerpolicy.IntervalFromEnv(config)
 	}
-	refreshProviderPolicy(ctx, opts, config, cache, installationID, applyCaptureMode)
+	skipTicks := 0
+	if refreshProviderPolicy(ctx, opts, config, cache, installationID, applyCaptureMode) {
+		skipTicks = notConfiguredBackoffTicks - 1
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -313,17 +324,25 @@ func runProviderPolicy(ctx context.Context, opts DaemonOptions, config providerp
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			refreshProviderPolicy(ctx, opts, config, cache, installationID, applyCaptureMode)
+			if skipTicks > 0 {
+				skipTicks--
+				continue
+			}
+			if refreshProviderPolicy(ctx, opts, config, cache, installationID, applyCaptureMode) {
+				skipTicks = notConfiguredBackoffTicks - 1
+			}
 		}
 	}
 }
 
-func refreshProviderPolicy(ctx context.Context, opts DaemonOptions, config providerpolicy.Config, cache *providerpolicy.Cache, installationID string, applyCaptureMode func(payloadcapture.Mode)) {
+// refreshProviderPolicy fetches and applies one snapshot; it reports whether
+// the cloud answered not-configured (the caller backs off polling then).
+func refreshProviderPolicy(ctx context.Context, opts DaemonOptions, config providerpolicy.Config, cache *providerpolicy.Cache, installationID string, applyCaptureMode func(payloadcapture.Mode)) bool {
 	loadedConfig, installToken, err := loadManagedConfig(ctx)
 	if err != nil {
 		cache.MarkFetchFailed(err)
 		opts.Diagnostic.Printf("%s policy config reload: %v\n", config.ProviderKey, err)
-		return
+		return false
 	}
 	snapshot, err := providerpolicy.FetchSnapshot(ctx, opts.PolicyHTTPClient, loadedConfig.Config.CloudURL, installToken, installationID, config)
 	if errors.Is(err, providerpolicy.ErrNotConfigured) {
@@ -335,12 +354,12 @@ func refreshProviderPolicy(ctx context.Context, opts DaemonOptions, config provi
 		// successful refresh (or forever, if the daemon restarts first). Keep
 		// whatever is cached, mark it stale, and skip the per-tick alarm log.
 		cache.MarkFetchFailed(err)
-		return
+		return true
 	}
 	if err != nil {
 		cache.MarkFetchFailed(err)
 		opts.Diagnostic.Printf("%s policy refresh: %v\n", config.ProviderKey, err)
-		return
+		return false
 	}
 	if err := cache.Apply(snapshot, time.Now().UTC()); err != nil {
 		opts.Diagnostic.Printf("%s policy persist: %v\n", config.ProviderKey, err)
@@ -351,6 +370,7 @@ func refreshProviderPolicy(ctx context.Context, opts DaemonOptions, config provi
 	if applyCaptureMode != nil {
 		applyCaptureMode(payloadcapture.NormalizeMode(snapshot.PayloadCaptureMode))
 	}
+	return false
 }
 
 func runManagedStream(ctx context.Context, opts DaemonOptions, dbPath, installationID string) error {

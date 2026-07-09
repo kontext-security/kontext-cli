@@ -131,3 +131,56 @@ func TestDecideHookEvaluatesBothProvidersIndependently(t *testing.T) {
 		t.Fatalf("ProviderPolicy = %+v, want github only", decision.ProviderPolicy)
 	}
 }
+
+func TestDecideHookAnyEnforcingProviderDenyWins(t *testing.T) {
+	// Enforce-mode invariant: when two enforcing providers both evaluate one
+	// event, a deny from EITHER must deny the event — the first provider's
+	// allow must not shadow the second's deny. (Classifiers are disjoint
+	// today, so this guards the invariant for when they are not.)
+	denyAction := "hubspot.object.write"
+	provider := NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
+		ProviderPolicies: []ProviderPolicyBinding{
+			{
+				// A synthetic first provider whose classifier fires on the
+				// same event and whose enforcing snapshot allows everything.
+				Provider: "synthetic",
+				Snapshots: staticSnapshotProvider{
+					snapshot: providerpolicy.Snapshot{
+						SchemaVersion:  "synthetic-v1",
+						OrganizationID: "org_test",
+						ProviderKey:    "synthetic",
+						Mode:           providerpolicy.ModeEnforce,
+						Epoch:          1,
+						Hash:           "hash-s",
+						Rules:          []providerpolicy.Rule{{ID: "s-allow", Layer: providerpolicy.LayerOrg, SubjectID: "org_test", Effect: providerpolicy.EffectAllow}},
+					},
+					loaded: true,
+				},
+				Classify: func(risk.HookEvent) []providerpolicy.Request {
+					return []providerpolicy.Request{{Action: "synthetic.read"}}
+				},
+			},
+			HubspotPolicyBinding(staticSnapshotProvider{
+				snapshot: hubspotTestSnapshot(providerpolicy.ModeEnforce,
+					providerpolicy.Rule{ID: "hs-deny", Layer: providerpolicy.LayerOrg, SubjectID: "org_test", ActionName: &denyAction, Effect: providerpolicy.EffectDeny},
+					providerpolicy.Rule{ID: "hs-allow", Layer: providerpolicy.LayerOrg, SubjectID: "org_test", Effect: providerpolicy.EffectAllow},
+				),
+				loaded: true,
+			}),
+		},
+	})
+
+	decision, err := provider.DecideHook(context.Background(), hubspotWriteEvent())
+	if err != nil {
+		t.Fatalf("DecideHook() error = %v", err)
+	}
+	if decision.Decision != risk.DecisionDeny {
+		t.Fatalf("Decision = %v, want deny — the second enforcing provider's deny must win", decision.Decision)
+	}
+	if decision.RiskEvent.DecisionStage != "hubspot_policy_deny" {
+		t.Fatalf("DecisionStage = %q, want hubspot_policy_deny", decision.RiskEvent.DecisionStage)
+	}
+	if len(decision.ProviderPolicy) != 2 {
+		t.Fatalf("ProviderPolicy groups = %d, want both providers recorded", len(decision.ProviderPolicy))
+	}
+}

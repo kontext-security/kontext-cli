@@ -140,8 +140,8 @@ func (p RiskPolicyProvider) DecideHook(ctx context.Context, event risk.HookEvent
 	if policyResult.Decision == guardpolicy.DecisionDeny {
 		return withProviderPolicy(deterministicDenyDecision(riskEvent, policyResult), providerEvaluations), nil
 	}
-	if enforcing != nil {
-		return withProviderPolicy(providerPolicyDecision(riskEvent, *enforcing), providerEvaluations), nil
+	if len(enforcing) > 0 {
+		return withProviderPolicy(providerPolicyDecision(riskEvent, enforcing), providerEvaluations), nil
 	}
 	if p.judge == nil {
 		return withProviderPolicy(deterministicAllowDecision(riskEvent, policyResult), providerEvaluations), nil
@@ -165,11 +165,11 @@ func (p RiskPolicyProvider) DecideHook(ctx context.Context, event risk.HookEvent
 // rules are how device policy is enforced on this path.
 //
 // The second result is the first provider whose snapshot explicitly directs
-// enforcement AND produced evaluations for this event; nil otherwise. In the
-// observer pilot every snapshot is observe-mode, so it is always nil.
-func (p RiskPolicyProvider) evaluateProviderPolicies(event risk.HookEvent) ([]risk.ProviderPolicyEvaluations, *risk.ProviderPolicyEvaluations) {
+// enforcement AND produced evaluations for this event; empty otherwise. In
+// the observer pilot every snapshot is observe-mode, so it is always empty.
+func (p RiskPolicyProvider) evaluateProviderPolicies(event risk.HookEvent) ([]risk.ProviderPolicyEvaluations, []risk.ProviderPolicyEvaluations) {
 	var all []risk.ProviderPolicyEvaluations
-	var enforcing *risk.ProviderPolicyEvaluations
+	var enforcing []risk.ProviderPolicyEvaluations
 	for _, binding := range p.providerPolicies {
 		if binding.Snapshots == nil || binding.Classify == nil {
 			continue
@@ -194,12 +194,8 @@ func (p RiskPolicyProvider) evaluateProviderPolicies(event risk.HookEvent) ([]ri
 		}
 		group := risk.ProviderPolicyEvaluations{Provider: binding.Provider, Evaluations: evaluations}
 		all = append(all, group)
-		if snapshot.Enforce() && enforcing == nil {
-			// Point at a local copy, never into `all`'s backing array — a
-			// later append() may reallocate it and leave a slice-element
-			// pointer dangling at a stale array.
-			g := group
-			enforcing = &g
+		if snapshot.Enforce() {
+			enforcing = append(enforcing, group)
 		}
 	}
 	return all, enforcing
@@ -212,26 +208,31 @@ func withProviderPolicy(decision risk.RiskDecision, evaluations []risk.ProviderP
 
 // providerPolicyDecision is the enforce-mode path, reserved for after the
 // observer pilot: the synced policy outranks probabilistic signals, so its
-// verdict decides instead of the judge. Any denied action denies the event.
-func providerPolicyDecision(riskEvent risk.RiskEvent, provider risk.ProviderPolicyEvaluations) risk.RiskDecision {
-	for _, evaluation := range provider.Evaluations {
-		if evaluation.Result == providerpolicy.EffectDeny {
-			riskEvent.Decision = risk.DecisionDeny
-			riskEvent.ReasonCode = evaluation.ReasonCode
-			riskEvent.DecisionStage = provider.Provider + "_policy_deny"
-			return risk.RiskDecision{
-				Decision:   risk.DecisionDeny,
-				Reason:     evaluation.Reason,
-				ReasonCode: evaluation.ReasonCode,
-				GuardID:    evaluation.DecidingRuleID,
-				RiskEvent:  riskEvent,
+// verdict decides instead of the judge. ANY enforcing provider's denied
+// action denies the event — an event that classifies under two enforcing
+// providers must not slip through because the first one allowed it.
+func providerPolicyDecision(riskEvent risk.RiskEvent, enforcing []risk.ProviderPolicyEvaluations) risk.RiskDecision {
+	for _, provider := range enforcing {
+		for _, evaluation := range provider.Evaluations {
+			if evaluation.Result == providerpolicy.EffectDeny {
+				riskEvent.Decision = risk.DecisionDeny
+				riskEvent.ReasonCode = evaluation.ReasonCode
+				riskEvent.DecisionStage = provider.Provider + "_policy_deny"
+				return risk.RiskDecision{
+					Decision:   risk.DecisionDeny,
+					Reason:     evaluation.Reason,
+					ReasonCode: evaluation.ReasonCode,
+					GuardID:    evaluation.DecidingRuleID,
+					RiskEvent:  riskEvent,
+				}
 			}
 		}
 	}
-	allowed := provider.Evaluations[0]
+	first := enforcing[0]
+	allowed := first.Evaluations[0]
 	riskEvent.Decision = risk.DecisionAllow
 	riskEvent.ReasonCode = allowed.ReasonCode
-	riskEvent.DecisionStage = provider.Provider + "_policy_allow"
+	riskEvent.DecisionStage = first.Provider + "_policy_allow"
 	return risk.RiskDecision{
 		Decision:   risk.DecisionAllow,
 		Reason:     allowed.Reason,
