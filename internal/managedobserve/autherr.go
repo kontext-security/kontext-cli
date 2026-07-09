@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -43,16 +44,20 @@ func WriteStartupError(dbPath string, message string) error {
 
 func writeBreadcrumb(dbPath string, breadcrumb AuthError) error {
 	breadcrumb.At = time.Now().UTC().Format(time.RFC3339)
-	data, err := json.Marshal(breadcrumb)
+	return writeJSONBreadcrumb(AuthErrorPath(dbPath), breadcrumb)
+}
+
+func writeJSONBreadcrumb(path string, v any) error {
+	data, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	path := AuthErrorPath(dbPath)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	temp, err := os.CreateTemp(filepath.Dir(path), ".last-auth-error-*.tmp")
+	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	temp, err := os.CreateTemp(filepath.Dir(path), "."+stem+"-*.tmp")
 	if err != nil {
 		return err
 	}
