@@ -7,9 +7,11 @@ name: Auto-merge
 # main-only on purpose: required reviews only protect main, so arming a PR
 # that targets a feature branch (e.g. a Graphite stack child) would merge it
 # into its parent on CI green alone, with no human approval.
+# `edited` re-checks when a stacked child gets retargeted to main after its
+# parent merges — arming is idempotent, spurious title/body edits are cheap.
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    types: [opened, ready_for_review, edited]
 
 permissions: {}
 
