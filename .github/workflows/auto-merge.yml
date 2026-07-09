@@ -1,17 +1,23 @@
 name: Auto-merge
 
-# Arms GitHub auto-merge on every non-draft PR so it merges the moment
-# approval + required checks land. Uses the release app token because
-# merges armed with GITHUB_TOKEN don't trigger downstream workflows.
+# Arms GitHub auto-merge on every non-draft PR targeting main, so it merges
+# the moment approval + required checks land. Uses the release app token
+# because merges armed with GITHUB_TOKEN don't trigger downstream workflows.
+#
+# main-only on purpose: required reviews only protect main, so arming a PR
+# that targets a feature branch (e.g. a Graphite stack child) would merge it
+# into its parent on CI green alone, with no human approval.
+# `edited` re-checks when a stacked child gets retargeted to main after its
+# parent merges — arming is idempotent, spurious title/body edits are cheap.
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    types: [opened, ready_for_review, edited]
 
 permissions: {}
 
 jobs:
   arm:
-    if: ${{ !github.event.pull_request.draft }}
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.base.ref == 'main' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
