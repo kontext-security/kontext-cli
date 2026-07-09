@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.15.0](https://github.com/kontext-security/kontext-cli/compare/v0.14.1...v0.15.0) (2026-07-09)
+
+
+### Features
+
+* add payload capture library ([#365](https://github.com/kontext-security/kontext-cli/issues/365)) ([a4a4d59](https://github.com/kontext-security/kontext-cli/commit/a4a4d59ec60b49f11a868aab653900a6d9db0c0e))
+* apply org payload capture mode from the policy snapshot ([#367](https://github.com/kontext-security/kontext-cli/issues/367)) ([c2e5034](https://github.com/kontext-security/kontext-cli/commit/c2e5034176034aea472e8463dbab68e05de7c7ac))
+* hubspot provider policy — classifier, sync, dry-run + Cowork bash coverage ([#364](https://github.com/kontext-security/kontext-cli/issues/364)) ([625db1e](https://github.com/kontext-security/kontext-cli/commit/625db1e082b7917346145ccb367f9630ec31f5bd))
+* record captured tool payloads in the local ledger ([#366](https://github.com/kontext-security/kontext-cli/issues/366)) ([37e3fb1](https://github.com/kontext-security/kontext-cli/commit/37e3fb1bf2c4bad1a85b170e0cfa163d1385928a))
+
+
+### Bug Fixes
+
+* **build:** bump Go to 1.25.12 for GO-2026-5856 ([#370](https://github.com/kontext-security/kontext-cli/issues/370)) ([addf27d](https://github.com/kontext-security/kontext-cli/commit/addf27db5f6f284c93a4db4c01f49f936ffc8964))
+
 ## [0.14.1](https://github.com/kontext-security/kontext-cli/compare/v0.14.0...v0.14.1) (2026-07-08)
 
 
