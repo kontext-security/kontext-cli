@@ -44,6 +44,37 @@ func TestBinaryWatchdogFiresWhenFileReplaced(t *testing.T) {
 	assertWatchdogFires(t, replaced)
 }
 
+func TestBinaryWatchdogFiresWhenSymlinkRetargeted(t *testing.T) {
+	resetUpdaterSeams(t)
+	t.Setenv(envBinaryWatchInterval, "10ms")
+	runtimeGOOS = "darwin"
+	dir := t.TempDir()
+	oldKeg := filepath.Join(dir, "Cellar-old-kontext")
+	newKeg := filepath.Join(dir, "Cellar-new-kontext")
+	link := filepath.Join(dir, "kontext")
+	for _, path := range []string{oldKeg, newKeg} {
+		if err := os.WriteFile(path, []byte(path), 0o755); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+	}
+	if err := os.Symlink(oldKeg, link); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	executablePath = func() (string, error) { return link, nil }
+	evalSymlinksPath = filepath.EvalSymlinks
+
+	replaced := startBinaryWatchdog(context.Background(), diagnostic.Logger{})
+	// brew retargets the bin symlink but keeps the old keg (e.g. under
+	// HOMEBREW_NO_INSTALL_CLEANUP) — the watched file itself never changes.
+	if err := os.Remove(link); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+	if err := os.Symlink(newKeg, link); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	assertWatchdogFires(t, replaced)
+}
+
 func TestBinaryWatchdogDoesNotFireWhenFileUnchanged(t *testing.T) {
 	resetUpdaterSeams(t)
 	t.Setenv(envBinaryWatchInterval, "10ms")
