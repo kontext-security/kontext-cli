@@ -1,0 +1,109 @@
+{
+  "valueVectors": [
+    {
+      "name": "pem-private-key",
+      "ruleId": "private-key-block",
+      "input": "config:\n-----BEGIN RSA PRIVATE KEY-----\nMIIfakekeymaterialFAKE\n-----END RSA PRIVATE KEY-----\ndone",
+      "mustNotSurvive": ["MIIfakekeymaterialFAKE"]
+    },
+    {
+      "name": "bearer-header",
+      "ruleId": "bearer-basic-auth",
+      "input": "curl -H \"Authorization: Bearer tok_FAKE1234567890abcdef\" https://api.example.test",
+      "mustNotSurvive": ["tok_FAKE1234567890abcdef"]
+    },
+    {
+      "name": "github-classic-token",
+      "ruleId": "github-token",
+      "input": "GITHUB_TOKEN is ghp_FAKE0123456789abcdefFAKE here",
+      "mustNotSurvive": ["ghp_FAKE0123456789abcdefFAKE"]
+    },
+    {
+      "name": "github-fine-grained-pat",
+      "ruleId": "github-fine-grained-pat",
+      "input": "use github_pat_11FAKEFAKE0123456789abcdef for auth",
+      "mustNotSurvive": ["github_pat_11FAKEFAKE0123456789abcdef"]
+    },
+    {
+      "name": "openai-style-key",
+      "ruleId": "openai-api-key",
+      "input": "OPENAI key sk-proj-FAKEabcdefghijklmnop1234",
+      "mustNotSurvive": ["sk-proj-FAKEabcdefghijklmnop1234"]
+    },
+    {
+      "name": "aws-access-key-id",
+      "ruleId": "aws-access-key-id",
+      "input": "aws configure set aws_access_key_id AKIAFAKEFAKEFAKEFAKE",
+      "mustNotSurvive": ["AKIAFAKEFAKEFAKEFAKE"]
+    },
+    {
+      "name": "slack-bot-token",
+      "ruleId": "slack-token",
+      "input": "SLACK_BOT_TOKEN xoxb-FAKE123456-FAKEabcdefghij",
+      "mustNotSurvive": ["xoxb-FAKE123456-FAKEabcdefghij"]
+    },
+    {
+      "name": "npm-token",
+      "ruleId": "npm-token",
+      "input": "//registry.npmjs.org/:_authToken=npm_FAKEabcdefghijklmnop12",
+      "mustNotSurvive": ["npm_FAKEabcdefghijklmnop12"]
+    },
+    {
+      "name": "gcp-api-key",
+      "ruleId": "gcp-api-key",
+      "input": "maps client key AIzaFAKE1234567890abcdefghij end",
+      "mustNotSurvive": ["AIzaFAKE1234567890abcdefghij"]
+    },
+    {
+      "name": "jwt",
+      "ruleId": "jwt",
+      "input": "session eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.FAKEsignatureFAKE1234",
+      "mustNotSurvive": [
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.FAKEsignatureFAKE1234"
+      ]
+    },
+    {
+      "name": "url-userinfo",
+      "ruleId": "url-userinfo",
+      "input": "git clone https://deploy:hunter2FAKEpass@git.example.test/repo.git",
+      "mustNotSurvive": ["hunter2FAKEpass"]
+    },
+    {
+      "name": "env-assignment",
+      "ruleId": "sensitive-assignment",
+      "input": "GITHUB_TOKEN=verysecretFAKEvalue gh api /user",
+      "mustNotSurvive": ["verysecretFAKEvalue"]
+    },
+    {
+      "name": "cli-flag-space",
+      "ruleId": "sensitive-cli-flag",
+      "input": "mytool login --password hunter2FAKEsecret --verbose",
+      "mustNotSurvive": ["hunter2FAKEsecret"]
+    },
+    {
+      "name": "query-param-code",
+      "ruleId": "sensitive-query-param",
+      "input": "GET /callback?code=authcodeFAKEsecret&state=xyz",
+      "mustNotSurvive": ["authcodeFAKEsecret"]
+    }
+  ],
+  "keyVectors": [
+    { "name": "camel-api-key", "key": "apiKey", "sensitive": true },
+    { "name": "authorization", "key": "Authorization", "sensitive": true },
+    {
+      "name": "snake-refresh-token",
+      "key": "refresh_token",
+      "sensitive": true
+    },
+    { "name": "camel-client-secret", "key": "clientSecret", "sensitive": true },
+    { "name": "dashed-api-key", "key": "x-api-key", "sensitive": true },
+    { "name": "session-key", "key": "sessionKey", "sensitive": true },
+    { "name": "author-is-not-auth", "key": "author", "sensitive": false },
+    {
+      "name": "tokenizer-is-not-token",
+      "key": "tokenizer",
+      "sensitive": false
+    },
+    { "name": "plain-command", "key": "command", "sensitive": false }
+  ]
+}
