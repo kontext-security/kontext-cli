@@ -168,6 +168,71 @@ func TestPrintStatusHeartbeatOldAndExportLagging(t *testing.T) {
 	}
 }
 
+func TestPrintStatusExportPendingWithinThresholdReportsFacts(t *testing.T) {
+	env := newDoctorTestEnv(t)
+	env.writeDaemonStatus(t, os.Getpid(), "1.2.3")
+	env.seedLedger(t)
+	// Cursor a minute behind the just-seeded event: pending but not lagging.
+	updatedAfter := time.Now().UTC().Add(-time.Minute)
+	if err := managedstream.SaveState(managedstream.DefaultStatePathForDB(env.dbPath), managedstream.State{
+		UpdatedAfter:    &updatedAfter,
+		LastHeartbeatAt: env.now.Add(-20 * time.Second).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	printStatus(&out, "1.2.3", env.options())
+
+	output := out.String()
+	if !strings.Contains(output, "pending (cursor ") {
+		t.Fatalf("output = %q, want pending facts line", output)
+	}
+	if strings.Contains(output, "export: up to date") {
+		t.Fatalf("output = %q, want no up-to-date claim while rows are pending", output)
+	}
+	if strings.Contains(output, "WARNING: export lagging") {
+		t.Fatalf("output = %q, want no lag warning under threshold", output)
+	}
+}
+
+func TestWaitForDaemonRestartSucceeds(t *testing.T) {
+	env := newDoctorTestEnv(t)
+	env.writeDaemonStatus(t, os.Getpid(), "1.2.3")
+	// Unix socket paths cap at 104 bytes on macOS; t.TempDir is too deep.
+	socketDir, err := os.MkdirTemp("/tmp", "kontext-doctor-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "kontext.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	t.Cleanup(func() { listener.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	status, err := WaitForDaemonRestart(ctx, env.dbPath, socketPath, "1.2.3")
+	if err != nil {
+		t.Fatalf("WaitForDaemonRestart() error = %v", err)
+	}
+	if status.Version != "1.2.3" || status.PID != os.Getpid() {
+		t.Fatalf("status = %+v, want current pid on v1.2.3", status)
+	}
+}
+
+func TestWaitForDaemonRestartTimesOutWithoutDaemon(t *testing.T) {
+	env := newDoctorTestEnv(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if _, err := WaitForDaemonRestart(ctx, env.dbPath, env.socketPath, "1.2.3"); err == nil {
+		t.Fatal("WaitForDaemonRestart() error = nil, want timeout")
+	}
+}
+
 type doctorTestEnv struct {
 	dir        string
 	dbPath     string

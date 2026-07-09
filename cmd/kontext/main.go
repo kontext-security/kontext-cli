@@ -82,7 +82,18 @@ func doctorCmd() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "failed to restart managed-observe daemon: %v\n", err)
 					return err
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), "restarted managed-observe daemon")
+				// launchd accepting the kickstart is not a comeback: the new
+				// daemon can exit immediately (unreadable token, codesigning
+				// kill). Only report success once the restarted daemon is
+				// serving on the installed version.
+				waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer waitCancel()
+				status, err := managedobserve.WaitForDaemonRestart(waitCtx, managedobserve.DefaultDBPath(), managedobserve.DefaultSocketPath(), version)
+				if err != nil {
+					fmt.Fprintln(cmd.ErrOrStderr(), "daemon has not come back within 10s — it may still be restarting; re-run `kontext doctor` in a minute and check ~/Library/Logs/Kontext/managed-observe.log")
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "restarted managed-observe daemon (v%s, pid %d)\n", status.Version, status.PID)
 			}
 			return nil
 		},

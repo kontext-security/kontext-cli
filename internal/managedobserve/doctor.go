@@ -158,6 +158,32 @@ func describeScope(scope managedconfig.Scope) string {
 	}
 }
 
+// WaitForDaemonRestart polls until the socket is serving AND the status
+// breadcrumb reports a live daemon on wantVersion (any live daemon when the
+// version is not comparable, e.g. dev builds). `doctor --fix` uses it so
+// "restarted" is only printed for a verified comeback — launchd can accept a
+// kickstart and still have the new daemon exit immediately (unreadable token,
+// missing Cellar path).
+func WaitForDaemonRestart(ctx context.Context, dbPath, socketPath, wantVersion string) (*DaemonStatus, error) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond); err == nil {
+			conn.Close()
+			if status := LoadDaemonStatus(dbPath); status != nil && pidAlive(status.PID) {
+				if !comparableVersion(wantVersion) || status.Version == wantVersion {
+					return status, nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func pidAlive(pid int) bool {
 	if pid <= 0 || runtime.GOOS == "windows" {
 		return true
@@ -224,7 +250,13 @@ func printExportLag(ctx context.Context, out io.Writer, dbPath string, state man
 		fmt.Fprintf(out, "  WARNING: export lagging %s (%d events pending) — the daemon may be stalled\n", doctorDuration(lag), pending)
 		return
 	}
-	fmt.Fprintf(out, "  export: up to date (%d pending)\n", pending)
+	if pending == 0 {
+		fmt.Fprintln(out, "  export: up to date (0 pending)")
+		return
+	}
+	// Never claim "up to date" while rows are waiting — report the facts and
+	// let the operator judge.
+	fmt.Fprintf(out, "  export: %d pending (cursor %s behind newest)\n", pending, doctorDuration(lag))
 }
 
 func doctorDuration(d time.Duration) string {
