@@ -38,10 +38,14 @@ type DaemonOptions struct {
 	PolicyRefreshInterval time.Duration
 	PolicyHTTPClient      *http.Client
 	Diagnostic            diagnostic.Logger
+	// BinaryVersion is the CLI binary version, for startup logging and future
+	// status reporting.
+	BinaryVersion string
 	// FallbackDeploymentVersion is reported to the ledger when no MDM
 	// deployment-version marker exists (self-serve brew installs).
 	FallbackDeploymentVersion string
 	HomebrewUpdater           func(context.Context, managedconfig.LoadedConfig, diagnostic.Logger) <-chan struct{}
+	BinaryWatchdog            func(context.Context, diagnostic.Logger) <-chan struct{}
 }
 
 var (
@@ -50,6 +54,12 @@ var (
 )
 
 func RunDaemon(ctx context.Context, opts DaemonOptions) error {
+	binaryVersion := opts.BinaryVersion
+	if binaryVersion == "" {
+		binaryVersion = "dev"
+	}
+	logAlways(opts.Diagnostic, "managed-observe daemon %s (pid %d) started\n", binaryVersion, os.Getpid())
+
 	loadedConfig, err := managedconfig.Load()
 	if err != nil {
 		if errors.Is(err, managedconfig.ErrNotManaged) {
@@ -171,6 +181,12 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	}
 	upgraded := startUpdater(ctx, loadedConfig, opts.Diagnostic)
 
+	startWatchdog := opts.BinaryWatchdog
+	if startWatchdog == nil {
+		startWatchdog = startBinaryWatchdog
+	}
+	binaryReplaced := startWatchdog(ctx, opts.Diagnostic)
+
 	idleTimeout := opts.IdleTimeout
 	if idleTimeout == 0 {
 		idleTimeout = DefaultIdleTimeout()
@@ -187,9 +203,14 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 				return nil
 			}
 			upgraded = nil
+		case _, ok := <-binaryReplaced:
+			if ok {
+				return nil
+			}
+			binaryReplaced = nil
 		case err := <-streamErr:
 			if err != nil {
-				opts.Diagnostic.Printf("managed stream exited: %v\n", err)
+				logAlways(opts.Diagnostic, "managed stream exited: %v\n", err)
 				return fmt.Errorf("managed stream failed: %w", err)
 			}
 			return nil
