@@ -10,18 +10,44 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
+	"github.com/kontext-security/kontext-cli/internal/payloadcapture"
 )
 
 type Store struct {
 	db     *sql.DB
 	path   string
 	signer receiptSigner
+
+	// captureMode lives on Store (a mutable setter) rather than flowing
+	// through the policy-provider chain: what gets persisted is a storage
+	// concern, and the synced-policy layer only needs to flip it.
+	captureMu   sync.RWMutex
+	captureMode payloadcapture.Mode
+}
+
+// SetPayloadCaptureMode sets how tool payloads are captured on subsequently
+// recorded actions. The zero value keeps capture off ("summary" behavior):
+// unset or unrecognized modes never record payload content.
+func (s *Store) SetPayloadCaptureMode(mode payloadcapture.Mode) {
+	s.captureMu.Lock()
+	defer s.captureMu.Unlock()
+	s.captureMode = mode
+}
+
+func (s *Store) payloadCaptureMode() payloadcapture.Mode {
+	s.captureMu.RLock()
+	defer s.captureMu.RUnlock()
+	if s.captureMode == "" {
+		return payloadcapture.ModeSummary
+	}
+	return s.captureMode
 }
 
 type DecisionRecord struct {
@@ -204,6 +230,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	  output_summary text,
 	  output_hash text,
 	  error_redacted text,
+	  tool_input_captured_json text,
+	  tool_output_captured_json text,
 
 	  proposed_at text,
 	  decision_at text,
@@ -435,6 +463,8 @@ func (s *Store) ensureAuthorizationActionsDecisionNullable(ctx context.Context) 
 	  output_summary text,
 	  output_hash text,
 	  error_redacted text,
+	  tool_input_captured_json text,
+	  tool_output_captured_json text,
 
 	  proposed_at text,
 	  decision_at text,
@@ -536,6 +566,8 @@ var authorizationActionColumns = []authorizationActionColumn{
 	{name: "output_summary", defaultExpr: "null"},
 	{name: "output_hash", defaultExpr: "null"},
 	{name: "error_redacted", defaultExpr: "null"},
+	{name: "tool_input_captured_json", defaultExpr: "null"},
+	{name: "tool_output_captured_json", defaultExpr: "null"},
 	{name: "proposed_at", defaultExpr: "null"},
 	{name: "decision_at", defaultExpr: "null"},
 	{name: "completed_at", defaultExpr: "null"},
@@ -733,20 +765,24 @@ on conflict(id) do update set
 		return DecisionRecord{}, err
 	}
 
+	// Snapshot the mode once so every row of this decision is captured
+	// under the same policy, even if the mode flips concurrently.
+	captureMode := s.payloadCaptureMode()
+
 	actionID := "act_" + uuid.NewString()
 	if event.HookEventName == "PreToolUse" {
 		proposedID := "act_" + uuid.NewString()
-		if err := s.insertAction(ctx, tx, proposedID, sessionID, event, decision, canonicalEventRequestProposed, "event", now); err != nil {
+		if err := s.insertAction(ctx, tx, proposedID, sessionID, event, decision, canonicalEventRequestProposed, "event", captureMode, now); err != nil {
 			return DecisionRecord{}, err
 		}
-		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventRequestDecided, "decision", now.Add(time.Millisecond)); err != nil {
+		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventRequestDecided, "decision", captureMode, now.Add(time.Millisecond)); err != nil {
 			return DecisionRecord{}, err
 		}
 		if err := s.insertGithubDryRunActions(ctx, tx, sessionID, event, decision, now.Add(2*time.Millisecond)); err != nil {
 			return DecisionRecord{}, err
 		}
 	} else {
-		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventType(event.HookEventName), "outcome", now); err != nil {
+		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventType(event.HookEventName), "outcome", captureMode, now); err != nil {
 			return DecisionRecord{}, err
 		}
 	}
@@ -772,8 +808,8 @@ on conflict(id) do update set
 	}, nil
 }
 
-func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, canonicalEvent, receiptType string, now time.Time) error {
-	action, err := actionValues(actionID, sessionID, event, decision, canonicalEvent, now)
+func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, canonicalEvent, receiptType string, captureMode payloadcapture.Mode, now time.Time) error {
+	action, err := actionValues(actionID, sessionID, event, decision, canonicalEvent, captureMode, now)
 	if err != nil {
 		return err
 	}
@@ -799,6 +835,7 @@ func (s *Store) insertActionRecord(ctx context.Context, tx *sql.Tx, action map[s
 		"risk_level", "risk_score", "risk_threshold", "model_version", "confidence", "matched_rules_json", "risk_signals_json", "risk_event_json",
 		"modifications_json", "approval_context_json", "approval_channel", "approval_request_id", "deferral_context_json",
 		"status", "outcome", "output_summary", "output_hash", "error_redacted",
+		"tool_input_captured_json", "tool_output_captured_json",
 		"proposed_at", "decision_at", "completed_at", "created_at", "updated_at", "updated_at_cursor_key",
 	}
 	values := []any{
@@ -810,6 +847,7 @@ func (s *Store) insertActionRecord(ctx context.Context, tx *sql.Tx, action map[s
 		action["risk_level"], action["risk_score"], action["risk_threshold"], action["model_version"], action["confidence"], action["matched_rules_json"], action["risk_signals_json"], action["risk_event_json"],
 		action["modifications_json"], action["approval_context_json"], action["approval_channel"], action["approval_request_id"], action["deferral_context_json"],
 		action["status"], action["outcome"], action["output_summary"], action["output_hash"], action["error_redacted"],
+		action["tool_input_captured_json"], action["tool_output_captured_json"],
 		action["proposed_at"], action["decision_at"], action["completed_at"], action["created_at"], action["updated_at"], action["updated_at_cursor_key"],
 	}
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(columns)), ",")
@@ -822,7 +860,40 @@ func (s *Store) insertActionRecord(ctx context.Context, tx *sql.Tx, action map[s
 	return s.appendReceipt(ctx, tx, receiptInputFromAction(action, receiptType, now))
 }
 
-func actionValues(actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, canonicalEvent string, now time.Time) (map[string]any, error) {
+// capturedInputJSON records tool input once per tool call, on the
+// request.proposed row — the decision row correlates via tool_use_id and
+// must not duplicate it.
+func capturedInputJSON(event risk.HookEvent, canonicalEvent string, mode payloadcapture.Mode) any {
+	if canonicalEvent != canonicalEventRequestProposed {
+		return nil
+	}
+	return capturedRecordJSON(event.ToolInput, mode)
+}
+
+// capturedOutputJSON records tool output on the observed/failed rows.
+func capturedOutputJSON(event risk.HookEvent, canonicalEvent string, mode payloadcapture.Mode) any {
+	if canonicalEvent != canonicalEventRequestObserved && canonicalEvent != canonicalEventRequestFailed {
+		return nil
+	}
+	return capturedRecordJSON(event.ToolResponse, mode)
+}
+
+func capturedRecordJSON(payload map[string]any, mode payloadcapture.Mode) any {
+	record := payloadcapture.Capture(payload, mode)
+	if record == nil {
+		return nil
+	}
+	raw, err := record.MarshalJSON()
+	if err != nil {
+		// Unreachable for records produced by Capture; if it ever happens,
+		// surface the failure in the ledger rather than dropping silently —
+		// the ledger is this package's log.
+		return `{"mode":"capture_failed","reason":"serialization_error"}`
+	}
+	return string(raw)
+}
+
+func actionValues(actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, canonicalEvent string, captureMode payloadcapture.Mode, now time.Time) (map[string]any, error) {
 	riskEvent := decision.RiskEvent
 	if canonicalEvent != canonicalEventRequestDecided {
 		riskEvent.Decision = ""
@@ -882,6 +953,8 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		decisionResult = canonicalDecisionResult(decision.Decision)
 	}
 	outcome, outputSummary, outputHash, errorRedacted := outcomeValues(event, decision)
+	toolInputCaptured := capturedInputJSON(event, canonicalEvent, captureMode)
+	toolOutputCaptured := capturedOutputJSON(event, canonicalEvent, captureMode)
 	proposedAt := ""
 	decisionAt := ""
 	completedAt := ""
@@ -916,57 +989,59 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 	updatedAt := now.Format(time.RFC3339Nano)
 
 	return map[string]any{
-		"id":                       actionID,
-		"session_id":               sessionID,
-		"tool_use_id":              event.ToolUseID,
-		"canonical_event_type":     canonicalEvent,
-		"adapter_event_name":       event.HookEventName,
-		"correlation_key":          correlationKey(event),
-		"tool_name":                event.ToolName,
-		"provider":                 provider,
-		"operation":                riskEvent.Operation,
-		"operation_class":          riskEvent.OperationClass,
-		"resource_class":           riskEvent.ResourceClass,
-		"resource_id":              nullIfEmpty(resourceID),
-		"parameters_redacted_json": parametersJSON,
-		"parameters_hash":          parametersHash,
-		"identity_context_json":    identityJSON,
-		"identity_hash":            identityHash,
-		"context_json":             contextJSON,
-		"context_hash":             contextHash,
-		"policy_id":                policyID,
-		"policy_version":           policyVersion,
-		"policy_hash":              actionPolicyHash,
-		"default_posture":          "",
-		"decision_result":          decisionResult,
-		"decision_category":        decisionCategoryValue,
-		"adapter_decision":         adapterDecisionValue,
-		"reason_code":              reasonCode,
-		"reason":                   reasonText,
-		"risk_level":               strings.ToUpper(riskEvent.JudgeRiskLevel),
-		"risk_score":               nullableFloat(decision.RiskScore),
-		"risk_threshold":           nullableFloat(decision.Threshold),
-		"model_version":            decision.ModelVersion,
-		"confidence":               riskEvent.Confidence,
-		"matched_rules_json":       matchedRulesJSON,
-		"risk_signals_json":        riskSignalsJSON,
-		"risk_event_json":          riskEventJSON,
-		"modifications_json":       emptyObject,
-		"approval_context_json":    emptyObject,
-		"approval_channel":         "",
-		"approval_request_id":      "",
-		"deferral_context_json":    emptyObject,
-		"status":                   actionStatus(canonicalEvent, stringValue(decisionResult)),
-		"outcome":                  outcome,
-		"output_summary":           outputSummary,
-		"output_hash":              outputHash,
-		"error_redacted":           errorRedacted,
-		"proposed_at":              nullIfEmpty(proposedAt),
-		"decision_at":              nullIfEmpty(decisionAt),
-		"completed_at":             nullIfEmpty(completedAt),
-		"created_at":               updatedAt,
-		"updated_at":               updatedAt,
-		"updated_at_cursor_key":    ledgerTimestampCursorKeyFromValues(updatedAt),
+		"id":                        actionID,
+		"session_id":                sessionID,
+		"tool_use_id":               event.ToolUseID,
+		"canonical_event_type":      canonicalEvent,
+		"adapter_event_name":        event.HookEventName,
+		"correlation_key":           correlationKey(event),
+		"tool_name":                 event.ToolName,
+		"provider":                  provider,
+		"operation":                 riskEvent.Operation,
+		"operation_class":           riskEvent.OperationClass,
+		"resource_class":            riskEvent.ResourceClass,
+		"resource_id":               nullIfEmpty(resourceID),
+		"parameters_redacted_json":  parametersJSON,
+		"parameters_hash":           parametersHash,
+		"identity_context_json":     identityJSON,
+		"identity_hash":             identityHash,
+		"context_json":              contextJSON,
+		"context_hash":              contextHash,
+		"policy_id":                 policyID,
+		"policy_version":            policyVersion,
+		"policy_hash":               actionPolicyHash,
+		"default_posture":           "",
+		"decision_result":           decisionResult,
+		"decision_category":         decisionCategoryValue,
+		"adapter_decision":          adapterDecisionValue,
+		"reason_code":               reasonCode,
+		"reason":                    reasonText,
+		"risk_level":                strings.ToUpper(riskEvent.JudgeRiskLevel),
+		"risk_score":                nullableFloat(decision.RiskScore),
+		"risk_threshold":            nullableFloat(decision.Threshold),
+		"model_version":             decision.ModelVersion,
+		"confidence":                riskEvent.Confidence,
+		"matched_rules_json":        matchedRulesJSON,
+		"risk_signals_json":         riskSignalsJSON,
+		"risk_event_json":           riskEventJSON,
+		"modifications_json":        emptyObject,
+		"approval_context_json":     emptyObject,
+		"approval_channel":          "",
+		"approval_request_id":       "",
+		"deferral_context_json":     emptyObject,
+		"status":                    actionStatus(canonicalEvent, stringValue(decisionResult)),
+		"outcome":                   outcome,
+		"output_summary":            outputSummary,
+		"output_hash":               outputHash,
+		"error_redacted":            errorRedacted,
+		"tool_input_captured_json":  toolInputCaptured,
+		"tool_output_captured_json": toolOutputCaptured,
+		"proposed_at":               nullIfEmpty(proposedAt),
+		"decision_at":               nullIfEmpty(decisionAt),
+		"completed_at":              nullIfEmpty(completedAt),
+		"created_at":                updatedAt,
+		"updated_at":                updatedAt,
+		"updated_at_cursor_key":     ledgerTimestampCursorKeyFromValues(updatedAt),
 	}, nil
 }
 
