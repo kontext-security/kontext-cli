@@ -64,15 +64,42 @@ func main() {
 }
 
 func doctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var fix bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Inspect local Kontext CLI setup",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			guardcli.PrintHookStatus(cmd.OutOrStdout())
-			managedobserve.PrintStatus(cmd.OutOrStdout())
+			staleDaemon := managedobserve.PrintStatus(cmd.OutOrStdout(), version)
+			if fix {
+				if !staleDaemon {
+					fmt.Fprintln(cmd.OutOrStdout(), "nothing to fix")
+					return nil
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := managedobserve.KickstartLaunchdKill(ctx, managedobserve.DefaultLabel()); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "failed to restart managed-observe daemon: %v\n", err)
+					return err
+				}
+				// launchd accepting the kickstart is not a comeback: the new
+				// daemon can exit immediately (unreadable token, codesigning
+				// kill). Only report success once the restarted daemon is
+				// serving on the installed version.
+				waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer waitCancel()
+				status, err := managedobserve.WaitForDaemonRestart(waitCtx, managedobserve.DefaultDBPath(), managedobserve.DefaultSocketPath(), version)
+				if err != nil {
+					fmt.Fprintln(cmd.ErrOrStderr(), "daemon has not come back within 10s — it may still be restarting; re-run `kontext doctor` in a minute and check ~/Library/Logs/Kontext/managed-observe.log")
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "restarted managed-observe daemon (v%s, pid %d)\n", status.Version, status.PID)
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&fix, "fix", false, "restart the managed-observe daemon when it is running a stale binary")
+	return cmd
 }
 
 func guardCmd() *cobra.Command {
