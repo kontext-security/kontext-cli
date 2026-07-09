@@ -125,3 +125,108 @@ func TestCacheKeepsServingStaleSnapshotOnFetchFailure(t *testing.T) {
 		t.Fatalf("status = %+v, want stale with recorded error", status)
 	}
 }
+
+func TestSnapshotDecodesPayloadCaptureMode(t *testing.T) {
+	var withField Snapshot
+	if err := json.Unmarshal([]byte(`{"schemaVersion":"github-policy-snapshot-v2","hash":"h","payloadCaptureMode":"full"}`), &withField); err != nil {
+		t.Fatalf("unmarshal with field: %v", err)
+	}
+	if withField.PayloadCaptureMode != "full" {
+		t.Fatalf("PayloadCaptureMode = %q, want %q", withField.PayloadCaptureMode, "full")
+	}
+
+	// Pre-capture server: field absent must decode to "" (normalized to
+	// "summary" downstream), not an error.
+	var withoutField Snapshot
+	if err := json.Unmarshal([]byte(`{"schemaVersion":"github-policy-snapshot-v2","hash":"h"}`), &withoutField); err != nil {
+		t.Fatalf("unmarshal without field: %v", err)
+	}
+	if withoutField.PayloadCaptureMode != "" {
+		t.Fatalf("PayloadCaptureMode = %q, want empty", withoutField.PayloadCaptureMode)
+	}
+}
+
+func TestCachePersistsPayloadCaptureModeAcrossReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "github-policy-snapshot.json")
+	cache := NewCache(path)
+	snapshot := testSnapshot(3, "hash-3")
+	snapshot.PayloadCaptureMode = "full"
+	if err := cache.Apply(snapshot, time.Now().UTC()); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	reloaded := NewCache(path)
+	if err := reloaded.LoadPersisted(); err != nil {
+		t.Fatalf("LoadPersisted() error = %v", err)
+	}
+	persisted, _, ok := reloaded.CurrentSnapshot()
+	if !ok || persisted.PayloadCaptureMode != "full" {
+		t.Fatalf("persisted PayloadCaptureMode = %q, %v; want %q", persisted.PayloadCaptureMode, ok, "full")
+	}
+}
+
+// Regression test for the hash-exclusion hazard: payloadCaptureMode is
+// deliberately excluded from the server-side snapshot hash, so a mode flip
+// arrives on a snapshot whose hash is UNCHANGED. The cache must adopt and
+// persist it anyway — a hash-equality short-circuit that drops the new mode
+// would freeze the org's capture directive until the next policy edit.
+func TestCacheAdoptsAndPersistsModeChangeOnUnchangedHash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "github-policy-snapshot.json")
+	cache := NewCache(path)
+	first := testSnapshot(3, "hash-3")
+	first.PayloadCaptureMode = "summary"
+	if err := cache.Apply(first, time.Now().UTC()); err != nil {
+		t.Fatalf("Apply() first error = %v", err)
+	}
+
+	second := testSnapshot(3, "hash-3") // identical hash, only the mode flips
+	second.PayloadCaptureMode = "full"
+	if err := cache.Apply(second, time.Now().UTC()); err != nil {
+		t.Fatalf("Apply() second error = %v", err)
+	}
+
+	snapshot, _, _ := cache.CurrentSnapshot()
+	if snapshot.PayloadCaptureMode != "full" {
+		t.Fatalf("in-memory PayloadCaptureMode = %q, want %q after mode flip on unchanged hash", snapshot.PayloadCaptureMode, "full")
+	}
+
+	reloaded := NewCache(path)
+	if err := reloaded.LoadPersisted(); err != nil {
+		t.Fatalf("LoadPersisted() error = %v", err)
+	}
+	persisted, _, ok := reloaded.CurrentSnapshot()
+	if !ok || persisted.PayloadCaptureMode != "full" {
+		t.Fatalf("persisted PayloadCaptureMode = %q, %v; want %q to survive restart", persisted.PayloadCaptureMode, ok, "full")
+	}
+}
+
+// Snapshot.Mode (observe/enforce) is outside the server-side hash for the
+// same reason payloadCaptureMode is — same hazard, same guarantee: a flip on
+// an unchanged hash must be adopted and survive a restart.
+func TestCacheAdoptsAndPersistsEnforcementModeChangeOnUnchangedHash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "github-policy-snapshot.json")
+	cache := NewCache(path)
+	if err := cache.Apply(testSnapshot(3, "hash-3"), time.Now().UTC()); err != nil {
+		t.Fatalf("Apply() first error = %v", err)
+	}
+
+	flipped := testSnapshot(3, "hash-3") // identical hash, only the mode flips
+	flipped.Mode = ModeEnforce
+	if err := cache.Apply(flipped, time.Now().UTC()); err != nil {
+		t.Fatalf("Apply() flipped error = %v", err)
+	}
+
+	snapshot, _, _ := cache.CurrentSnapshot()
+	if !snapshot.Enforce() {
+		t.Fatalf("in-memory Mode = %q, want %q after flip on unchanged hash", snapshot.Mode, ModeEnforce)
+	}
+
+	reloaded := NewCache(path)
+	if err := reloaded.LoadPersisted(); err != nil {
+		t.Fatalf("LoadPersisted() error = %v", err)
+	}
+	persisted, _, ok := reloaded.CurrentSnapshot()
+	if !ok || !persisted.Enforce() {
+		t.Fatalf("persisted Mode = %q, %v; want %q to survive restart", persisted.Mode, ok, ModeEnforce)
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
 	dashboardassets "github.com/kontext-security/kontext-cli/internal/guard/web/assets"
+	"github.com/kontext-security/kontext-cli/internal/payloadcapture"
 	"github.com/kontext-security/kontext-cli/internal/runtimecore"
 )
 
@@ -75,6 +76,13 @@ type ActivatePolicyProfileRequest struct {
 
 func NewServer(store *sqlite.Store) (*Server, error) {
 	return NewServerWithOptions(store, Options{})
+}
+
+// SetPayloadCaptureMode forwards the org's payload-capture directive to the
+// store, which reads it per recorded action. Called by the managed daemon's
+// policy refresh cycle whenever a snapshot is fetched or restored from disk.
+func (s *Server) SetPayloadCaptureMode(mode payloadcapture.Mode) {
+	s.store.SetPayloadCaptureMode(mode)
 }
 
 func NewServerWithOptions(store *sqlite.Store, opts Options) (*Server, error) {
