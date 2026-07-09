@@ -16,6 +16,7 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/guard/policyconfig"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 	"github.com/kontext-security/kontext-cli/internal/guard/store/sqlite"
+	"github.com/kontext-security/kontext-cli/internal/payloadcapture"
 )
 
 func newTestServer(t *testing.T, store *sqlite.Store) *Server {
@@ -620,7 +621,7 @@ func TestJudgePolicyRedactsCredentialValuesFromJudgeInput(t *testing.T) {
 	if strings.Contains(got, "real-secret-123") {
 		t.Fatalf("judge input leaked credential value: %+v", localJudge.input)
 	}
-	if !strings.Contains(got, "[redacted-credential]") {
+	if !strings.Contains(got, payloadcapture.RedactedPlaceholder) {
 		t.Fatalf("judge input missing redaction marker: %+v", localJudge.input)
 	}
 }

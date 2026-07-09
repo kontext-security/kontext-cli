@@ -94,7 +94,10 @@ func isSensitiveKey(key string) bool {
 	return false
 }
 
-func redactText(value string) (string, bool) {
+// RedactText runs the ruleset's value patterns over a flat string, replacing
+// every match with RedactedPlaceholder, and reports whether anything changed.
+// Key patterns do not apply: a flat string carries no structure to classify.
+func RedactText(value string) (string, bool) {
 	changed := false
 	for _, rule := range compiledValueRules {
 		next := rule.re.ReplaceAllString(value, RedactedPlaceholder)

@@ -57,7 +57,7 @@ func TestRedactionCoverage(t *testing.T) {
 		t.Run(vector.Name, func(t *testing.T) {
 			t.Parallel()
 
-			redacted, changed := redactText(vector.Input)
+			redacted, changed := RedactText(vector.Input)
 			if !changed {
 				t.Fatalf("input was not redacted: %q", vector.Input)
 			}

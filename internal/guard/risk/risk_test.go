@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/kontext-security/kontext-cli/internal/payloadcapture"
 )
 
 func TestNormalizeCredentialFileRead(t *testing.T) {
@@ -176,14 +178,31 @@ func TestNormalizeDirectProviderAPIGoogleCloud(t *testing.T) {
 }
 
 func TestNormalizeRedactsCredentialValuesFromSummaries(t *testing.T) {
-	event := NormalizeHookEvent(HookEvent{ToolName: "Bash", ToolInput: map[string]any{"command": `API_TOKEN=real-secret-123 curl https://api.cloudflare.com -H "Authorization: Bearer abc123"`}})
-	for _, value := range []string{event.CommandSummary, event.RequestSummary} {
-		if strings.Contains(value, "real-secret-123") || strings.Contains(value, "abc123") {
-			t.Fatalf("summary leaked credential value: %q", value)
-		}
-		if !strings.Contains(value, "[redacted-credential]") {
-			t.Fatalf("summary did not include redaction marker: %q", value)
-		}
+	cases := []struct {
+		name    string
+		command string
+		secret  string
+	}{
+		{"token assignment", `API_TOKEN=real-secret-123 curl https://api.cloudflare.com`, "real-secret-123"},
+		{"bearer header", `curl -H "Authorization: Bearer bearer-secret-123"`, "bearer-secret-123"},
+		{"password assignment", `mysql --password=password-secret-123 -u root`, "password-secret-123"},
+		{"uppercase password export", `export PASSWORD=password-secret-123`, "password-secret-123"},
+		{"bare github token", `echo ghp_AbCdEfGhIjKlMnOpQrStUvWx123456`, "ghp_AbCdEfGhIjKlMnOpQrStUvWx123456"},
+		{"bare aws access key id", `aws sts get-caller-identity # AKIAIOSFODNN7EXAMPLE`, "AKIAIOSFODNN7EXAMPLE"},
+		{"header value with redactable label", `curl -H 'x-api-key: header-secret-123' https://x.io`, "header-secret-123"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			event := NormalizeHookEvent(HookEvent{ToolName: "Bash", ToolInput: map[string]any{"command": tc.command}})
+			for _, value := range []string{event.CommandSummary, event.RequestSummary} {
+				if strings.Contains(value, tc.secret) {
+					t.Fatalf("summary leaked credential value: %q", value)
+				}
+				if !strings.Contains(value, payloadcapture.RedactedPlaceholder) {
+					t.Fatalf("summary did not include redaction marker: %q", value)
+				}
+			}
+		})
 	}
 }
 

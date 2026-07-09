@@ -5,12 +5,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/kontext-security/kontext-cli/internal/payloadcapture"
 )
 
-var credentialAssignment = regexp.MustCompile(`(?i)\b([a-z0-9_]*(?:api[_-]?key|token|secret|access[_-]?key)[a-z0-9_]*|api[_-]?key|token|secret)\s*=\s*("[^"]*"|'[^']*'|[^\s;&|]+)`)
-var credentialHeader = regexp.MustCompile(`(?i)(authorization\s*:\s*)(bearer\s+)?("[^"]*"|'[^']*'|[^\s;&|]+)`)
-var credentialBearer = regexp.MustCompile(`(?i)\bbearer\s+("[^"]*"|'[^']*'|[a-z0-9._~+/=-]+)`)
-var credentialShape = regexp.MustCompile(`(?i)(authorization\s*:|api[_-]?key\s*[=:]|secret\s*[=:]|token\s*[=:])`)
+// credentialReference is a classification signal, not a redactor: it matches
+// the shapes redaction removes, so it must only ever run on raw command text.
 var credentialReference = regexp.MustCompile(`(?i)(authorization\s*:|bearer\s+[a-z0-9._~+/=-]+|api[_-]?key\s*[=:]|secret\s*[=:]|token\s*[=:]|\$[A-Z0-9_]*(TOKEN|SECRET|API_KEY|ACCESS_KEY)[A-Z0-9_]*)`)
 var destructiveWord = regexp.MustCompile(`(?i)\b(delete|destroy|drop|truncate|wipe)\b`)
 var resourceWord = regexp.MustCompile(`(?i)\b(database|volume|backup|bucket|project|repo|repository|branch|deployment|namespace|secret)\b`)
@@ -307,15 +307,17 @@ func summarizeRequest(toolName, path, command string) string {
 	}
 }
 
+// redact produces the summary form of a command: secrets are removed by the
+// shared payloadcapture ruleset, then the result is truncated for display.
+// Classification never consumes this output — signal detection (e.g.
+// observesCredential) runs on the raw command, because redaction removes the
+// exact shapes those detectors match.
 func redact(value string) string {
-	value = credentialAssignment.ReplaceAllString(value, "$1=[redacted-credential]")
-	value = credentialHeader.ReplaceAllString(value, "${1}${2}[redacted-credential]")
-	value = credentialBearer.ReplaceAllString(value, "Bearer [redacted-credential]")
-	value = credentialShape.ReplaceAllString(value, "[redacted-credential]")
-	if len(value) > 240 {
-		return value[:240] + "..."
+	redacted, _ := payloadcapture.RedactText(value)
+	if len(redacted) > 240 {
+		return redacted[:240] + "..."
 	}
-	return value
+	return redacted
 }
 
 func observesCredential(command string, eventType EventType) bool {
