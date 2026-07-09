@@ -64,15 +64,31 @@ func main() {
 }
 
 func doctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var fix bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Inspect local Kontext CLI setup",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			guardcli.PrintHookStatus(cmd.OutOrStdout())
-			managedobserve.PrintStatus(cmd.OutOrStdout())
+			staleDaemon := managedobserve.PrintStatus(cmd.OutOrStdout(), version)
+			if fix {
+				if !staleDaemon {
+					fmt.Fprintln(cmd.OutOrStdout(), "nothing to fix")
+					return nil
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := managedobserve.KickstartLaunchdKill(ctx, managedobserve.DefaultLabel()); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "failed to restart managed-observe daemon: %v\n", err)
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "restarted managed-observe daemon")
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&fix, "fix", false, "restart the managed-observe daemon when it is running a stale binary")
+	return cmd
 }
 
 func guardCmd() *cobra.Command {
