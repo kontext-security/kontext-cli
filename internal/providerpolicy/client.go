@@ -3,6 +3,7 @@ package providerpolicy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,12 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrNotConfigured reports that the cloud has no snapshot surface for this
+// provider/org (HTTP 404) — expected when the org has not activated the
+// provider. Callers should treat it as "no policy" rather than a fetch
+// failure worth alarming on.
+var ErrNotConfigured = errors.New("policy snapshot not configured")
 
 // MaxSnapshotBodyBytes caps how large a snapshot response the client accepts.
 const MaxSnapshotBodyBytes = 4 << 20
@@ -44,6 +51,9 @@ func FetchSnapshot(ctx context.Context, client *http.Client, cloudURL, installTo
 		return Snapshot{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return Snapshot{}, fmt.Errorf("%s: %w", config.ProviderKey, ErrNotConfigured)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return Snapshot{}, fmt.Errorf("%s policy snapshot fetch failed: status %d", config.ProviderKey, resp.StatusCode)
 	}

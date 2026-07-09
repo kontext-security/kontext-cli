@@ -778,7 +778,7 @@ on conflict(id) do update set
 		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventRequestDecided, "decision", captureMode, now.Add(time.Millisecond)); err != nil {
 			return DecisionRecord{}, err
 		}
-		if err := s.insertGithubDryRunActions(ctx, tx, sessionID, event, decision, now.Add(2*time.Millisecond)); err != nil {
+		if err := s.insertProviderDryRunActions(ctx, tx, sessionID, event, decision, now.Add(2*time.Millisecond)); err != nil {
 			return DecisionRecord{}, err
 		}
 	} else {

@@ -393,6 +393,12 @@ func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
 				"rules":          []any{},
 				"generatedAt":    "2026-06-15T00:00:00.000Z",
 			})
+		case "/api/v1/policy/hubspot/snapshot":
+			// A cloud without the hubspot snapshot route yet answers 404.
+			// Contract: deactivation is signaled by an EMPTY snapshot, never
+			// 404 — so the daemon treats this as quietly-not-configured
+			// (keep any cache, mark stale, back off polling), not a failure.
+			w.WriteHeader(http.StatusNotFound)
 		case "/api/v1/authorization-ledger/batches":
 			w.WriteHeader(http.StatusAccepted)
 		default:
@@ -417,13 +423,13 @@ func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- RunDaemon(ctx, DaemonOptions{
-			SocketPath:           socketPath,
-			DBPath:               dbPath,
-			IdleTimeout:          time.Hour,
-			StreamInterval:       time.Hour,
-			StreamHTTPClient:     server.Client(),
-			GithubPolicyInterval: 20 * time.Millisecond,
-			GithubPolicyClient:   server.Client(),
+			SocketPath:            socketPath,
+			DBPath:                dbPath,
+			IdleTimeout:           time.Hour,
+			StreamInterval:        time.Hour,
+			StreamHTTPClient:      server.Client(),
+			PolicyRefreshInterval: 20 * time.Millisecond,
+			PolicyHTTPClient:      server.Client(),
 		})
 	}()
 	stopped := false

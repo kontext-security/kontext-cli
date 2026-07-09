@@ -9,29 +9,47 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
+	"github.com/kontext-security/kontext-cli/internal/providerpolicy"
 )
 
-// insertGithubDryRunActions records the synced GitHub policy's would-be
+// insertProviderDryRunActions records each synced provider policy's would-be
 // decisions. Each evaluated action gets its own request.decided row with
 // decision_category "dry_run", separate from the runtime's own decided row —
 // in observe mode nothing is ever blocked, the dry-run row only documents
 // what the policy would have done.
-func (s *Store) insertGithubDryRunActions(ctx context.Context, tx *sql.Tx, sessionID string, event risk.HookEvent, decision risk.RiskDecision, now time.Time) error {
-	for i, evaluation := range decision.GithubPolicy {
-		action, err := githubDryRunActionValues("act_"+uuid.NewString(), sessionID, event, decision, evaluation, now.Add(time.Duration(i)*time.Millisecond))
-		if err != nil {
-			return err
-		}
-		if err := s.insertActionRecord(ctx, tx, action, "decision", now); err != nil {
-			return err
+func (s *Store) insertProviderDryRunActions(ctx context.Context, tx *sql.Tx, sessionID string, event risk.HookEvent, decision risk.RiskDecision, now time.Time) error {
+	sequence := 0
+	for _, group := range decision.ProviderPolicy {
+		for _, evaluation := range group.Evaluations {
+			action, err := providerDryRunActionValues("act_"+uuid.NewString(), sessionID, group.Provider, event, decision, evaluation, now.Add(time.Duration(sequence)*time.Millisecond))
+			if err != nil {
+				return err
+			}
+			if err := s.insertActionRecord(ctx, tx, action, "decision", now); err != nil {
+				return err
+			}
+			sequence++
 		}
 	}
 	return nil
 }
 
-func githubDryRunActionValues(actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, evaluation githubpolicy.Evaluation, now time.Time) (map[string]any, error) {
+// providerResourceClass names the normalized resource class each provider's
+// policy anchor belongs to (the taxonomy in
+// docs/guides/access-control-event-schema.md of the cloud repo).
+func providerResourceClass(provider string) string {
+	switch provider {
+	case "github":
+		return "repo"
+	case "hubspot":
+		return "object"
+	default:
+		return "unknown"
+	}
+}
+
+func providerDryRunActionValues(actionID, sessionID, provider string, event risk.HookEvent, decision risk.RiskDecision, evaluation providerpolicy.Evaluation, now time.Time) (map[string]any, error) {
 	riskEvent := decision.RiskEvent
 	parametersJSON, parametersHash := mustHashJSON(map[string]any{
 		"command_summary": riskEvent.CommandSummary,
@@ -47,18 +65,12 @@ func githubDryRunActionValues(actionID, sessionID string, event risk.HookEvent, 
 	}
 	identityJSON, identityHash := mustHashJSON(identityPayload)
 
-	githubContext := map[string]any{}
-	if owner, repo, ok := splitRepoSlug(evaluation.Request.Resource); ok {
-		githubContext["owner"] = owner
-		githubContext["repo"] = repo
-	}
-	if evaluation.Request.BranchOrRef != "" {
-		githubContext["branch_or_ref"] = evaluation.Request.BranchOrRef
-	}
 	contextPayload := map[string]any{
 		"cwd":             event.CWD,
 		"hook_event_name": event.HookEventName,
-		"github_policy": map[string]any{
+		// Keyed per provider ("github_policy", "hubspot_policy") so github
+		// rows stay byte-identical to the pre-hubspot producer.
+		provider + "_policy": map[string]any{
 			"schema_version":    evaluation.SchemaVersion,
 			"mode":              evaluation.Mode,
 			"epoch":             evaluation.Epoch,
@@ -68,14 +80,24 @@ func githubDryRunActionValues(actionID, sessionID string, event risk.HookEvent, 
 			"groups_resolved":   evaluation.GroupsResolved,
 		},
 	}
-	if len(githubContext) > 0 {
-		contextPayload["github"] = githubContext
+	if provider == "github" {
+		githubContext := map[string]any{}
+		if owner, repo, ok := splitRepoSlug(evaluation.Request.Resource); ok {
+			githubContext["owner"] = owner
+			githubContext["repo"] = repo
+		}
+		if evaluation.Request.BranchOrRef != "" {
+			githubContext["branch_or_ref"] = evaluation.Request.BranchOrRef
+		}
+		if len(githubContext) > 0 {
+			contextPayload["github"] = githubContext
+		}
 	}
 	contextJSON, contextHash := mustHashJSON(contextPayload)
 
 	matchedRules := evaluation.MatchedRules
 	if matchedRules == nil {
-		matchedRules = []githubpolicy.MatchedRule{}
+		matchedRules = []providerpolicy.MatchedRule{}
 	}
 	matchedRulesJSON := mustJSONText(matchedRules)
 
@@ -88,10 +110,10 @@ func githubDryRunActionValues(actionID, sessionID string, event risk.HookEvent, 
 		"adapter_event_name":       event.HookEventName,
 		"correlation_key":          correlationKey(event),
 		"tool_name":                event.ToolName,
-		"provider":                 "github",
+		"provider":                 provider,
 		"operation":                evaluation.Request.Action,
 		"operation_class":          operationClassFromAction(evaluation.Request.Action),
-		"resource_class":           "repo",
+		"resource_class":           providerResourceClass(provider),
 		"resource_id":              nullIfEmpty(evaluation.Request.Resource),
 		"parameters_redacted_json": parametersJSON,
 		"parameters_hash":          parametersHash,

@@ -6,6 +6,7 @@ import (
 
 	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
+	"github.com/kontext-security/kontext-cli/internal/providerpolicy"
 )
 
 type staticGithubPolicy struct {
@@ -44,12 +45,12 @@ func githubPushEvent() risk.HookEvent {
 func TestDecideHookRecordsGithubDryRunWithoutBlocking(t *testing.T) {
 	denyResource := "acme/api"
 	provider := NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
-		GithubPolicy: staticGithubPolicy{
+		ProviderPolicies: []ProviderPolicyBinding{GithubPolicyBinding(staticGithubPolicy{
 			snapshot: githubTestSnapshot(githubpolicy.ModeObserve,
 				githubpolicy.Rule{ID: "rule-deny", Layer: githubpolicy.LayerOrg, SubjectID: "org_test", ResourceID: &denyResource, Effect: githubpolicy.EffectDeny},
 			),
 			loaded: true,
-		},
+		})},
 	})
 
 	decision, err := provider.DecideHook(context.Background(), githubPushEvent())
@@ -61,10 +62,10 @@ func TestDecideHookRecordsGithubDryRunWithoutBlocking(t *testing.T) {
 	if decision.Decision != risk.DecisionAllow {
 		t.Fatalf("Decision = %v, want allow in observe mode", decision.Decision)
 	}
-	if len(decision.GithubPolicy) != 1 {
-		t.Fatalf("GithubPolicy evaluations = %d, want 1", len(decision.GithubPolicy))
+	if len(githubEvaluations(decision)) != 1 {
+		t.Fatalf("GithubPolicy evaluations = %d, want 1", len(githubEvaluations(decision)))
 	}
-	evaluation := decision.GithubPolicy[0]
+	evaluation := githubEvaluations(decision)[0]
 	if evaluation.Result != githubpolicy.EffectDeny || evaluation.ReasonCode != githubpolicy.ReasonCodeDeny {
 		t.Fatalf("evaluation = %+v, want would-deny", evaluation)
 	}
@@ -76,12 +77,12 @@ func TestDecideHookRecordsGithubDryRunWithoutBlocking(t *testing.T) {
 func TestDecideHookEnforceModeDeniesBeforeJudge(t *testing.T) {
 	denyResource := "acme/api"
 	provider := NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
-		GithubPolicy: staticGithubPolicy{
+		ProviderPolicies: []ProviderPolicyBinding{GithubPolicyBinding(staticGithubPolicy{
 			snapshot: githubTestSnapshot(githubpolicy.ModeEnforce,
 				githubpolicy.Rule{ID: "rule-deny", Layer: githubpolicy.LayerOrg, SubjectID: "org_test", ResourceID: &denyResource, Effect: githubpolicy.EffectDeny},
 			),
 			loaded: true,
-		},
+		})},
 	})
 
 	decision, err := provider.DecideHook(context.Background(), githubPushEvent())
@@ -99,12 +100,12 @@ func TestDecideHookEnforceModeDeniesBeforeJudge(t *testing.T) {
 func TestDecideHookUnknownModeIsTreatedAsObserve(t *testing.T) {
 	denyResource := "acme/api"
 	provider := NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
-		GithubPolicy: staticGithubPolicy{
+		ProviderPolicies: []ProviderPolicyBinding{GithubPolicyBinding(staticGithubPolicy{
 			snapshot: githubTestSnapshot("enforce-later-maybe",
 				githubpolicy.Rule{ID: "rule-deny", Layer: githubpolicy.LayerOrg, SubjectID: "org_test", ResourceID: &denyResource, Effect: githubpolicy.EffectDeny},
 			),
 			loaded: true,
-		},
+		})},
 	})
 
 	decision, err := provider.DecideHook(context.Background(), githubPushEvent())
@@ -114,19 +115,19 @@ func TestDecideHookUnknownModeIsTreatedAsObserve(t *testing.T) {
 	if decision.Decision != risk.DecisionAllow {
 		t.Fatalf("Decision = %v, want allow: only an explicit enforce mode may block", decision.Decision)
 	}
-	if len(decision.GithubPolicy) != 1 {
-		t.Fatalf("evaluations = %d, want dry-run recorded regardless of mode", len(decision.GithubPolicy))
+	if len(githubEvaluations(decision)) != 1 {
+		t.Fatalf("evaluations = %d, want dry-run recorded regardless of mode", len(githubEvaluations(decision)))
 	}
 }
 
 func TestDecideHookNonGithubEventsCarryNoEvaluations(t *testing.T) {
 	provider := NewRiskPolicyProviderWithOptions(RiskPolicyProviderOptions{
-		GithubPolicy: staticGithubPolicy{
+		ProviderPolicies: []ProviderPolicyBinding{GithubPolicyBinding(staticGithubPolicy{
 			snapshot: githubTestSnapshot(githubpolicy.ModeObserve,
 				githubpolicy.Rule{ID: "rule-allow", Layer: githubpolicy.LayerOrg, SubjectID: "org_test", Effect: githubpolicy.EffectAllow},
 			),
 			loaded: true,
-		},
+		})},
 	})
 
 	decision, err := provider.DecideHook(context.Background(), risk.HookEvent{
@@ -138,8 +139,8 @@ func TestDecideHookNonGithubEventsCarryNoEvaluations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecideHook() error = %v", err)
 	}
-	if len(decision.GithubPolicy) != 0 {
-		t.Fatalf("evaluations = %+v, want none for non-GitHub activity", decision.GithubPolicy)
+	if len(githubEvaluations(decision)) != 0 {
+		t.Fatalf("evaluations = %+v, want none for non-GitHub activity", githubEvaluations(decision))
 	}
 }
 
@@ -149,7 +150,18 @@ func TestDecideHookWithoutSnapshotProviderIsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecideHook() error = %v", err)
 	}
-	if decision.Decision != risk.DecisionAllow || len(decision.GithubPolicy) != 0 {
+	if decision.Decision != risk.DecisionAllow || len(githubEvaluations(decision)) != 0 {
 		t.Fatalf("decision = %+v, want plain allow with no evaluations", decision)
 	}
+}
+
+// githubEvaluations unwraps the github provider's evaluations from the
+// provider-keyed decision field, keeping these assertions readable.
+func githubEvaluations(decision risk.RiskDecision) []providerpolicy.Evaluation {
+	for _, group := range decision.ProviderPolicy {
+		if group.Provider == "github" {
+			return group.Evaluations
+		}
+	}
+	return nil
 }

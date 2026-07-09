@@ -366,3 +366,24 @@ func TestClassifyGitDashCUsesTargetContext(t *testing.T) {
 		t.Fatalf("git -C push = %+v, want %+v", got, want)
 	}
 }
+
+func TestClassifyCoworkWorkspaceBash(t *testing.T) {
+	// Claude Cowork runs shell commands through the mcp__workspace__bash MCP
+	// tool instead of a native Bash tool. The command string must classify
+	// exactly like a native bash invocation, or GitHub activity inside Cowork
+	// sessions is invisible to policy.
+	actions := ClassifyProviderActionsWithCWD(
+		"mcp__workspace__bash",
+		map[string]any{"command": "git push https://github.com/acme/api.git main"},
+		"",
+		func(string) GitContext { return GitContext{} },
+	)
+	want := []ProviderAction{{Action: "github.repo.write", Resource: "acme/api", BranchOrRef: "main"}}
+	if !reflect.DeepEqual(actions, want) {
+		t.Fatalf("ClassifyProviderActionsWithCWD(mcp__workspace__bash) = %+v, want %+v", actions, want)
+	}
+	// A non-shell workspace tool must not be treated as a command.
+	if actions := ClassifyProviderActionsWithCWD("mcp__workspace__read_file", map[string]any{"path": "x"}, "", nil); actions != nil {
+		t.Fatalf("workspace read_file classified: %+v", actions)
+	}
+}
