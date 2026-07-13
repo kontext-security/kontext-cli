@@ -105,6 +105,20 @@
       "expected": "PASS=[REDACTED_SECRET] login"
     },
     {
+      "name": "delimited-pass-segment-assignment",
+      "ruleId": "sensitive-assignment",
+      "input": "DB_PASS=db-secret-FAKE deploy",
+      "mustNotSurvive": ["db-secret-FAKE"],
+      "expected": "DB_PASS=[REDACTED_SECRET] deploy"
+    },
+    {
+      "name": "passwd-assignment",
+      "ruleId": "sensitive-assignment",
+      "input": "PASSWD=passwd-secret-FAKE su",
+      "mustNotSurvive": ["passwd-secret-FAKE"],
+      "expected": "PASSWD=[REDACTED_SECRET] su"
+    },
+    {
       "name": "assignment-unclosed-quote",
       "ruleId": "sensitive-assignment",
       "input": "TOKEN=\"unterminated-secret-FAKE",

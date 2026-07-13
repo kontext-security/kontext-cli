@@ -28,7 +28,7 @@
     },
     {
       "id": "bearer-auth",
-      "description": "Bearer authorization values of any non-empty length.",
+      "description": "Bearer authorization values of any non-empty length; fallback for non-header contexts. authorization-header runs first, so re-matching its placeholder output in header context is an intentional idempotent overlap.",
       "pattern": "\\b(Bearer\\s+)(?:\"(?:\\\\.|[^\"\\\\])*\"|'[^']*'|`(?:\\\\.|[^`\\\\])*`|[^\\s&;|)\"'`]+|[\"'`]\\S+)+",
       "replacement": "$1[REDACTED_SECRET]",
       "caseInsensitive": true,
@@ -108,7 +108,7 @@
     {
       "id": "json-sensitive-property",
       "description": "String values of credential-bearing properties in JSON embedded in flat text.",
-      "pattern": "(\"[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?(?:key|token)|refresh[_-]?token|client[_-]?secret|token|secret|password|pwd|pass|credential|private[_-]?key)[A-Za-z0-9_-]*\"\\s*:\\s*)\"(?:\\\\.|[^\"\\\\])*\"",
+      "pattern": "(\"(?:[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?(?:key|token)|refresh[_-]?token|client[_-]?secret|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_-]*|(?:[A-Za-z0-9]+[_-])*(?:pwd|pass)(?:[_-][A-Za-z0-9]+)*)\"\\s*:\\s*)\"(?:\\\\.|[^\"\\\\])*\"",
       "replacement": "$1\"[REDACTED_SECRET]\"",
       "caseInsensitive": true,
       "provenance": "structural"
@@ -116,7 +116,7 @@
     {
       "id": "sensitive-assignment",
       "description": "key=value / key: value assignments where the key names a credential.",
-      "pattern": "\\b([A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?(?:key|token)|refresh[_-]?token|client[_-]?secret|token|secret|password|pwd|pass|credential|private[_-]?key)[A-Za-z0-9_-]*\\s*[:=]\\s*)(?:\"(?:\\\\.|[^\"\\\\])*\"|'[^']*'|`(?:\\\\.|[^`\\\\])*`|[^\\s&;|)\"'`]+|[\"'`]\\S+)+",
+      "pattern": "\\b((?:[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?(?:key|token)|refresh[_-]?token|client[_-]?secret|token|secret|password|passwd|credential|private[_-]?key)[A-Za-z0-9_-]*|(?:[A-Za-z0-9]+[_-])*(?:pwd|pass)(?:[_-][A-Za-z0-9]+)*)\\s*[:=]\\s*)(?:\"(?:\\\\.|[^\"\\\\])*\"|'[^']*'|`(?:\\\\.|[^`\\\\])*`|[^\\s&;|)\"'`]+|[\"'`]\\S+)+",
       "replacement": "$1[REDACTED_SECRET]",
       "caseInsensitive": true,
       "provenance": "structural"

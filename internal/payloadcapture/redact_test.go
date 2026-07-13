@@ -87,15 +87,19 @@ func TestRedactionCoverage(t *testing.T) {
 	}
 }
 
-// TestRedactTextLeavesProseAlone pins the false-positive boundary of the
-// bare Basic rule: a short word after "basic" is prose, not a credential.
-// Authorization-header context redacts Basic values at any length.
+// TestRedactTextLeavesProseAlone pins false-positive boundaries: a short
+// word after "basic" is prose (Authorization-header context redacts Basic
+// values at any length), and pwd/pass only classify a key when they form a
+// complete _/- delimited segment of its name.
 func TestRedactTextLeavesProseAlone(t *testing.T) {
 	t.Parallel()
 
 	for _, input := range []string{
 		"pip install basic package",
 		"see the basic auth docs",
+		"BYPASS=true deploy",
+		"OLDPWD=/home/user ls",
+		"COMPASS=north run",
 	} {
 		redacted, changed := RedactText(input)
 		if changed || redacted != input {
