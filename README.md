@@ -40,6 +40,8 @@ kontext setup
 
 Re-run `kontext setup` to rotate the stored token. Run `kontext setup --uninstall` to remove the user-level config, hooks, LaunchAgent, and keychain token that setup installed; local logs and observe data are kept, and organization-managed hooks are left in place. Self-serve setup is currently macOS only.
 
+Run `kontext doctor` to inspect the daemon version, heartbeat, and export backlog. When upgrading from a release that predates automatic stale-binary recovery, run `kontext doctor --fix` once if doctor reports an old or unknown daemon version; subsequent Homebrew upgrades restart the daemon automatically.
+
 ## Core features
 
 Kontext balances security and utility for AI agents: low-risk actions keep moving, and unsafe actions can be blocked before they execute.

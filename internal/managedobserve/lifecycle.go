@@ -162,13 +162,28 @@ func deadlineOr(ctx context.Context, fallback time.Time) time.Time {
 }
 
 func KickstartLaunchd(ctx context.Context, label string) error {
+	return kickstartLaunchd(ctx, label, false)
+}
+
+// KickstartLaunchdKill runs launchctl kickstart with -k, which kills the
+// running instance first; used to replace a daemon still running a stale binary.
+func KickstartLaunchdKill(ctx context.Context, label string) error {
+	return kickstartLaunchd(ctx, label, true)
+}
+
+func kickstartLaunchd(ctx context.Context, label string, kill bool) error {
 	if runtime.GOOS != "darwin" {
 		return nil
 	}
 	if label == "" {
 		return errors.New("launchd label is required")
 	}
-	cmd := exec.CommandContext(ctx, "launchctl", "kickstart", "gui/"+itoa(os.Getuid())+"/"+label)
+	args := []string{"kickstart"}
+	if kill {
+		args = append(args, "-k")
+	}
+	args = append(args, "gui/"+itoa(os.Getuid())+"/"+label)
+	cmd := exec.CommandContext(ctx, "launchctl", args...)
 	return cmd.Run()
 }
 
