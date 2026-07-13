@@ -703,6 +703,22 @@ func TestJudgeInputClassifiesCredentialPathForNonReadTools(t *testing.T) {
 	}
 }
 
+func TestJudgeInputPreservesRedactedCommandSeparators(t *testing.T) {
+	event := risk.HookEvent{
+		ToolName:  "Bash",
+		ToolInput: map[string]any{"command": "printf ok;TOKEN=secret echo next"},
+	}
+	riskEvent := risk.NormalizeHookEvent(event)
+	input := judgeInputFromRiskEvent(event, riskEvent)
+
+	if input.ToolInput.Command != "printf ok;[REDACTED_SECRET] echo next" {
+		t.Fatalf("judge command = %q", input.ToolInput.Command)
+	}
+	if strings.Contains(input.ToolInput.Command, "secret") {
+		t.Fatalf("judge command leaked credential: %q", input.ToolInput.Command)
+	}
+}
+
 func TestJudgeInputDescribesPathOnlyLocalReads(t *testing.T) {
 	rawPath := "/Users/michelosswald/.codex/worktrees/a693/kontext-cli/internal/guard/policy/types.go"
 	input := judgeInputFromRiskEvent(

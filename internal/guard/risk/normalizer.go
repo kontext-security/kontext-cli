@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/kontext-security/kontext-cli/internal/payloadcapture"
 )
@@ -14,6 +15,27 @@ import (
 var credentialReference = regexp.MustCompile(`(?i)(authorization\s*:|bearer\s+[a-z0-9._~+/=-]+|api[_-]?key\s*[=:]|secret\s*[=:]|token\s*[=:]|\$[A-Z0-9_]*(TOKEN|SECRET|API_KEY|ACCESS_KEY)[A-Z0-9_]*)`)
 var destructiveWord = regexp.MustCompile(`(?i)\b(delete|destroy|drop|truncate|wipe)\b`)
 var resourceWord = regexp.MustCompile(`(?i)\b(database|volume|backup|bucket|project|repo|repository|branch|deployment|namespace|secret)\b`)
+
+// The rules/1 sensitive-assignment pattern consumes its leading delimiter,
+// and rules/1 does not cover every shape handled by the legacy summary
+// redactor. Apply these summary-only compatibility patterns first so migrating
+// summaries to the shared ruleset neither changes shell structure nor leaks
+// credential shapes that were previously redacted. Remove them when the next
+// coordinated ruleset version provides equivalent coverage.
+const summaryCredentialValuePattern = `(?:"[^"]*"|'[^']*'|` + "`[^`]*`" + `|[^\s&;|)"'` + "`" + `]+)+`
+
+var summaryCredentialAssignment = regexp.MustCompile(`(?i)\b[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?(?:key|token)|refresh[_-]?token|client[_-]?secret|token|secret|password|pwd|pass|credential|private[_-]?key)[A-Za-z0-9_-]*\s*[:=]\s*` + summaryCredentialValuePattern)
+var summaryCredentialFlag = regexp.MustCompile(`(?i)--(?:api[-_]?key|access[-_]?(?:key|token)|refresh[-_]?token|client[-_]?secret|token|secret|password|pwd|pass|credential|private[-_]?key)[= ]` + summaryCredentialValuePattern)
+var summaryAuthorizationHeader = regexp.MustCompile(`(?i)\bauthorization\s*:\s*(?:(?:bearer|basic)\s+)?` + summaryCredentialValuePattern)
+var summaryBearer = regexp.MustCompile(`(?i)\bbearer\s+` + summaryCredentialValuePattern)
+var summaryCredentialQuery = regexp.MustCompile(`(?i)([?&])(?:access[-_]?token|api[-_]?key|client[-_]?secret|code|key|password|pwd|pass|refresh[-_]?token|secret|token)=` + summaryCredentialValuePattern)
+
+const (
+	maxCommandSummaryBytes        = 240
+	maxSummaryRedactionInputBytes = 64 << 10
+	oversizedCommandSummary       = "[command omitted: exceeds summary limit]"
+)
+
 var directProviderHosts = map[string]string{
 	"api.railway.app":      "railway",
 	"railway.app":          "railway",
@@ -27,13 +49,21 @@ var directProviderHosts = map[string]string{
 
 func NormalizeHookEvent(event HookEvent) RiskEvent {
 	toolName := strings.TrimSpace(event.ToolName)
-	inputText := strings.ToLower(MarshalInput(event.ToolInput))
 	command := commandFromInput(event.ToolInput)
 	path := pathFromInput(event.ToolInput)
+	inputText := ""
+	if command == "" {
+		inputText = strings.ToLower(MarshalInput(event.ToolInput))
+	}
 	commandSignalText := commandRiskText(command)
 	environmentText := inputText + " " + strings.ToLower(path)
 	if command != "" {
 		environmentText = strings.ToLower(commandSignalText + " " + path)
+	}
+	commandSummary := summarizeCommand(command)
+	requestSummary := summarizeRequest(toolName, path)
+	if command != "" {
+		requestSummary = commandSummary
 	}
 	riskEvent := RiskEvent{
 		Type:             EventNormalToolCall,
@@ -41,8 +71,8 @@ func NormalizeHookEvent(event HookEvent) RiskEvent {
 		OperationClass:   "unknown",
 		ResourceClass:    "unknown",
 		Environment:      environmentFromText(environmentText),
-		CommandSummary:   redact(command),
-		RequestSummary:   summarizeRequest(toolName, path, command),
+		CommandSummary:   commandSummary,
+		RequestSummary:   requestSummary,
 		Confidence:       0.75,
 	}
 
@@ -296,10 +326,8 @@ func looksUnknownHighRisk(text string) bool {
 	return strings.Contains(text, "sudo ") || strings.Contains(text, "rm -rf") || strings.Contains(text, "chmod 777")
 }
 
-func summarizeRequest(toolName, path, command string) string {
+func summarizeRequest(toolName, path string) string {
 	switch {
-	case command != "":
-		return redact(command)
 	case path != "":
 		return fmt.Sprintf("%s %s", toolName, path)
 	default:
@@ -307,15 +335,29 @@ func summarizeRequest(toolName, path, command string) string {
 	}
 }
 
-// redact produces the summary form of a command: secrets are removed by the
-// shared payloadcapture ruleset, then the result is truncated for display.
+// summarizeCommand produces the summary form of a command: secrets are
+// removed by the shared payloadcapture ruleset, then the result is truncated
+// for display. Oversized inputs fail closed because truncating before
+// redaction could split a secret match and expose its prefix.
 // Classification never consumes this output — signal detection (e.g.
 // observesCredential) runs on the raw command, because redaction removes the
 // exact shapes those detectors match.
-func redact(value string) string {
+func summarizeCommand(value string) string {
+	if len(value) > maxSummaryRedactionInputBytes {
+		return oversizedCommandSummary
+	}
+	value = summaryCredentialFlag.ReplaceAllString(value, payloadcapture.RedactedPlaceholder)
+	value = summaryCredentialQuery.ReplaceAllString(value, "${1}"+payloadcapture.RedactedPlaceholder)
+	value = summaryCredentialAssignment.ReplaceAllString(value, payloadcapture.RedactedPlaceholder)
+	value = summaryAuthorizationHeader.ReplaceAllString(value, payloadcapture.RedactedPlaceholder)
+	value = summaryBearer.ReplaceAllString(value, payloadcapture.RedactedPlaceholder)
 	redacted, _ := payloadcapture.RedactText(value)
-	if len(redacted) > 240 {
-		return redacted[:240] + "..."
+	if len(redacted) > maxCommandSummaryBytes {
+		end := maxCommandSummaryBytes
+		for end > 0 && !utf8.RuneStart(redacted[end]) {
+			end--
+		}
+		return redacted[:end] + "..."
 	}
 	return redacted
 }
