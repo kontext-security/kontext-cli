@@ -87,6 +87,23 @@ func TestRedactionCoverage(t *testing.T) {
 	}
 }
 
+// TestRedactTextLeavesProseAlone pins the false-positive boundary of the
+// bare Basic rule: a short word after "basic" is prose, not a credential.
+// Authorization-header context redacts Basic values at any length.
+func TestRedactTextLeavesProseAlone(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{
+		"pip install basic package",
+		"see the basic auth docs",
+	} {
+		redacted, changed := RedactText(input)
+		if changed || redacted != input {
+			t.Fatalf("prose was redacted: %q -> %q", input, redacted)
+		}
+	}
+}
+
 // TestRedactionCoverageIsOrderIndependent guards the coverage invariant
 // against rule interference: an earlier rule's placeholder substitution must
 // not prevent a later rule from catching its secret, regardless of the order

@@ -206,6 +206,8 @@ func TestNormalizeRedactsCredentialValuesFromSummaries(t *testing.T) {
 		{"query separator", `curl 'https://x.test?code=query-secret&state=x'`, "query-secret", `curl 'https://x.test?code=[REDACTED_SECRET]&state=x'`},
 		{"json command", `curl -d '{"password":"json-secret-123"}'`, "json-secret-123", `curl -d '{"password":"[REDACTED_SECRET]"}'`},
 		{"curl user password", `curl -u user:curl-secret-123 https://x.test`, "curl-secret-123", `curl -u [REDACTED_SECRET] https://x.test`},
+		{"unclosed quote", `TOKEN="unterminated-secret`, "unterminated-secret", `TOKEN=[REDACTED_SECRET]`},
+		{"unclosed quote mid-value", `TOKEN=a"broken-secret deploy`, "broken-secret", `TOKEN=[REDACTED_SECRET] deploy`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

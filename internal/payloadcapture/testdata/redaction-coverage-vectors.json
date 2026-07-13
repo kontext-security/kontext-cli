@@ -8,10 +8,17 @@
     },
     {
       "name": "bearer-header",
-      "ruleId": "bearer-basic-auth",
+      "ruleId": "bearer-auth",
       "input": "echo Bearer abc123",
       "mustNotSurvive": ["abc123"],
       "expected": "echo Bearer [REDACTED_SECRET]"
+    },
+    {
+      "name": "bare-basic-auth",
+      "ruleId": "basic-auth",
+      "input": "echo Basic dXNlcjpwYXNzd29yZA== done",
+      "mustNotSurvive": ["dXNlcjpwYXNzd29yZA=="],
+      "expected": "echo Basic [REDACTED_SECRET] done"
     },
     {
       "name": "plain-authorization-header",
@@ -96,6 +103,20 @@
       "input": "PASS=pass-secret-FAKE login",
       "mustNotSurvive": ["pass-secret-FAKE"],
       "expected": "PASS=[REDACTED_SECRET] login"
+    },
+    {
+      "name": "assignment-unclosed-quote",
+      "ruleId": "sensitive-assignment",
+      "input": "TOKEN=\"unterminated-secret-FAKE",
+      "mustNotSurvive": ["unterminated-secret-FAKE"],
+      "expected": "TOKEN=[REDACTED_SECRET]"
+    },
+    {
+      "name": "assignment-unclosed-quote-mid-value",
+      "ruleId": "sensitive-assignment",
+      "input": "TOKEN=a\"broken-secret-FAKE deploy",
+      "mustNotSurvive": ["broken-secret-FAKE"],
+      "expected": "TOKEN=[REDACTED_SECRET] deploy"
     },
     {
       "name": "json-embedded-password",
