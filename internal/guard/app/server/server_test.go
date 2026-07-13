@@ -711,7 +711,7 @@ func TestJudgeInputPreservesRedactedCommandSeparators(t *testing.T) {
 	riskEvent := risk.NormalizeHookEvent(event)
 	input := judgeInputFromRiskEvent(event, riskEvent)
 
-	if input.ToolInput.Command != "printf ok;[REDACTED_SECRET] echo next" {
+	if input.ToolInput.Command != "printf ok;TOKEN=[REDACTED_SECRET] echo next" {
 		t.Fatalf("judge command = %q", input.ToolInput.Command)
 	}
 	if strings.Contains(input.ToolInput.Command, "secret") {

@@ -12,6 +12,7 @@ type coverageVectors struct {
 		RuleID         string   `json:"ruleId"`
 		Input          string   `json:"input"`
 		MustNotSurvive []string `json:"mustNotSurvive"`
+		Expected       string   `json:"expected"`
 	} `json:"valueVectors"`
 	KeyVectors []struct {
 		Name      string `json:"name"`
@@ -69,6 +70,9 @@ func TestRedactionCoverage(t *testing.T) {
 			if !strings.Contains(redacted, RedactedPlaceholder) {
 				t.Fatalf("placeholder missing from %q", redacted)
 			}
+			if vector.Expected != "" && redacted != vector.Expected {
+				t.Fatalf("redacted = %q, want %q", redacted, vector.Expected)
+			}
 		})
 	}
 
@@ -95,7 +99,7 @@ func TestRedactionCoverageIsOrderIndependent(t *testing.T) {
 
 	apply := func(rules []compiledRule, input string) string {
 		for _, rule := range rules {
-			input = rule.re.ReplaceAllString(input, RedactedPlaceholder)
+			input = rule.re.ReplaceAllString(input, rule.replacement)
 		}
 		return input
 	}

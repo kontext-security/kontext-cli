@@ -16,20 +16,6 @@ var credentialReference = regexp.MustCompile(`(?i)(authorization\s*:|bearer\s+[a
 var destructiveWord = regexp.MustCompile(`(?i)\b(delete|destroy|drop|truncate|wipe)\b`)
 var resourceWord = regexp.MustCompile(`(?i)\b(database|volume|backup|bucket|project|repo|repository|branch|deployment|namespace|secret)\b`)
 
-// The rules/1 sensitive-assignment pattern consumes its leading delimiter,
-// and rules/1 does not cover every shape handled by the legacy summary
-// redactor. Apply these summary-only compatibility patterns first so migrating
-// summaries to the shared ruleset neither changes shell structure nor leaks
-// credential shapes that were previously redacted. Remove them when the next
-// coordinated ruleset version provides equivalent coverage.
-const summaryCredentialValuePattern = `(?:"[^"]*"|'[^']*'|` + "`[^`]*`" + `|[^\s&;|)"'` + "`" + `]+)+`
-
-var summaryCredentialAssignment = regexp.MustCompile(`(?i)\b[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?(?:key|token)|refresh[_-]?token|client[_-]?secret|token|secret|password|pwd|pass|credential|private[_-]?key)[A-Za-z0-9_-]*\s*[:=]\s*` + summaryCredentialValuePattern)
-var summaryCredentialFlag = regexp.MustCompile(`(?i)--(?:api[-_]?key|access[-_]?(?:key|token)|refresh[-_]?token|client[-_]?secret|token|secret|password|pwd|pass|credential|private[-_]?key)[= ]` + summaryCredentialValuePattern)
-var summaryAuthorizationHeader = regexp.MustCompile(`(?i)\bauthorization\s*:\s*(?:(?:bearer|basic)\s+)?` + summaryCredentialValuePattern)
-var summaryBearer = regexp.MustCompile(`(?i)\bbearer\s+` + summaryCredentialValuePattern)
-var summaryCredentialQuery = regexp.MustCompile(`(?i)([?&])(?:access[-_]?token|api[-_]?key|client[-_]?secret|code|key|password|pwd|pass|refresh[-_]?token|secret|token)=` + summaryCredentialValuePattern)
-
 const (
 	maxCommandSummaryBytes        = 240
 	maxSummaryRedactionInputBytes = 64 << 10
@@ -346,11 +332,6 @@ func summarizeCommand(value string) string {
 	if len(value) > maxSummaryRedactionInputBytes {
 		return oversizedCommandSummary
 	}
-	value = summaryCredentialFlag.ReplaceAllString(value, payloadcapture.RedactedPlaceholder)
-	value = summaryCredentialQuery.ReplaceAllString(value, "${1}"+payloadcapture.RedactedPlaceholder)
-	value = summaryCredentialAssignment.ReplaceAllString(value, payloadcapture.RedactedPlaceholder)
-	value = summaryAuthorizationHeader.ReplaceAllString(value, payloadcapture.RedactedPlaceholder)
-	value = summaryBearer.ReplaceAllString(value, payloadcapture.RedactedPlaceholder)
 	redacted, _ := payloadcapture.RedactText(value)
 	if len(redacted) > maxCommandSummaryBytes {
 		end := maxCommandSummaryBytes
