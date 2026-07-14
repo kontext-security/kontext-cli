@@ -1,0 +1,55 @@
+[
+  {
+    "version": 1,
+    "name": "null-inside-set",
+    "toolInput": { "values": ["one", null] },
+    "expectedCode": "null_in_set",
+    "expectedPath": "/values/1"
+  },
+  {
+    "version": 1,
+    "name": "unsafe-integer",
+    "toolInput": { "value": 9007199254740992 },
+    "expectedCode": "unsafe_integer",
+    "expectedPath": "/value"
+  },
+  {
+    "version": 1,
+    "name": "too-many-decimal-places",
+    "toolInput": { "value": 1.23456 },
+    "expectedCode": "unsupported_decimal",
+    "expectedPath": "/value"
+  },
+  {
+    "version": 1,
+    "name": "reserved-entity-escape",
+    "toolInput": {
+      "value": { "__entity": { "type": "Kontext::User", "id": "mallory" } }
+    },
+    "expectedCode": "reserved_cedar_escape",
+    "expectedPath": "/value"
+  },
+  {
+    "version": 1,
+    "name": "reserved-extension-escape",
+    "toolInput": {
+      "value": { "__extn": { "fn": "decimal", "arg": "1.0" } }
+    },
+    "expectedCode": "reserved_cedar_escape",
+    "expectedPath": "/value"
+  },
+  {
+    "version": 1,
+    "name": "maximum-depth-exceeded",
+    "inputGenerator": { "kind": "nested-record", "depth": 33 },
+    "expectedCode": "maximum_depth_exceeded",
+    "expectedPath": "/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value/value"
+  },
+  {
+    "version": 1,
+    "name": "maximum-values-exceeded",
+    "inputGenerator": { "kind": "wide-array", "length": 10000 },
+    "expectedCode": "maximum_values_exceeded",
+    "expectedPath": "/values/9998"
+  }
+]

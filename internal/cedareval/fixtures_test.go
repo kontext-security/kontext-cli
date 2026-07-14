@@ -1,0 +1,354 @@
+package cedareval_test
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/kontext-security/kontext-cli/internal/agent"
+	"github.com/kontext-security/kontext-cli/internal/agent/claude"
+	"github.com/kontext-security/kontext-cli/internal/agent/codex"
+	"github.com/kontext-security/kontext-cli/internal/agent/cowork"
+	"github.com/kontext-security/kontext-cli/internal/cedareval"
+)
+
+const portableFixtureContractVersion = 1
+
+var fixtureDigests = map[string]string{
+	"authorization-v1.json":  "93d2053cffba8a59a6fe29a68f61cb8b6e7f2ecde0713fff2b790d293287d82d",
+	"context-errors-v1.json": "5c9d2bf34330cf084b8123a4bda9298edd5359e71579cf0b22a9df9b1cb8f0fe",
+	"hashing-v1.json":        "941cd2a42191a8c2817db8aba19831817ff9edf0d61f9ee98cadc908b09c3179",
+}
+
+type authorizationFixture struct {
+	Version     int                    `json:"version"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Policies    []string               `json:"policies"`
+	Request     cedareval.ToolUseInput `json:"request"`
+	Expected    struct {
+		Decision             cedareval.Decision            `json:"decision"`
+		Ask                  bool                          `json:"ask"`
+		DeterminingPolicyIDs []string                      `json:"determiningPolicyIds"`
+		ContextDiagnostics   []cedareval.ContextDiagnostic `json:"contextDiagnostics"`
+	} `json:"expected"`
+}
+
+type contextErrorFixture struct {
+	Version        int            `json:"version"`
+	Name           string         `json:"name"`
+	ToolInput      map[string]any `json:"toolInput"`
+	InputGenerator *struct {
+		Kind   string `json:"kind"`
+		Depth  int    `json:"depth"`
+		Length int    `json:"length"`
+	} `json:"inputGenerator"`
+	ExpectedCode string `json:"expectedCode"`
+	ExpectedPath string `json:"expectedPath"`
+}
+
+type hashFixture struct {
+	Version             int                           `json:"version"`
+	Name                string                        `json:"name"`
+	PolicyText          string                        `json:"policyText"`
+	Revision            string                        `json:"revision"`
+	RolloutMode         string                        `json:"rolloutMode"`
+	EvaluationPrincipal cedareval.EvaluationPrincipal `json:"evaluationPrincipal"`
+	ExpectedPolicyHash  string                        `json:"expectedPolicyHash"`
+	ExpectedPreimage    string                        `json:"expectedDeploymentPreimage"`
+	ExpectedIdentity    string                        `json:"expectedDeploymentIdentity"`
+}
+
+func TestPortableFixtureProvenance(t *testing.T) {
+	t.Parallel()
+
+	if portableFixtureContractVersion != cedareval.RequestContractVersion {
+		t.Fatalf(
+			"fixture contract version = %d, want request contract version %d",
+			portableFixtureContractVersion,
+			cedareval.RequestContractVersion,
+		)
+	}
+	for name, expected := range fixtureDigests {
+		name := name
+		expected := expected
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			contents, err := os.ReadFile(filepath.Join("testdata", "portable", "v1", name))
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			sum := sha256.Sum256(contents)
+			if got := hex.EncodeToString(sum[:]); got != expected {
+				t.Fatalf("fixture digest = %s, want %s", got, expected)
+			}
+		})
+	}
+}
+
+func TestPortableAuthorizationFixtures(t *testing.T) {
+	var fixtures []authorizationFixture
+	readFixture(t, "authorization-v1.json", &fixtures)
+
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture.Name, func(t *testing.T) {
+			t.Parallel()
+			evaluator, err := cedareval.New(strings.Join(fixture.Policies, "\n\n"))
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			result, err := evaluator.Evaluate(fixture.Request)
+			if err != nil {
+				t.Fatalf("Evaluate() error = %v", err)
+			}
+			if result.Decision != fixture.Expected.Decision {
+				t.Errorf("Decision = %q, want %q", result.Decision, fixture.Expected.Decision)
+			}
+			if result.Ask != fixture.Expected.Ask {
+				t.Errorf("Ask = %v, want %v", result.Ask, fixture.Expected.Ask)
+			}
+			if !reflect.DeepEqual(result.DeterminingPolicyIDs, fixture.Expected.DeterminingPolicyIDs) {
+				t.Errorf("DeterminingPolicyIDs = %v, want %v", result.DeterminingPolicyIDs, fixture.Expected.DeterminingPolicyIDs)
+			}
+			if !reflect.DeepEqual(result.ContextDiagnostics, fixture.Expected.ContextDiagnostics) {
+				t.Errorf("ContextDiagnostics = %v, want %v", result.ContextDiagnostics, fixture.Expected.ContextDiagnostics)
+			}
+			if len(result.EngineDiagnostics.Errors) != 0 {
+				t.Errorf("EngineDiagnostics.Errors = %v, want none", result.EngineDiagnostics.Errors)
+			}
+		})
+	}
+}
+
+func TestPortableContextErrorFixtures(t *testing.T) {
+	var fixtures []contextErrorFixture
+	readFixture(t, "context-errors-v1.json", &fixtures)
+
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture.Name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := cedareval.ConvertToolInput(contextErrorInput(t, fixture))
+			var conversionError *cedareval.ConversionError
+			if !errors.As(err, &conversionError) {
+				t.Fatalf("ConvertToolInput() error = %v, want ConversionError", err)
+			}
+			if conversionError.Code != fixture.ExpectedCode || conversionError.Path != fixture.ExpectedPath {
+				t.Fatalf(
+					"ConversionError = (%q, %q), want (%q, %q)",
+					conversionError.Code,
+					conversionError.Path,
+					fixture.ExpectedCode,
+					fixture.ExpectedPath,
+				)
+			}
+		})
+	}
+}
+
+func contextErrorInput(t *testing.T, fixture contextErrorFixture) map[string]any {
+	t.Helper()
+	if fixture.InputGenerator == nil {
+		return fixture.ToolInput
+	}
+
+	switch fixture.InputGenerator.Kind {
+	case "nested-record":
+		var value any = map[string]any{}
+		for range fixture.InputGenerator.Depth {
+			value = map[string]any{"value": value}
+		}
+		return value.(map[string]any)
+	case "wide-array":
+		values := make([]any, fixture.InputGenerator.Length)
+		for i := range values {
+			values[i] = i
+		}
+		return map[string]any{"values": values}
+	default:
+		t.Fatalf("unsupported input generator %q", fixture.InputGenerator.Kind)
+		return nil
+	}
+}
+
+func TestPortableHashFixtures(t *testing.T) {
+	var fixtures []hashFixture
+	readFixture(t, "hashing-v1.json", &fixtures)
+
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture.Name, func(t *testing.T) {
+			t.Parallel()
+			policyHash := cedareval.ComputePolicyHash(fixture.PolicyText)
+			if policyHash != fixture.ExpectedPolicyHash {
+				t.Fatalf("ComputePolicyHash() = %q, want %q", policyHash, fixture.ExpectedPolicyHash)
+			}
+			input := cedareval.DeploymentIdentityInput{
+				ResponseVersion:        1,
+				RequestContractVersion: cedareval.RequestContractVersion,
+				Revision:               fixture.Revision,
+				PolicyHash:             policyHash,
+				RolloutMode:            fixture.RolloutMode,
+				EvaluationPrincipal:    fixture.EvaluationPrincipal,
+			}
+			preimage, err := cedareval.DeploymentIdentityPreimage(input)
+			if err != nil {
+				t.Fatalf("DeploymentIdentityPreimage() error = %v", err)
+			}
+			if preimage != fixture.ExpectedPreimage {
+				t.Errorf("DeploymentIdentityPreimage() = %q, want %q", preimage, fixture.ExpectedPreimage)
+			}
+			identity, err := cedareval.ComputeDeploymentIdentity(input)
+			if err != nil {
+				t.Fatalf("ComputeDeploymentIdentity() error = %v", err)
+			}
+			if identity != fixture.ExpectedIdentity {
+				t.Errorf("ComputeDeploymentIdentity() = %q, want %q", identity, fixture.ExpectedIdentity)
+			}
+		})
+	}
+}
+
+func TestRegisteredAdapterBoundaries(t *testing.T) {
+	t.Parallel()
+
+	policy := `@id("allow_input")
+permit(principal, action == Kontext::Action::"ToolUse", resource == Kontext::Tool::"CustomTool")
+when { context has risk && context.risk == decimal("1.25") };`
+	evaluator, err := cedareval.New(policy)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	principal := cedareval.EvaluationPrincipal{
+		EntityType: cedareval.PrincipalEntityType,
+		EntityID:   "alice@example.com",
+	}
+	tests := []struct {
+		name    string
+		agent   agent.Agent
+		payload string
+	}{
+		{
+			name:    "claude",
+			agent:   &claude.Claude{},
+			payload: `{"hook_event_name":"PreToolUse","tool_name":"CustomTool","tool_input":{"risk":1.25}}`,
+		},
+		{
+			name:    "cowork",
+			agent:   &cowork.Cowork{},
+			payload: `{"hook_event_name":"PreToolUse","tool_name":"CustomTool","tool_input":{"risk":1.25}}`,
+		},
+		{
+			name:    "codex",
+			agent:   &codex.Codex{},
+			payload: `{"hook_event_name":"PreToolUse","tool_name":"CustomTool","tool_input":{"risk":1.25}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			event, err := tt.agent.DecodeHookInput([]byte(tt.payload))
+			if err != nil {
+				t.Fatalf("DecodeHookInput() error = %v", err)
+			}
+			input, err := cedareval.InputFromEvent(principal, event)
+			if err != nil {
+				t.Fatalf("InputFromEvent() error = %v", err)
+			}
+			result, err := evaluator.Evaluate(input)
+			if err != nil {
+				t.Fatalf("Evaluate() error = %v", err)
+			}
+			if result.Decision != cedareval.DecisionAllow {
+				t.Fatalf("Decision = %q, want allow", result.Decision)
+			}
+		})
+	}
+}
+
+func TestEvaluatorDoesNotMutateInputAndSupportsConcurrentUse(t *testing.T) {
+	t.Parallel()
+
+	evaluator, err := cedareval.New(`@id("allow") permit(principal, action, resource);`)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	input := cedareval.ToolUseInput{
+		EvaluationPrincipal: cedareval.EvaluationPrincipal{
+			EntityType: cedareval.PrincipalEntityType,
+			EntityID:   "alice@example.com",
+		},
+		ToolName: "CustomTool",
+		ToolInput: map[string]any{
+			"nested": map[string]any{"enabled": true},
+			"values": []any{"one", "one", "two"},
+			"unused": nil,
+		},
+	}
+	original := cloneJSONMap(t, input.ToolInput)
+
+	const workers = 32
+	var waitGroup sync.WaitGroup
+	errorsChannel := make(chan error, workers)
+	for range workers {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			result, err := evaluator.Evaluate(input)
+			if err != nil {
+				errorsChannel <- err
+				return
+			}
+			if result.Decision != cedareval.DecisionAllow {
+				errorsChannel <- errors.New("unexpected deny")
+			}
+		}()
+	}
+	waitGroup.Wait()
+	close(errorsChannel)
+	for err := range errorsChannel {
+		t.Errorf("concurrent Evaluate() error = %v", err)
+	}
+	if !reflect.DeepEqual(input.ToolInput, original) {
+		t.Fatalf("Evaluate() mutated input: got %v, want %v", input.ToolInput, original)
+	}
+}
+
+func readFixture(t *testing.T, name string, destination any) {
+	t.Helper()
+	contents, err := os.ReadFile(filepath.Join("testdata", "portable", "v1", name))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.UseNumber()
+	if err := decoder.Decode(destination); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+}
+
+func cloneJSONMap(t *testing.T, value map[string]any) map[string]any {
+	t.Helper()
+	contents, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var clone map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.UseNumber()
+	if err := decoder.Decode(&clone); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	return clone
+}

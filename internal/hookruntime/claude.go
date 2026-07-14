@@ -46,7 +46,7 @@ type claudeHookSpecificOutput struct {
 
 func DecodeClaudeEvent(input []byte, agentName string) (hook.Event, error) {
 	var h claudeHookInput
-	if err := json.Unmarshal(input, &h); err != nil {
+	if err := decodeUseNumber(input, &h); err != nil {
 		return hook.Event{}, fmt.Errorf("claude: decode hook input: %w", err)
 	}
 	hookName := firstString(h.HookEventName, h.HookEventNameAlt, h.HookEventLegacy)

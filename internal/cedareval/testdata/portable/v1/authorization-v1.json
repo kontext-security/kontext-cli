@@ -1,0 +1,210 @@
+[
+  {
+    "version": 1,
+    "name": "default-deny",
+    "description": "No satisfied permit produces Cedar's default deny.",
+    "policies": [
+      "@id(\"never\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource) when { false };"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "Read",
+      "toolInput": { "file_path": "/tmp/example.txt" }
+    },
+    "expected": {
+      "decision": "deny",
+      "ask": false,
+      "determiningPolicyIds": [],
+      "contextDiagnostics": []
+    }
+  },
+  {
+    "version": 1,
+    "name": "bash-command-allow",
+    "description": "A runtime-native command field can authorize an exact tool name.",
+    "policies": [
+      "@id(\"bash_status\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"Bash\") when { context has command && context.command like \"git status*\" };"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "Bash",
+      "toolInput": { "command": "git status --short" }
+    },
+    "expected": {
+      "decision": "allow",
+      "ask": false,
+      "determiningPolicyIds": ["bash_status"],
+      "contextDiagnostics": []
+    }
+  },
+  {
+    "version": 1,
+    "name": "exact-external-tool-name",
+    "description": "An external runtime tool name is preserved without provider canonicalization.",
+    "policies": [
+      "@id(\"create_pr\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"mcp__github__create_pull_request\") when { context has owner && context.owner == \"kontext-security\" };"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "mcp__github__create_pull_request",
+      "toolInput": {
+        "owner": "kontext-security",
+        "repo": "kontext"
+      }
+    },
+    "expected": {
+      "decision": "allow",
+      "ask": false,
+      "determiningPolicyIds": ["create_pr"],
+      "contextDiagnostics": []
+    }
+  },
+  {
+    "version": 1,
+    "name": "principal-is-structured-and-constrained",
+    "description": "A policy constrained to Alice does not match Bob's structured principal binding.",
+    "policies": [
+      "@id(\"alice_only\")\npermit(principal == Kontext::User::\"alice@example.com\", action == Kontext::Action::\"ToolUse\", resource);"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "bob@example.com"
+      },
+      "toolName": "Read",
+      "toolInput": {}
+    },
+    "expected": {
+      "decision": "deny",
+      "ask": false,
+      "determiningPolicyIds": [],
+      "contextDiagnostics": []
+    }
+  },
+  {
+    "version": 1,
+    "name": "forbid-overrides-permit",
+    "description": "A satisfied forbid overrides a broad permit.",
+    "policies": [
+      "@id(\"allow_tools\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource);",
+      "@id(\"deny_rm\")\nforbid(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"Bash\") when { !(context has command) || context.command like \"rm *\" };"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "Bash",
+      "toolInput": { "command": "rm -rf build" }
+    },
+    "expected": {
+      "decision": "deny",
+      "ask": false,
+      "determiningPolicyIds": ["deny_rm"],
+      "contextDiagnostics": []
+    }
+  },
+  {
+    "version": 1,
+    "name": "ask-only-allow",
+    "description": "An allow determined entirely by prompt permits derives ask.",
+    "policies": [
+      "@id(\"ask_bash\")\n@ask(\"prompt\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"Bash\");"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "Bash",
+      "toolInput": { "command": "git push" }
+    },
+    "expected": {
+      "decision": "allow",
+      "ask": true,
+      "determiningPolicyIds": ["ask_bash"],
+      "contextDiagnostics": []
+    }
+  },
+  {
+    "version": 1,
+    "name": "normal-permit-defeats-ask",
+    "description": "A normal determining permit independently authorizes a request that also matches an ask permit.",
+    "policies": [
+      "@id(\"ask_bash\")\n@ask(\"prompt\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"Bash\");",
+      "@id(\"allow_status\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"Bash\") when { context has command && context.command like \"git status*\" };"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "Bash",
+      "toolInput": { "command": "git status" }
+    },
+    "expected": {
+      "decision": "allow",
+      "ask": false,
+      "determiningPolicyIds": ["allow_status", "ask_bash"],
+      "contextDiagnostics": []
+    }
+  },
+  {
+    "version": 1,
+    "name": "open-nested-context",
+    "description": "Nested records, sets, decimals, and omitted nulls remain available without a closed context schema.",
+    "policies": [
+      "@id(\"structured_input\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"CustomTool\") when { context has risk && context.risk == decimal(\"1.25\") && context has options && context.options has force && context.options.force && context has tags && context.tags.contains(\"prod\") };"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "CustomTool",
+      "toolInput": {
+        "risk": 1.25,
+        "options": { "force": true },
+        "tags": ["prod", "prod", "reviewed"],
+        "unused": null
+      }
+    },
+    "expected": {
+      "decision": "allow",
+      "ask": false,
+      "determiningPolicyIds": ["structured_input"],
+      "contextDiagnostics": [{ "code": "null_omitted", "path": "/unused" }]
+    }
+  },
+  {
+    "version": 1,
+    "name": "missing-context-key",
+    "description": "Guarded access to an absent context key is non-applicable and falls through to deny.",
+    "policies": [
+      "@id(\"requires_command\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource) when { context has command && context.command like \"git status*\" };"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "Bash",
+      "toolInput": {}
+    },
+    "expected": {
+      "decision": "deny",
+      "ask": false,
+      "determiningPolicyIds": [],
+      "contextDiagnostics": []
+    }
+  }
+]

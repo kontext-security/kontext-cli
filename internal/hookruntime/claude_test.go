@@ -62,6 +62,22 @@ func TestDecodeClaudeEventToolResponsePreservesLargeNumbers(t *testing.T) {
 	}
 }
 
+func TestDecodeClaudeEventToolInputPreservesNumbers(t *testing.T) {
+	t.Parallel()
+
+	input := []byte(`{"hook_event_name":"PreToolUse","tool_name":"CustomTool","tool_input":{"risk":1.25,"id":9007199254740993}}`)
+	event, err := DecodeClaudeEvent(input, "claude")
+	if err != nil {
+		t.Fatalf("DecodeClaudeEvent() error = %v", err)
+	}
+	if number, ok := event.ToolInput["risk"].(json.Number); !ok || number.String() != "1.25" {
+		t.Fatalf("ToolInput[risk] = %v (%T), want json.Number 1.25", event.ToolInput["risk"], event.ToolInput["risk"])
+	}
+	if number, ok := event.ToolInput["id"].(json.Number); !ok || number.String() != "9007199254740993" {
+		t.Fatalf("ToolInput[id] = %v (%T), want exact json.Number", event.ToolInput["id"], event.ToolInput["id"])
+	}
+}
+
 func TestDecodeClaudeEventToolResponseAbsent(t *testing.T) {
 	t.Parallel()
 

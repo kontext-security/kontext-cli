@@ -1,0 +1,16 @@
+[
+  {
+    "version": 1,
+    "name": "observe-policy-for-alice",
+    "policyText": "@id(\"allow_read\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"Read\");",
+    "revision": "rev_01",
+    "rolloutMode": "observe",
+    "evaluationPrincipal": {
+      "entityType": "Kontext::User",
+      "entityId": "alice@example.com"
+    },
+    "expectedPolicyHash": "8a7304637341166679a0a61d629afd6d565b64372548092784157da3ae3a38ca",
+    "expectedDeploymentPreimage": "[\"kontext:cedar-deployment:v1\",1,1,\"rev_01\",\"8a7304637341166679a0a61d629afd6d565b64372548092784157da3ae3a38ca\",\"observe\",\"Kontext::User\",\"alice@example.com\"]",
+    "expectedDeploymentIdentity": "e0df4ce03c17760128b4e2e99e34fcd1986d2f61a63a86a3a4fa5855b1be31c1"
+  }
+]
