@@ -68,9 +68,6 @@ type Evaluator struct {
 }
 
 func New(policyText string) (*Evaluator, error) {
-	if policyText == "" {
-		return nil, fmt.Errorf("cedareval: policy text is empty")
-	}
 	if len([]byte(policyText)) > PolicyMaxBytes {
 		return nil, fmt.Errorf("cedareval: policy text exceeds %d bytes", PolicyMaxBytes)
 	}
@@ -79,14 +76,6 @@ func New(policyText string) (*Evaluator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cedareval: parse policy: %w", err)
 	}
-	policyCount := 0
-	for range policies.All() {
-		policyCount++
-	}
-	if policyCount == 0 {
-		return nil, fmt.Errorf("cedareval: policy document contains no policies")
-	}
-
 	return &Evaluator{policies: policies}, nil
 }
 
@@ -193,6 +182,9 @@ func validateInput(input ToolUseInput) error {
 	}
 	if stringLength(input.ToolName) == 0 || stringLength(input.ToolName) > 4096 {
 		return fmt.Errorf("cedareval: tool name must contain 1 to 4096 characters")
+	}
+	if input.ToolInput == nil {
+		return fmt.Errorf("cedareval: tool input must be a JSON object")
 	}
 	return nil
 }

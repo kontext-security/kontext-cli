@@ -1,6 +1,54 @@
 [
   {
     "version": 1,
+    "name": "empty-policy-set-default-deny",
+    "description": "An empty policy set is valid and produces Cedar's default deny.",
+    "policies": [],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "Read",
+      "toolInput": {}
+    },
+    "expected": {
+      "decision": "deny",
+      "ask": false,
+      "determiningPolicyIds": [],
+      "contextDiagnostics": []
+    }
+  },
+  {
+    "version": 1,
+    "name": "multiple-null-diagnostics-sorted",
+    "description": "Omitted-null diagnostics are sorted by UTF-8 JSON Pointer.",
+    "policies": [
+      "@id(\"allow\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource);"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "CustomTool",
+      "toolInput": {
+        "z": null,
+        "a": { "value": null }
+      }
+    },
+    "expected": {
+      "decision": "allow",
+      "ask": false,
+      "determiningPolicyIds": ["allow"],
+      "contextDiagnostics": [
+        { "code": "null_omitted", "path": "/a/value" },
+        { "code": "null_omitted", "path": "/z" }
+      ]
+    }
+  },
+  {
+    "version": 1,
     "name": "default-deny",
     "description": "No satisfied permit produces Cedar's default deny.",
     "policies": [

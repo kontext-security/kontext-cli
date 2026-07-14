@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -23,7 +24,7 @@ import (
 const portableFixtureContractVersion = 1
 
 var fixtureDigests = map[string]string{
-	"authorization-v1.json":  "93d2053cffba8a59a6fe29a68f61cb8b6e7f2ecde0713fff2b790d293287d82d",
+	"authorization-v1.json":  "54efbd87f375620e84642e298239863bb5485e494fecbcdc685558bd27b38956",
 	"context-errors-v1.json": "5c9d2bf34330cf084b8123a4bda9298edd5359e71579cf0b22a9df9b1cb8f0fe",
 	"hashing-v1.json":        "941cd2a42191a8c2817db8aba19831817ff9edf0d61f9ee98cadc908b09c3179",
 }
@@ -171,7 +172,7 @@ func contextErrorInput(t *testing.T, fixture contextErrorFixture) map[string]any
 	case "wide-array":
 		values := make([]any, fixture.InputGenerator.Length)
 		for i := range values {
-			values[i] = i
+			values[i] = 0
 		}
 		return map[string]any{"values": values}
 	default:
@@ -333,8 +334,12 @@ func readFixture(t *testing.T, name string, destination any) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
 		t.Fatalf("Decode() error = %v", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		t.Fatalf("Decode() trailing content error = %v", err)
 	}
 }
 

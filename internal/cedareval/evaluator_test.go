@@ -212,8 +212,6 @@ func TestNewRejectsInvalidPolicyDocuments(t *testing.T) {
 		name       string
 		policyText string
 	}{
-		{name: "empty", policyText: ""},
-		{name: "no policies", policyText: "\n"},
 		{name: "invalid", policyText: "permit("},
 		{name: "too large", policyText: strings.Repeat("x", PolicyMaxBytes+1)},
 	}
@@ -225,6 +223,44 @@ func TestNewRejectsInvalidPolicyDocuments(t *testing.T) {
 				t.Fatal("New() error = nil, want rejection")
 			}
 		})
+	}
+}
+
+func TestEmptyPolicySetDefaultsToDeny(t *testing.T) {
+	t.Parallel()
+
+	evaluator, err := New("")
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	result, err := evaluator.Evaluate(ToolUseInput{
+		EvaluationPrincipal: EvaluationPrincipal{
+			EntityType: PrincipalEntityType,
+			EntityID:   "alice@example.com",
+		},
+		ToolName:  "Read",
+		ToolInput: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if result.Decision != DecisionDeny || result.Ask {
+		t.Fatalf("result = %#v, want default deny without ask", result)
+	}
+}
+
+func TestBuildRequestRejectsNilToolInput(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := BuildRequest(ToolUseInput{
+		EvaluationPrincipal: EvaluationPrincipal{
+			EntityType: PrincipalEntityType,
+			EntityID:   "alice@example.com",
+		},
+		ToolName: "Read",
+	})
+	if err == nil || !strings.Contains(err.Error(), "JSON object") {
+		t.Fatalf("BuildRequest() error = %v, want JSON object rejection", err)
 	}
 }
 
