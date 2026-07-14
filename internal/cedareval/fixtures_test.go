@@ -26,6 +26,8 @@ const portableFixtureContractVersion = 1
 var fixtureDigests = map[string]string{
 	"authorization-v1.json":     "c7f8aaf5da2acbf9a5d832ebf2bcf3ca531a617cdea3a6aed1b6b1840c4735b5",
 	"context-errors-v1.json":    "945e6be23af02aa4d0c7bd382f5963b6342f46a02602bfbc8f134ae283b6773e",
+	"decision-contract-v1.json": "8d33cd7924de64b9000c18fdc3cb532250653f768e2a65c7acb001c26376a3c4",
+	"decision-mapping-v1.json":  "7a0ba0b761b13759ef1a5ffefb155c7a066412b0115227f928529546a337e0b2",
 	"evaluation-errors-v1.json": "8318efcd613fd56645fac3bf49939d6b70f41af102a1f06df2a6cc9da75d8415",
 	"hashing-v1.json":           "5179f41ae61872ee9f6a048cba4592dc12c0267fc8c8699a0c2afa886da62775",
 }

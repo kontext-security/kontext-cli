@@ -17,6 +17,11 @@ The hashing corpus pins the semantic seven-term
 `kontext:cedar-deployment:v2` identity. It contains no storage revision or
 endpoint operational configuration.
 
+The decision-contract and decision-mapping files additionally pin
+decision-contract v1. They are copied byte-for-byte from the shared contract
+and cover only the pure rollout state machine; they do not enable production
+authorization behavior.
+
 `TestPortableFixtureProvenance` pins the contract version and SHA-256 digest of
 every portable JSON file. Update the version and digests only when intentionally
 adopting a reviewed contract revision.
