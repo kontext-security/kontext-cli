@@ -24,9 +24,9 @@ import (
 const portableFixtureContractVersion = 1
 
 var fixtureDigests = map[string]string{
-	"authorization-v1.json":  "54efbd87f375620e84642e298239863bb5485e494fecbcdc685558bd27b38956",
+	"authorization-v1.json":  "11607132ded49c3fcbb826081bd5ec1a0aaf361c8b19e43c61afeebd948dee87",
 	"context-errors-v1.json": "5c9d2bf34330cf084b8123a4bda9298edd5359e71579cf0b22a9df9b1cb8f0fe",
-	"hashing-v1.json":        "941cd2a42191a8c2817db8aba19831817ff9edf0d61f9ee98cadc908b09c3179",
+	"hashing-v1.json":        "5179f41ae61872ee9f6a048cba4592dc12c0267fc8c8699a0c2afa886da62775",
 }
 
 type authorizationFixture struct {
@@ -60,7 +60,6 @@ type hashFixture struct {
 	Version             int                           `json:"version"`
 	Name                string                        `json:"name"`
 	PolicyText          string                        `json:"policyText"`
-	Revision            string                        `json:"revision"`
 	RolloutMode         string                        `json:"rolloutMode"`
 	EvaluationPrincipal cedareval.EvaluationPrincipal `json:"evaluationPrincipal"`
 	ExpectedPolicyHash  string                        `json:"expectedPolicyHash"`
@@ -196,7 +195,6 @@ func TestPortableHashFixtures(t *testing.T) {
 			input := cedareval.DeploymentIdentityInput{
 				ResponseVersion:        1,
 				RequestContractVersion: cedareval.RequestContractVersion,
-				Revision:               fixture.Revision,
 				PolicyHash:             policyHash,
 				RolloutMode:            fixture.RolloutMode,
 				EvaluationPrincipal:    fixture.EvaluationPrincipal,

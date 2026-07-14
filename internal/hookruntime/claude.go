@@ -3,7 +3,9 @@ package hookruntime
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/kontext-security/kontext-cli/internal/hook"
@@ -114,7 +116,16 @@ func normalizeToolResponse(values ...json.RawMessage) map[string]any {
 func decodeUseNumber(data []byte, dst any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
-	return decoder.Decode(dst)
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("unexpected trailing JSON value")
+		}
+		return fmt.Errorf("decode trailing JSON: %w", err)
+	}
+	return nil
 }
 
 func EncodeClaudeResult(hookEventName string, result hook.Result) ([]byte, error) {

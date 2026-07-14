@@ -78,6 +78,15 @@ func TestDecodeClaudeEventToolInputPreservesNumbers(t *testing.T) {
 	}
 }
 
+func TestDecodeClaudeEventRejectsTrailingJSON(t *testing.T) {
+	t.Parallel()
+
+	input := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Bash"} {}`)
+	if _, err := DecodeClaudeEvent(input, "claude"); err == nil {
+		t.Fatal("DecodeClaudeEvent() error = nil, want trailing JSON rejection")
+	}
+}
+
 func TestDecodeClaudeEventToolResponseAbsent(t *testing.T) {
 	t.Parallel()
 

@@ -1,22 +1,22 @@
 package cedareval
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
+	"unicode/utf8"
 )
 
 const (
 	PolicyHashDomain         = "kontext:cedar-policy:v1\x00"
-	DeploymentIdentityDomain = "kontext:cedar-deployment:v1"
+	DeploymentIdentityDomain = "kontext:cedar-deployment:v2"
 )
 
 type DeploymentIdentityInput struct {
 	ResponseVersion        int
 	RequestContractVersion int
-	Revision               string
 	PolicyHash             string
 	RolloutMode            string
 	EvaluationPrincipal    EvaluationPrincipal
@@ -28,24 +28,65 @@ func ComputePolicyHash(policyText string) string {
 }
 
 func DeploymentIdentityPreimage(input DeploymentIdentityInput) (string, error) {
-	value := []any{
-		DeploymentIdentityDomain,
-		input.ResponseVersion,
-		input.RequestContractVersion,
-		input.Revision,
+	stringsToValidate := []string{
 		input.PolicyHash,
 		input.RolloutMode,
 		input.EvaluationPrincipal.EntityType,
 		input.EvaluationPrincipal.EntityID,
 	}
-
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
-		return "", fmt.Errorf("cedareval: encode deployment identity: %w", err)
+	for _, value := range stringsToValidate {
+		if !utf8.ValidString(value) {
+			return "", fmt.Errorf("cedareval: deployment identity contains invalid utf-8")
+		}
 	}
-	return string(bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))), nil
+
+	var builder strings.Builder
+	builder.WriteByte('[')
+	appendJSONString(&builder, DeploymentIdentityDomain)
+	builder.WriteByte(',')
+	builder.WriteString(strconv.Itoa(input.ResponseVersion))
+	builder.WriteByte(',')
+	builder.WriteString(strconv.Itoa(input.RequestContractVersion))
+	for _, value := range stringsToValidate {
+		builder.WriteByte(',')
+		appendJSONString(&builder, value)
+	}
+	builder.WriteByte(']')
+	return builder.String(), nil
+}
+
+// appendJSONString matches JSON.stringify for valid UTF-8 strings. In
+// particular it leaves HTML-sensitive characters and U+2028/U+2029 literal;
+// encoding/json intentionally escapes the latter and would change the
+// cross-runtime deployment identity preimage.
+func appendJSONString(builder *strings.Builder, value string) {
+	builder.WriteByte('"')
+	for _, char := range value {
+		switch char {
+		case '"', '\\':
+			builder.WriteByte('\\')
+			builder.WriteRune(char)
+		case '\b':
+			builder.WriteString(`\b`)
+		case '\t':
+			builder.WriteString(`\t`)
+		case '\n':
+			builder.WriteString(`\n`)
+		case '\f':
+			builder.WriteString(`\f`)
+		case '\r':
+			builder.WriteString(`\r`)
+		default:
+			if char < 0x20 {
+				builder.WriteString(`\u00`)
+				builder.WriteByte("0123456789abcdef"[byte(char)>>4])
+				builder.WriteByte("0123456789abcdef"[byte(char)&0x0f])
+				continue
+			}
+			builder.WriteRune(char)
+		}
+	}
+	builder.WriteByte('"')
 }
 
 func ComputeDeploymentIdentity(input DeploymentIdentityInput) (string, error) {

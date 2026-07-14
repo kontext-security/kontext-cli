@@ -76,7 +76,45 @@ func New(policyText string) (*Evaluator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cedareval: parse policy: %w", err)
 	}
+	if err := validatePolicyMetadata(policies); err != nil {
+		return nil, err
+	}
 	return &Evaluator{policies: policies}, nil
+}
+
+func validatePolicyMetadata(policies *cedar.PolicySet) error {
+	policyIDs := make([]cedar.PolicyID, 0)
+	for policyID := range policies.All() {
+		policyIDs = append(policyIDs, policyID)
+	}
+	sort.Slice(policyIDs, func(i, j int) bool {
+		return string(policyIDs[i]) < string(policyIDs[j])
+	})
+
+	stableIDs := make(map[string]cedar.PolicyID, len(policyIDs))
+	for _, policyID := range policyIDs {
+		policy := policies.Get(policyID)
+		annotations := policy.Annotations()
+		stableID, ok := annotationValue(annotations, idAnnotation)
+		if !ok || stableID == "" {
+			return fmt.Errorf("cedareval: policy %q has no non-empty @id annotation", policyID)
+		}
+		if previousPolicyID, duplicate := stableIDs[stableID]; duplicate {
+			return fmt.Errorf(
+				"cedareval: policies %q and %q have duplicate @id %q",
+				previousPolicyID,
+				policyID,
+				stableID,
+			)
+		}
+		stableIDs[stableID] = policyID
+
+		ask, hasAsk := annotationValue(annotations, askAnnotation)
+		if hasAsk && ask != askAnnotationValue {
+			return fmt.Errorf("cedareval: policy %q has unsupported @ask value %q", stableID, ask)
+		}
+	}
+	return nil
 }
 
 func InputFromEvent(principal EvaluationPrincipal, event hook.Event) (ToolUseInput, error) {

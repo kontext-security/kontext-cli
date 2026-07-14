@@ -128,13 +128,6 @@ func convertValue(value any, path string, depth int, state *conversionState, ins
 			if err != nil {
 				return nil, err
 			}
-			if converted == nil {
-				return nil, newConversionError(
-					"null_in_set",
-					pointer(path, strconv.Itoa(i)),
-					"null cannot appear in a cedar set",
-				)
-			}
 			values[i] = converted
 		}
 		return cedar.NewSet(values...), nil
@@ -174,6 +167,10 @@ func convertValue(value any, path string, depth int, state *conversionState, ins
 }
 
 func convertNumber(number string, path string) (cedar.Value, error) {
+	// Request-contract v1 gives JSON numbers their interoperable binary64
+	// meaning, matching JSON.parse in the TypeScript contract runtime. The
+	// lexical spellings 1e-4 and 0.00010000000000000001 therefore both denote
+	// the same binary64 value before Cedar's decimal range is checked.
 	value, err := strconv.ParseFloat(number, 64)
 	if err != nil {
 		return nil, newConversionError("invalid_json_value", path, "cedar context numbers must be finite")
@@ -188,9 +185,6 @@ func convertFloat(value float64, path string) (cedar.Value, error) {
 	if math.Trunc(value) == value {
 		if math.Abs(value) > float64(maxSafeInteger) {
 			return nil, unsafeIntegerError(path)
-		}
-		if value == 0 {
-			return cedar.Long(0), nil
 		}
 		return cedar.Long(int64(value)), nil
 	}

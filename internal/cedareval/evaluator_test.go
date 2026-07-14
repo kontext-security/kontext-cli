@@ -144,6 +144,8 @@ func TestConvertToolInputNumericRepresentations(t *testing.T) {
 		{name: "go unsigned integer", value: uint64(42)},
 		{name: "float integer", value: float64(42)},
 		{name: "json decimal", value: json.Number("1.25")},
+		{name: "json long-tail binary64 decimal", value: json.Number("0.00010000000000000001")},
+		{name: "json exponent decimal", value: json.Number("1e-4")},
 		{name: "float decimal", value: 1.25},
 	}
 	for _, tt := range tests {
@@ -185,23 +187,45 @@ permit(principal, action, resource) when { context.command == "git status" };`)
 	}
 }
 
-func TestEvaluatorRejectsUnsupportedDeterminingAsk(t *testing.T) {
+func TestNewRejectsInvalidPolicyMetadata(t *testing.T) {
 	t.Parallel()
 
-	evaluator, err := New(`@id("bad_ask") @ask("true") permit(principal, action, resource);`)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	_, err = evaluator.Evaluate(ToolUseInput{
-		EvaluationPrincipal: EvaluationPrincipal{
-			EntityType: PrincipalEntityType,
-			EntityID:   "alice@example.com",
+	tests := []struct {
+		name       string
+		policyText string
+		wantError  string
+	}{
+		{
+			name:       "missing id",
+			policyText: `permit(principal, action, resource);`,
+			wantError:  "no non-empty @id annotation",
 		},
-		ToolName:  "Read",
-		ToolInput: map[string]any{},
-	})
-	if err == nil || !strings.Contains(err.Error(), "unsupported @ask value") {
-		t.Fatalf("Evaluate() error = %v, want unsupported @ask value", err)
+		{
+			name:       "empty id",
+			policyText: `@id("") permit(principal, action, resource);`,
+			wantError:  "no non-empty @id annotation",
+		},
+		{
+			name: "duplicate id",
+			policyText: `@id("duplicate") permit(principal, action, resource);
+@id("duplicate") forbid(principal, action, resource);`,
+			wantError: "duplicate @id",
+		},
+		{
+			name:       "unsupported ask",
+			policyText: `@id("bad_ask") @ask("true") permit(principal, action, resource);`,
+			wantError:  "unsupported @ask value",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := New(tt.policyText)
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("New() error = %v, want %q", err, tt.wantError)
+			}
+		})
 	}
 }
 

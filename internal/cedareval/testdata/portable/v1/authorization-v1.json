@@ -254,5 +254,30 @@
       "determiningPolicyIds": [],
       "contextDiagnostics": []
     }
+  },
+  {
+    "version": 1,
+    "name": "binary64-json-number-semantics",
+    "description": "Long-tail and exponent JSON spellings are interpreted as binary64 values before portable Cedar decimal conversion.",
+    "policies": [
+      "@id(\"binary64_numbers\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"NumericTool\") when { context has longTail && context.longTail == decimal(\"0.0001\") && context has exponent && context.exponent == decimal(\"0.0001\") };"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "NumericTool",
+      "toolInput": {
+        "longTail": 0.00010000000000000001,
+        "exponent": 1e-4
+      }
+    },
+    "expected": {
+      "decision": "allow",
+      "ask": false,
+      "determiningPolicyIds": ["binary64_numbers"],
+      "contextDiagnostics": []
+    }
   }
 ]
