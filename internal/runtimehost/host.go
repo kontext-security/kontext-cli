@@ -246,6 +246,13 @@ func (h *Host) SetPayloadCaptureMode(mode payloadcapture.Mode) {
 	h.server.SetPayloadCaptureMode(mode)
 }
 
+func (h *Host) SetPayloadCaptureConfiguration(config payloadcapture.RuntimeConfiguration) {
+	if h == nil || h.server == nil {
+		return
+	}
+	h.server.SetPayloadCaptureConfiguration(config)
+}
+
 func (h *Host) Close(ctx context.Context) error {
 	var errs []error
 	if h == nil {

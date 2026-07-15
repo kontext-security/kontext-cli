@@ -77,11 +77,15 @@ func NewServer(store *sqlite.Store) (*Server, error) {
 	return NewServerWithOptions(store, Options{})
 }
 
-// SetPayloadCaptureMode forwards the org's payload-capture directive to the
-// store, which reads it per recorded action. Called by the managed daemon's
-// policy refresh cycle whenever a snapshot is fetched or restored from disk.
+// SetPayloadCaptureMode is retained for local callers that configure only a
+// mode. Managed refresh uses SetPayloadCaptureConfiguration so evidence and
+// effective behavior are applied atomically.
 func (s *Server) SetPayloadCaptureMode(mode payloadcapture.Mode) {
 	s.store.SetPayloadCaptureMode(mode)
+}
+
+func (s *Server) SetPayloadCaptureConfiguration(config payloadcapture.RuntimeConfiguration) {
+	s.store.SetPayloadCaptureConfiguration(config)
 }
 
 func NewServerWithOptions(store *sqlite.Store, opts Options) (*Server, error) {
