@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/cedarpolicy"
 	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
@@ -33,6 +34,7 @@ type DaemonOptions struct {
 	StreamHTTPClient       *http.Client
 	GithubPolicyCachePath  string
 	HubspotPolicyCachePath string
+	CedarPolicyCachePath   string
 	// PolicyRefreshInterval and PolicyHTTPClient apply to every provider's
 	// snapshot refresh loop (test knobs; zero values use defaults).
 	PolicyRefreshInterval time.Duration
@@ -128,6 +130,19 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 
 	githubCache := newProviderPolicyCache(opts.GithubPolicyCachePath, dbPath, githubpolicy.Config, opts.Diagnostic)
 	hubspotCache := newProviderPolicyCache(opts.HubspotPolicyCachePath, dbPath, hubspotpolicy.Config, opts.Diagnostic)
+	cedarCachePath := opts.CedarPolicyCachePath
+	if cedarCachePath == "" {
+		cedarCachePath = cedarpolicy.DefaultCachePathForDB(dbPath)
+	}
+	cedarCache := cedarpolicy.NewCache(cedarCachePath, 0)
+	if err := cedarCache.Load(); err != nil {
+		cedarCache.MarkInvalid(err)
+		opts.Diagnostic.Printf("cedar policy cache load: %v\n", err)
+	}
+	cedarClient, err := cedarpolicy.NewClient(loadedConfig.Config.CloudURL, opts.PolicyHTTPClient)
+	if err != nil {
+		return fmt.Errorf("configure cedar policy client: %w", err)
+	}
 
 	host, err := runtimehost.Start(ctx, runtimehost.Options{
 		AgentName:  managedconfig.Agent,
@@ -170,6 +185,20 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 	// other providers' refreshers pass nil and never touch the gate.
 	go runProviderPolicy(policyCtx, opts, githubpolicy.Config, githubCache, installationState.InstallationID, host.SetPayloadCaptureMode)
 	go runProviderPolicy(policyCtx, opts, hubspotpolicy.Config, hubspotCache, installationState.InstallationID, nil)
+	cedarRefresher := cedarpolicy.Refresher{
+		Client: cedarClient,
+		Cache:  cedarCache,
+		TokenSource: func(refreshCtx context.Context) (string, error) {
+			loaded, err := managedconfig.Load()
+			if err != nil {
+				return "", err
+			}
+			return managedconfig.ResolveInstallToken(refreshCtx, loaded.Config.Credentials.InstallTokenRef)
+		},
+		InstallationID: installationState.InstallationID,
+		Interval:       opts.PolicyRefreshInterval,
+	}
+	go cedarRefresher.Run(policyCtx)
 
 	streamCtx, stopStream := context.WithCancel(ctx)
 	defer stopStream()
