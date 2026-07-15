@@ -171,6 +171,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		},
 		EndpointID:         installationState.InstallationID,
 		CedarPolicies:      cedarCache,
+		CedarEnforcement:   mode == guardhookruntime.ModeEnforce,
 		Mode:               mode,
 		Diagnostic:         opts.Diagnostic,
 		SkipInitialSession: true,

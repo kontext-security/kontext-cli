@@ -187,6 +187,78 @@ func TestLifecycleHealthySocketDoesNotKickstart(t *testing.T) {
 	}
 }
 
+func TestLifecycleEnforcePassesDaemonDenyThroughToAgent(t *testing.T) {
+	socketPath := filepath.Join("/tmp", fmt.Sprintf("kontext-managedobserve-enforce-test-%d.sock", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.Remove(socketPath) })
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer ln.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 2; i++ {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		var req localruntime.EvaluateRequest
+		if err := localruntime.ReadMessage(conn, &req); err != nil {
+			return
+		}
+		// In enforce the guard server returns the authoritative decision
+		// without an observe transform; the wrapper must not downgrade it.
+		_ = localruntime.WriteMessage(conn, localruntime.EvaluateResult{
+			Decision: "deny",
+			Allowed:  false,
+			Reason:   "local Cedar policy decision",
+			Mode:     "enforce",
+		})
+	}()
+
+	lifecycle := Lifecycle{
+		SocketPath: socketPath,
+		Label:      DefaultLaunchdLabel,
+		Mode:       "enforce",
+		Kickstart: func(context.Context, string) error {
+			t.Fatal("kickstart should not be called")
+			return nil
+		},
+	}
+	result := lifecycle.Process(context.Background(), hook.Event{HookName: hook.HookPreToolUse})
+	if result.Decision != hook.DecisionDeny {
+		t.Fatalf("result = %+v, want enforce deny passed through", result)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("server did not receive request")
+	}
+}
+
+func TestLifecycleEnforceFailsClosedWhenDaemonUnavailable(t *testing.T) {
+	socketPath := filepath.Join("/tmp", fmt.Sprintf("kontext-managedobserve-enforce-down-%d.sock", time.Now().UnixNano()))
+	lifecycle := Lifecycle{
+		SocketPath: socketPath,
+		Label:      DefaultLaunchdLabel,
+		Mode:       "enforce",
+		Kickstart:  func(context.Context, string) error { return nil },
+	}
+	result := lifecycle.Process(context.Background(), hook.Event{HookName: hook.HookPreToolUse})
+	if result.Decision != hook.DecisionDeny {
+		t.Fatalf("result = %+v, want enforce fail-closed deny when daemon unavailable", result)
+	}
+}
+
 func TestObserveResultFormatsBlockingPromptSubmit(t *testing.T) {
 	result := observeResult(hook.Event{HookName: hook.HookUserPromptSubmit}, hook.Result{
 		Decision: hook.DecisionDeny,

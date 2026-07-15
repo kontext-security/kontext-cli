@@ -14,8 +14,9 @@ import (
 const cedarEvaluatorVersion = "cedar-go/v1.8.0"
 
 type cedarPolicyProvider struct {
-	current   PolicyProvider
-	snapshots cedarpolicy.SnapshotProvider
+	current            PolicyProvider
+	snapshots          cedarpolicy.SnapshotProvider
+	enforcementEnabled bool
 
 	mu        sync.Mutex
 	identity  string
@@ -23,37 +24,85 @@ type cedarPolicyProvider struct {
 	parseErr  error
 }
 
-func newCedarPolicyProvider(current PolicyProvider, snapshots cedarpolicy.SnapshotProvider) PolicyProvider {
+func newCedarPolicyProvider(current PolicyProvider, snapshots cedarpolicy.SnapshotProvider, enforcementEnabled bool) PolicyProvider {
 	if snapshots == nil {
 		return current
 	}
-	return &cedarPolicyProvider{current: current, snapshots: snapshots}
+	return &cedarPolicyProvider{current: current, snapshots: snapshots, enforcementEnabled: enforcementEnabled}
 }
 
 func (p *cedarPolicyProvider) DecideHook(ctx context.Context, event risk.HookEvent) (risk.RiskDecision, error) {
-	decision, err := p.current.DecideHook(ctx, event)
-	if err != nil || event.HookEventName != hook.HookPreToolUse.String() {
-		return decision, err
+	if event.HookEventName != hook.HookPreToolUse.String() {
+		return p.current.DecideHook(ctx, event)
 	}
 
 	snapshot := p.snapshots.Current()
-	evidence := p.evaluate(snapshot, event, executionAction(decision.Decision))
+	claimsAuthority := p.claimsAuthority(snapshot)
+	decision := risk.RiskDecision{}
+	currentAction := cedareval.EffectiveExecutionActionAllow
+	if claimsAuthority {
+		riskEvent := risk.NormalizeHookEvent(event)
+		riskEvent.Decision = risk.DecisionDeny
+		decision = risk.RiskDecision{Decision: risk.DecisionDeny, Reason: "Cedar enforcement is not ready", ReasonCode: string(cedareval.ReasonEnforcementNotReady), RiskEvent: riskEvent}
+	} else {
+		var err error
+		decision, err = p.current.DecideHook(ctx, event)
+		if err != nil {
+			return risk.RiskDecision{}, err
+		}
+		currentAction = executionAction(decision.Decision)
+	}
+	evidence := p.evaluate(snapshot, event, currentAction, claimsAuthority)
 	decision.Cedar = &evidence
+	if claimsAuthority {
+		applyCedarDecision(&decision, evidence.Mapping)
+	}
 	return decision, nil
 }
 
-func (p *cedarPolicyProvider) evaluate(snapshot cedarpolicy.Snapshot, event risk.HookEvent, current cedareval.EffectiveExecutionAction) risk.CedarEvidence {
+func (p *cedarPolicyProvider) claimsAuthority(snapshot cedarpolicy.Snapshot) bool {
+	if !p.enforcementEnabled {
+		return false
+	}
+	if snapshot.State == cedarpolicy.StateDisabled || snapshot.State == cedarpolicy.StateNoActivePolicy {
+		return false
+	}
+	if snapshot.Status.Invalid {
+		return true
+	}
+	deployment := snapshot.Deployment
+	if deployment == nil {
+		deployment = snapshot.LastKnownGood
+	}
+	if deployment == nil {
+		// Once the local cutover gate is enabled, absence and untrusted response
+		// states cannot silently restore the previous evaluator. Only explicit
+		// disabled/no-active-policy states relinquish Cedar authority.
+		return true
+	}
+	return deployment.RolloutMode == cedareval.RolloutModeEnforce
+}
+
+func (p *cedarPolicyProvider) evaluate(snapshot cedarpolicy.Snapshot, event risk.HookEvent, current cedareval.EffectiveExecutionAction, claimsAuthority bool) risk.CedarEvidence {
 	evidence := risk.CedarEvidence{
 		AppliedRolloutMode: cedareval.RolloutModeObserve,
 		CacheFetchedAt:     snapshot.Status.FetchedAt,
+		DistributionState:  string(snapshot.State),
 		CacheStale:         snapshot.Status.Stale,
+		CacheExpired:       snapshot.Status.Expired,
+		CacheInvalid:       snapshot.Status.Invalid,
 		EvaluatorVersion:   cedarEvaluatorVersion,
 		ContextDiagnostics: []cedareval.ContextDiagnostic{},
 	}
 	outcome := cedareval.EvaluationOutcome{State: cedareval.EvaluationStateFailed, Reason: cedareval.ReasonPolicyMissing}
 	var principal *cedareval.EvaluationPrincipal
 
-	if deployment := snapshot.Deployment; deployment != nil {
+	metadata := snapshot.Deployment
+	if metadata == nil {
+		metadata = snapshot.LastKnownGood
+	}
+	if metadata != nil {
+		deployment := metadata
 		evidence.ResponseVersion = deployment.ResponseVersion
 		evidence.RequestContractVersion = deployment.RequestContractVersion
 		evidence.PolicyHash = deployment.PolicyHash
@@ -62,8 +111,9 @@ func (p *cedarPolicyProvider) evaluate(snapshot cedarpolicy.Snapshot, event risk
 		principalValue := deployment.EvaluationPrincipal
 		principal = &principalValue
 
-		evaluator, parseErr := p.evaluatorFor(deployment)
-		if parseErr != nil {
+		if snapshot.Deployment == nil {
+			outcome.Reason = cedareval.ReasonStaleCachedPolicy
+		} else if evaluator, parseErr := p.evaluatorFor(deployment); parseErr != nil {
 			outcome.Reason = cedareval.ReasonInvalidCachedPolicy
 			evidence.EngineErrorCount = 1
 		} else {
@@ -89,20 +139,63 @@ func (p *cedarPolicyProvider) evaluate(snapshot cedarpolicy.Snapshot, event risk
 				evidence.EngineErrorCount = len(result.EngineDiagnostics.Errors)
 			}
 		}
-	} else if isPrincipalState(snapshot.State) {
-		outcome = cedareval.EvaluationOutcome{State: cedareval.EvaluationStatePrincipalUnresolved, Reason: cedareval.ReasonPrincipalUnresolved}
+	} else if snapshot.Status.Invalid {
+		outcome.Reason = cedareval.ReasonInvalidCachedPolicy
 	} else if snapshot.Status.Stale {
 		outcome.Reason = cedareval.ReasonStaleCachedPolicy
 	}
+	if isPrincipalState(snapshot.State) {
+		principal = nil
+		outcome = cedareval.EvaluationOutcome{State: cedareval.EvaluationStatePrincipalUnresolved, Reason: cedareval.ReasonPrincipalUnresolved}
+	}
 
-	evidence.AppliedRolloutMode = cedareval.RolloutModeObserve
+	appliedMode := cedareval.RolloutModeObserve
+	enforcementReady := false
+	currentAuthority := current
+	if claimsAuthority {
+		appliedMode = cedareval.RolloutModeEnforce
+		enforcementReady = snapshot.Deployment != nil && !snapshot.Status.Expired && !snapshot.Status.Invalid
+		currentAuthority = ""
+		if !enforcementReady {
+			outcome = cedareval.EvaluationOutcome{State: cedareval.EvaluationStateNotEvaluated, Reason: cedareval.ReasonEnforcementNotReady}
+		}
+	}
+	evidence.AppliedRolloutMode = appliedMode
 	mapping, err := cedareval.MapDecision(cedareval.DecisionMappingInput{
-		RolloutMode:            cedareval.RolloutModeObserve,
-		CurrentAuthorityAction: current,
+		RolloutMode:            appliedMode,
+		CurrentAuthorityAction: currentAuthority,
+		EnforcementReady:       enforcementReady,
 		EvaluationPrincipal:    principal,
 		Evaluation:             outcome,
 	})
 	if err != nil {
+		if claimsAuthority {
+			// Fail closed: a ready-but-failed evaluation is the valid enforce
+			// input and maps to a deny with the engine-error reason. Passing
+			// EnforcementReady:false alongside a failed evaluation is the
+			// contradictory input the mapper rejects, which would leave a
+			// zero-value mapping that applyCedarDecision reads as allow. Never
+			// discard the mapping error; if it somehow does not map, deny
+			// explicitly.
+			fallback, ferr := cedareval.MapDecision(cedareval.DecisionMappingInput{
+				RolloutMode:      cedareval.RolloutModeEnforce,
+				EnforcementReady: true,
+				Evaluation:       cedareval.EvaluationOutcome{State: cedareval.EvaluationStateFailed, Reason: cedareval.ReasonEngineError},
+			})
+			if ferr != nil {
+				fallback = cedareval.DecisionMapping{
+					EvaluationState:          cedareval.EvaluationStateFailed,
+					EffectiveExecutionAction: cedareval.EffectiveExecutionActionDeny,
+					EvaluationReasonCode:     cedareval.ReasonEngineError,
+					EffectiveReasonCode:      cedareval.ReasonEngineError,
+					DeterminingPolicyIDs:     []string{},
+				}
+			}
+			evidence.Mapping = fallback
+			evidence.AppliedRolloutMode = cedareval.RolloutModeEnforce
+			evidence.EngineErrorCount++
+			return evidence
+		}
 		fallback, _ := cedareval.MapDecision(cedareval.DecisionMappingInput{
 			RolloutMode:            cedareval.RolloutModeObserve,
 			CurrentAuthorityAction: current,
@@ -145,4 +238,18 @@ func isPrincipalState(state cedarpolicy.State) bool {
 	default:
 		return false
 	}
+}
+
+func applyCedarDecision(decision *risk.RiskDecision, mapping cedareval.DecisionMapping) {
+	decision.ReasonCode = string(mapping.EffectiveReasonCode)
+	decision.Reason = "local Cedar policy decision"
+	decision.RiskEvent.ReasonCode = decision.ReasonCode
+	decision.RiskEvent.DecisionStage = "cedar_policy"
+	if mapping.EffectiveExecutionAction == cedareval.EffectiveExecutionActionDeny {
+		decision.Decision = risk.DecisionDeny
+		decision.RiskEvent.Decision = risk.DecisionDeny
+		return
+	}
+	decision.Decision = risk.DecisionAllow
+	decision.RiskEvent.Decision = risk.DecisionAllow
 }

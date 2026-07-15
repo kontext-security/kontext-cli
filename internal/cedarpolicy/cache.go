@@ -209,6 +209,9 @@ func (c *Cache) MarkFailed(err error, attemptedAt time.Time) {
 	c.mu.Unlock()
 }
 
+// MarkInvalid records that a cache file existed but could not be validated.
+// Enforcement uses this signal to fail closed instead of treating corruption
+// like a first installation with no cached policy.
 func (c *Cache) MarkInvalid(err error) {
 	c.mu.Lock()
 	c.status.Invalid = true

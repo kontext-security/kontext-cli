@@ -34,7 +34,10 @@ func cedarDecisionActionValues(actionID, sessionID string, event risk.HookEvent,
 		"response_version":         evidence.ResponseVersion,
 		"request_contract_version": evidence.RequestContractVersion,
 		"cache_fetched_at":         evidence.CacheFetchedAt,
+		"distribution_state":       evidence.DistributionState,
 		"cache_stale":              evidence.CacheStale,
+		"cache_expired":            evidence.CacheExpired,
+		"cache_invalid":            evidence.CacheInvalid,
 		"evaluator_version":        evidence.EvaluatorVersion,
 		"evaluation_state":         evidence.Mapping.EvaluationState,
 		"derived_action":           evidence.Mapping.DerivedCedarAction,
@@ -74,7 +77,15 @@ func cedarDecisionActionValues(actionID, sessionID string, event risk.HookEvent,
 	}
 }
 
+// cedarDecisionCategory marks whether a Cedar row is an authoritative decision
+// or an observe-mode shadow. In enforce mode Cedar is the authority, so the row
+// is a real policy decision ("cedar_policy", matching the DecisionStage stamped
+// by applyCedarDecision); otherwise it is a dry-run shadow the dashboard filters
+// out of authoritative views.
 func cedarDecisionCategory(evidence risk.CedarEvidence) string {
+	if evidence.AppliedRolloutMode == cedareval.RolloutModeEnforce {
+		return "cedar_policy"
+	}
 	return "dry_run"
 }
 
