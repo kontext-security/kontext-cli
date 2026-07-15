@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/cedarpolicy"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/guard/app/server"
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
@@ -39,6 +40,7 @@ type Options struct {
 	JudgeManagedDefault       bool
 	JudgeDownloadProgress     judge.DownloadProgressHandler
 	ProviderPolicies          []server.ProviderPolicyBinding
+	CedarPolicies             cedarpolicy.SnapshotProvider
 	EndpointID                string
 	Mode                      guardhookruntime.Mode
 	Diagnostic                diagnostic.Logger
@@ -116,6 +118,7 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		Judge:            localJudge,
 		ProviderPolicies: opts.ProviderPolicies,
 		EndpointID:       opts.EndpointID,
+		CedarPolicies:    opts.CedarPolicies,
 		CurrentSessionID: serverSessionID,
 		Mode:             string(mode),
 	})

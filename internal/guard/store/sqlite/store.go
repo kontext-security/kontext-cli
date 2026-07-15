@@ -777,6 +777,9 @@ on conflict(id) do update set
 		if err := s.insertProviderDryRunActions(ctx, tx, sessionID, event, decision, now.Add(2*time.Millisecond)); err != nil {
 			return DecisionRecord{}, err
 		}
+		if err := s.insertCedarDecisionAction(ctx, tx, sessionID, event, decision, now.Add(3*time.Millisecond)); err != nil {
+			return DecisionRecord{}, err
+		}
 	} else {
 		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventType(event.HookEventName), "outcome", captureConfig, now); err != nil {
 			return DecisionRecord{}, err
