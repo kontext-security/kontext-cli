@@ -34,7 +34,9 @@
       "toolName": "CustomTool",
       "toolInput": {
         "z": null,
-        "a": { "value": null }
+        "a": {
+          "value": null
+        }
       }
     },
     "expected": {
@@ -42,8 +44,14 @@
       "ask": false,
       "determiningPolicyIds": ["allow"],
       "contextDiagnostics": [
-        { "code": "null_omitted", "path": "/a/value" },
-        { "code": "null_omitted", "path": "/z" }
+        {
+          "code": "null_omitted",
+          "path": "/a/value"
+        },
+        {
+          "code": "null_omitted",
+          "path": "/z"
+        }
       ]
     }
   },
@@ -60,7 +68,9 @@
         "entityId": "alice@example.com"
       },
       "toolName": "Read",
-      "toolInput": { "file_path": "/tmp/example.txt" }
+      "toolInput": {
+        "file_path": "/tmp/example.txt"
+      }
     },
     "expected": {
       "decision": "deny",
@@ -82,7 +92,9 @@
         "entityId": "alice@example.com"
       },
       "toolName": "Bash",
-      "toolInput": { "command": "git status --short" }
+      "toolInput": {
+        "command": "git status --short"
+      }
     },
     "expected": {
       "decision": "allow",
@@ -152,7 +164,9 @@
         "entityId": "alice@example.com"
       },
       "toolName": "Bash",
-      "toolInput": { "command": "rm -rf build" }
+      "toolInput": {
+        "command": "rm -rf build"
+      }
     },
     "expected": {
       "decision": "deny",
@@ -174,7 +188,9 @@
         "entityId": "alice@example.com"
       },
       "toolName": "Bash",
-      "toolInput": { "command": "git push" }
+      "toolInput": {
+        "command": "git push"
+      }
     },
     "expected": {
       "decision": "allow",
@@ -197,7 +213,9 @@
         "entityId": "alice@example.com"
       },
       "toolName": "Bash",
-      "toolInput": { "command": "git status" }
+      "toolInput": {
+        "command": "git status"
+      }
     },
     "expected": {
       "decision": "allow",
@@ -221,7 +239,9 @@
       "toolName": "CustomTool",
       "toolInput": {
         "risk": 1.25,
-        "options": { "force": true },
+        "options": {
+          "force": true
+        },
         "tags": ["prod", "prod", "reviewed"],
         "unused": null
       }
@@ -230,7 +250,12 @@
       "decision": "allow",
       "ask": false,
       "determiningPolicyIds": ["structured_input"],
-      "contextDiagnostics": [{ "code": "null_omitted", "path": "/unused" }]
+      "contextDiagnostics": [
+        {
+          "code": "null_omitted",
+          "path": "/unused"
+        }
+      ]
     }
   },
   {
@@ -269,14 +294,38 @@
       },
       "toolName": "NumericTool",
       "toolInput": {
-        "longTail": 0.00010000000000000001,
-        "exponent": 1e-4
+        "longTail": 0.0001,
+        "exponent": 0.0001
       }
     },
     "expected": {
       "decision": "allow",
       "ask": false,
       "determiningPolicyIds": ["binary64_numbers"],
+      "contextDiagnostics": []
+    }
+  },
+  {
+    "version": 1,
+    "name": "decimal-two-fractional-digits",
+    "description": "Common two-fractional-digit doubles convert exactly; binary64 scaling noise (0.07 * 10000 is not an integer) must not reject them.",
+    "policies": [
+      "@id(\"decimal_two_digits\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"NumericTool\") when { context has price && context.price == decimal(\"0.07\") };"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "NumericTool",
+      "toolInput": {
+        "price": 0.07
+      }
+    },
+    "expected": {
+      "decision": "allow",
+      "ask": false,
+      "determiningPolicyIds": ["decimal_two_digits"],
       "contextDiagnostics": []
     }
   }

@@ -189,15 +189,31 @@ func convertFloat(value float64, path string) (cedar.Value, error) {
 		return cedar.Long(int64(value)), nil
 	}
 
-	scaled := value * 10_000
-	if math.Trunc(scaled) != scaled || math.Abs(scaled) > float64(maxSafeInteger) {
+	// Accept exactly the doubles that round-trip through their own four-digit
+	// decimal rendering. Scaling by 10^4 in binary64 injects rounding noise and
+	// makes acceptance depend on luck (0.07 * 10000 != 700 in binary64), and it
+	// collapses distinct doubles into one decimal. Only non-integers reach
+	// here, so the 'f' rendering is exact and bounded. TypeScript mirror uses
+	// Number(value.toFixed(4)) === value; exact-halfway doubles fail the
+	// round-trip in both runtimes, so tie-breaking rules can never disagree.
+	fixed := strconv.FormatFloat(value, 'f', 4, 64)
+	round, err := strconv.ParseFloat(fixed, 64)
+	if err != nil || round != value {
 		return nil, newConversionError(
 			"unsupported_decimal",
 			path,
-			"cedar decimals must be exactly representable with at most four fractional digits within javascript safe-integer precision",
+			"cedar decimals must be exactly representable with at most four fractional digits",
 		)
 	}
-	decimal, err := cedar.NewDecimal(int64(scaled), -4)
+	scaled, err := strconv.ParseInt(strings.Replace(fixed, ".", "", 1), 10, 64)
+	if err != nil {
+		return nil, newConversionError(
+			"unsupported_decimal",
+			path,
+			"cedar decimals must lie within -922337203685477.5808..922337203685477.5807",
+		)
+	}
+	decimal, err := cedar.NewDecimal(scaled, -4)
 	if err != nil {
 		return nil, newConversionError("unsupported_decimal", path, "cedar decimal is outside the portable range")
 	}
