@@ -147,6 +147,11 @@ func (c *Cache) MarkFailed(err error, attemptedAt time.Time) {
 		attemptedAt = c.now().UTC()
 	}
 	c.mu.Lock()
+	c.markFailedLocked(err, attemptedAt)
+	c.mu.Unlock()
+}
+
+func (c *Cache) markFailedLocked(err error, attemptedAt time.Time) {
 	c.active = nil
 	c.status.FetchedAt = c.fetched
 	c.status.LastAttemptAt = attemptedAt
@@ -154,12 +159,12 @@ func (c *Cache) MarkFailed(err error, attemptedAt time.Time) {
 	if err != nil {
 		c.status.LastError = err.Error()
 	}
-	c.mu.Unlock()
 }
 
 func (c *Cache) MarkInvalid(err error) {
-	c.MarkFailed(err, c.now().UTC())
+	attemptedAt := c.now().UTC()
 	c.mu.Lock()
+	c.markFailedLocked(err, attemptedAt)
 	c.status.Invalid = true
 	c.mu.Unlock()
 }
@@ -255,6 +260,10 @@ func (c *Cache) persist(file cacheFile) error {
 		return fmt.Errorf("endpoint configuration cache: replace: %w", err)
 	}
 	cleanup = false
+	// A successful rename makes the new file visible, but the replacement is
+	// not crash-durable until the containing directory is synced. If that sync
+	// fails, Apply deliberately leaves the in-memory value unconfirmed and the
+	// next refresh heals the cache (possibly after one extra 200 response).
 	directory, err := os.Open(filepath.Dir(c.path))
 	if err != nil {
 		return fmt.Errorf("endpoint configuration cache: open directory: %w", err)

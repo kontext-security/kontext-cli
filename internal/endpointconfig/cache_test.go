@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,6 +64,70 @@ func TestCacheRejectsMismatchedNotModified(t *testing.T) {
 	cache := NewCache("")
 	if err := cache.Apply(FetchResult{NotModified: true, ETag: strings.Repeat("a", 64)}, time.Now().UTC()); err == nil {
 		t.Fatal("Apply() error = nil")
+	}
+}
+
+func TestCacheConcurrentApplyAndMarkInvalidPreserveSnapshotInvariant(t *testing.T) {
+	cache := NewCache("")
+	full := testResponse(t, payloadcapture.ModeFull)
+	if err := cache.Apply(FetchResult{Response: &full}, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	const iterations = 500
+	applyErrors := make(chan error, iterations)
+	violations := make(chan Snapshot, 1)
+	stopReading := make(chan struct{})
+	var readers sync.WaitGroup
+	readers.Add(1)
+	go func() {
+		defer readers.Done()
+		for {
+			select {
+			case <-stopReading:
+				return
+			default:
+				snapshot := cache.Current()
+				if snapshot.Confirmed == snapshot.Status.Invalid {
+					select {
+					case violations <- snapshot:
+					default:
+					}
+					return
+				}
+			}
+		}
+	}()
+
+	var writers sync.WaitGroup
+	for range iterations {
+		writers.Add(2)
+		go func() {
+			defer writers.Done()
+			if err := cache.Apply(FetchResult{Response: &full}, time.Now().UTC()); err != nil {
+				applyErrors <- err
+			}
+		}()
+		go func() {
+			defer writers.Done()
+			cache.MarkInvalid(errors.New("invalid cache"))
+		}()
+	}
+	writers.Wait()
+	close(stopReading)
+	readers.Wait()
+	close(applyErrors)
+
+	for err := range applyErrors {
+		t.Errorf("Apply() error = %v", err)
+	}
+	select {
+	case snapshot := <-violations:
+		t.Fatalf("observed contradictory snapshot = %#v", snapshot)
+	default:
+	}
+	if snapshot := cache.Current(); snapshot.Confirmed == snapshot.Status.Invalid {
+		t.Fatalf("final contradictory snapshot = %#v", snapshot)
 	}
 }
 
