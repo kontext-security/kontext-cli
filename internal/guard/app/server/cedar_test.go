@@ -25,6 +25,9 @@ type countingHookPolicy struct {
 	calls    int
 }
 
+const portableEngineErrorPolicy = `@id("command_pattern")
+permit(principal, action == Kontext::Action::"ToolUse", resource) when { context has command && context.command like "git*" };`
+
 func (p *countingHookPolicy) DecideHook(context.Context, risk.HookEvent) (risk.RiskDecision, error) {
 	p.calls++
 	return p.decision, nil
@@ -71,11 +74,11 @@ func TestCedarObserveClassifiesContextConversionFailure(t *testing.T) {
 }
 
 func TestCedarObserveClassifiesEngineDiagnosticsAsFailure(t *testing.T) {
-	deployment := cedarTestDeployment(t, cedareval.RolloutModeObserve, `@id("unguarded") permit(principal, action, resource) when { context.command == "git status" };`)
+	deployment := cedarTestDeployment(t, cedareval.RolloutModeObserve, portableEngineErrorPolicy)
 	current := &countingHookPolicy{decision: risk.RiskDecision{Decision: risk.DecisionAllow, ReasonCode: "current_allow", RiskEvent: risk.RiskEvent{Decision: risk.DecisionAllow}}}
 	provider := newCedarPolicyProvider(current, staticCedarSnapshots{snapshot: cedarpolicy.Snapshot{Deployment: &deployment, State: cedarpolicy.StateSuccess}}, false)
 
-	decision, err := provider.DecideHook(context.Background(), risk.HookEvent{HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: map[string]any{}})
+	decision, err := provider.DecideHook(context.Background(), risk.HookEvent{HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: map[string]any{"command": 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,11 +139,11 @@ func TestCedarEnforceDeniesAskWithoutApprovalChannel(t *testing.T) {
 }
 
 func TestCedarEnforceFailsClosedOnEngineDiagnostics(t *testing.T) {
-	deployment := cedarTestDeployment(t, cedareval.RolloutModeEnforce, `@id("unguarded") permit(principal, action, resource) when { context.command == "git status" };`)
+	deployment := cedarTestDeployment(t, cedareval.RolloutModeEnforce, portableEngineErrorPolicy)
 	current := &countingHookPolicy{decision: risk.RiskDecision{Decision: risk.DecisionAllow}}
 	provider := newCedarPolicyProvider(current, staticCedarSnapshots{snapshot: cedarpolicy.Snapshot{Deployment: &deployment, LastKnownGood: &deployment, State: cedarpolicy.StateSuccess}}, true)
 
-	decision, err := provider.DecideHook(context.Background(), risk.HookEvent{HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: map[string]any{}})
+	decision, err := provider.DecideHook(context.Background(), risk.HookEvent{HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: map[string]any{"command": 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
