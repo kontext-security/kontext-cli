@@ -70,6 +70,29 @@ func TestCedarObserveClassifiesContextConversionFailure(t *testing.T) {
 	}
 }
 
+func TestCedarObserveClassifiesEngineDiagnosticsAsFailure(t *testing.T) {
+	deployment := cedarTestDeployment(t, cedareval.RolloutModeObserve, `@id("unguarded") permit(principal, action, resource) when { context.command == "git status" };`)
+	current := &countingHookPolicy{decision: risk.RiskDecision{Decision: risk.DecisionAllow, ReasonCode: "current_allow", RiskEvent: risk.RiskEvent{Decision: risk.DecisionAllow}}}
+	provider := newCedarPolicyProvider(current, staticCedarSnapshots{snapshot: cedarpolicy.Snapshot{Deployment: &deployment, State: cedarpolicy.StateSuccess}}, false)
+
+	decision, err := provider.DecideHook(context.Background(), risk.HookEvent{HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.calls != 1 || decision.Decision != risk.DecisionAllow {
+		t.Fatalf("calls = %d decision = %#v, want preserved current authority", current.calls, decision)
+	}
+	if decision.Cedar == nil || decision.Cedar.EngineErrorCount != 1 {
+		t.Fatalf("Cedar evidence = %#v, want one engine error", decision.Cedar)
+	}
+	if decision.Cedar.Mapping.EvaluationState != cedareval.EvaluationStateFailed || decision.Cedar.Mapping.EvaluationReasonCode != cedareval.ReasonEngineError {
+		t.Fatalf("mapping = %#v, want failed/engine_error", decision.Cedar.Mapping)
+	}
+	if len(decision.Cedar.Mapping.DeterminingPolicyIDs) != 0 {
+		t.Fatalf("determining policy ids = %v, want none for failed evaluation", decision.Cedar.Mapping.DeterminingPolicyIDs)
+	}
+}
+
 func TestCedarObserveRecordsUnresolvedPrincipal(t *testing.T) {
 	current := staticHookPolicy{decision: risk.RiskDecision{Decision: risk.DecisionAllow, RiskEvent: risk.RiskEvent{Decision: risk.DecisionAllow}}}
 	provider := newCedarPolicyProvider(current, staticCedarSnapshots{snapshot: cedarpolicy.Snapshot{State: cedarpolicy.StatePrincipalUnavailable}}, false)
@@ -109,6 +132,29 @@ func TestCedarEnforceDeniesAskWithoutApprovalChannel(t *testing.T) {
 	}
 	if decision.Decision != risk.DecisionDeny || decision.ReasonCode != string(cedareval.ReasonAskUnavailable) {
 		t.Fatalf("decision = %#v, want ask fail-closed", decision)
+	}
+}
+
+func TestCedarEnforceFailsClosedOnEngineDiagnostics(t *testing.T) {
+	deployment := cedarTestDeployment(t, cedareval.RolloutModeEnforce, `@id("unguarded") permit(principal, action, resource) when { context.command == "git status" };`)
+	current := &countingHookPolicy{decision: risk.RiskDecision{Decision: risk.DecisionAllow}}
+	provider := newCedarPolicyProvider(current, staticCedarSnapshots{snapshot: cedarpolicy.Snapshot{Deployment: &deployment, LastKnownGood: &deployment, State: cedarpolicy.StateSuccess}}, true)
+
+	decision, err := provider.DecideHook(context.Background(), risk.HookEvent{HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.calls != 0 {
+		t.Fatalf("previous evaluator calls = %d, want zero after cutover", current.calls)
+	}
+	if decision.Decision != risk.DecisionDeny || decision.ReasonCode != string(cedareval.ReasonEngineError) {
+		t.Fatalf("decision = %#v, want fail-closed engine_error deny", decision)
+	}
+	if decision.Cedar == nil || decision.Cedar.EngineErrorCount != 1 || decision.Cedar.Mapping.EvaluationState != cedareval.EvaluationStateFailed {
+		t.Fatalf("Cedar evidence = %#v, want failed evaluation with one engine error", decision.Cedar)
+	}
+	if len(decision.Cedar.Mapping.DeterminingPolicyIDs) != 0 {
+		t.Fatalf("determining policy ids = %v, want none for failed evaluation", decision.Cedar.Mapping.DeterminingPolicyIDs)
 	}
 }
 

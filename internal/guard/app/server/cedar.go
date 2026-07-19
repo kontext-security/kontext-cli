@@ -129,14 +129,21 @@ func (p *cedarPolicyProvider) evaluate(snapshot cedarpolicy.Snapshot, event risk
 				}
 				evidence.EngineErrorCount = 1
 			} else {
-				outcome = cedareval.EvaluationOutcome{
-					State:                cedareval.EvaluationStateEvaluated,
-					Decision:             result.Decision,
-					Ask:                  result.Ask,
-					DeterminingPolicyIDs: result.DeterminingPolicyIDs,
-				}
 				evidence.ContextDiagnostics = result.ContextDiagnostics
 				evidence.EngineErrorCount = len(result.EngineDiagnostics.Errors)
+				if evidence.EngineErrorCount > 0 {
+					outcome = cedareval.EvaluationOutcome{
+						State:  cedareval.EvaluationStateFailed,
+						Reason: cedareval.ReasonEngineError,
+					}
+				} else {
+					outcome = cedareval.EvaluationOutcome{
+						State:                cedareval.EvaluationStateEvaluated,
+						Decision:             result.Decision,
+						Ask:                  result.Ask,
+						DeterminingPolicyIDs: result.DeterminingPolicyIDs,
+					}
+				}
 			}
 		}
 	} else if snapshot.Status.Invalid {
