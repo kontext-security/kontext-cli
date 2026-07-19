@@ -7,11 +7,16 @@ Request-contract v1 interprets JSON numbers using binary64 semantics, matching
 binary64 value are therefore the same policy input; callers that require exact
 textual precision must send a string.
 
-`hashing-v1.json` is copied byte-for-byte from the shared contract. Do not
-recreate equivalent hashing vectors independently in another runtime.
+`authorization-v1.json`, `context-errors-v1.json`,
+`evaluation-errors-v1.json`, and `hashing-v1.json` are copied byte-for-byte
+from the shared contract. Do not recreate equivalent vectors independently in
+another runtime. The evaluation-error corpus asserts diagnostic presence and
+count, never unstable engine error text.
 
 The hashing corpus pins the semantic seven-term
 `kontext:cedar-deployment:v2` identity. It contains no storage revision or
 endpoint operational configuration.
 
-`TestPortableFixtureProvenance` pins the contract version and SHA-256 digest of every file. Update the version and digests only when intentionally adopting a reviewed contract revision.
+`TestPortableFixtureProvenance` pins the contract version and SHA-256 digest of
+every portable JSON file. Update the version and digests only when intentionally
+adopting a reviewed contract revision.

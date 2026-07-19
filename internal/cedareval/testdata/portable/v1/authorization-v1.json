@@ -130,10 +130,10 @@
   },
   {
     "version": 1,
-    "name": "principal-is-structured-and-constrained",
-    "description": "A policy constrained to Alice does not match Bob's structured principal binding.",
+    "name": "principal-is-structured-and-unconstrained",
+    "description": "A structured principal binding evaluates against a validator-supported unconstrained principal scope.",
     "policies": [
-      "@id(\"alice_only\")\npermit(principal == Kontext::User::\"alice@example.com\", action == Kontext::Action::\"ToolUse\", resource);"
+      "@id(\"unconstrained_principal\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource);"
     ],
     "request": {
       "evaluationPrincipal": {
@@ -144,9 +144,9 @@
       "toolInput": {}
     },
     "expected": {
-      "decision": "deny",
+      "decision": "allow",
       "ask": false,
-      "determiningPolicyIds": [],
+      "determiningPolicyIds": ["unconstrained_principal"],
       "contextDiagnostics": []
     }
   },
@@ -156,7 +156,7 @@
     "description": "A satisfied forbid overrides a broad permit.",
     "policies": [
       "@id(\"allow_tools\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource);",
-      "@id(\"deny_rm\")\nforbid(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"Bash\") when { !(context has command) || context.command like \"rm *\" };"
+      "@id(\"deny_rm\")\nforbid(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"Bash\") when { !(context has command) || (context has command && context.command like \"rm *\") };"
     ],
     "request": {
       "evaluationPrincipal": {

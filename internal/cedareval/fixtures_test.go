@@ -24,9 +24,10 @@ import (
 const portableFixtureContractVersion = 1
 
 var fixtureDigests = map[string]string{
-	"authorization-v1.json":  "a335ed1e0cfa14776ea6f8a2464dcf4d1207aefa9f473231e5de42fcb16ba425",
-	"context-errors-v1.json": "945e6be23af02aa4d0c7bd382f5963b6342f46a02602bfbc8f134ae283b6773e",
-	"hashing-v1.json":        "5179f41ae61872ee9f6a048cba4592dc12c0267fc8c8699a0c2afa886da62775",
+	"authorization-v1.json":     "c7f8aaf5da2acbf9a5d832ebf2bcf3ca531a617cdea3a6aed1b6b1840c4735b5",
+	"context-errors-v1.json":    "945e6be23af02aa4d0c7bd382f5963b6342f46a02602bfbc8f134ae283b6773e",
+	"evaluation-errors-v1.json": "8318efcd613fd56645fac3bf49939d6b70f41af102a1f06df2a6cc9da75d8415",
+	"hashing-v1.json":           "5179f41ae61872ee9f6a048cba4592dc12c0267fc8c8699a0c2afa886da62775",
 }
 
 type authorizationFixture struct {
@@ -54,6 +55,20 @@ type contextErrorFixture struct {
 	} `json:"inputGenerator"`
 	ExpectedCode string `json:"expectedCode"`
 	ExpectedPath string `json:"expectedPath"`
+}
+
+type evaluationErrorFixture struct {
+	Version     int                    `json:"version"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Policies    []string               `json:"policies"`
+	Request     cedareval.ToolUseInput `json:"request"`
+	Expected    struct {
+		Decision             cedareval.Decision            `json:"decision"`
+		EngineErrorCount     int                           `json:"engineErrorCount"`
+		DeterminingPolicyIDs []string                      `json:"determiningPolicyIds"`
+		ContextDiagnostics   []cedareval.ContextDiagnostic `json:"contextDiagnostics"`
+	} `json:"expected"`
 }
 
 type hashFixture struct {
@@ -150,6 +165,38 @@ func TestPortableContextErrorFixtures(t *testing.T) {
 					fixture.ExpectedCode,
 					fixture.ExpectedPath,
 				)
+			}
+		})
+	}
+}
+
+func TestPortableEvaluationErrorFixtures(t *testing.T) {
+	var fixtures []evaluationErrorFixture
+	readFixture(t, "evaluation-errors-v1.json", &fixtures)
+
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture.Name, func(t *testing.T) {
+			t.Parallel()
+			evaluator, err := cedareval.New(strings.Join(fixture.Policies, "\n\n"))
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			result, err := evaluator.Evaluate(fixture.Request)
+			if err != nil {
+				t.Fatalf("Evaluate() error = %v", err)
+			}
+			if result.Decision != fixture.Expected.Decision {
+				t.Errorf("Decision = %q, want %q", result.Decision, fixture.Expected.Decision)
+			}
+			if len(result.EngineDiagnostics.Errors) != fixture.Expected.EngineErrorCount {
+				t.Errorf("EngineDiagnostics.Errors count = %d, want %d", len(result.EngineDiagnostics.Errors), fixture.Expected.EngineErrorCount)
+			}
+			if !reflect.DeepEqual(result.DeterminingPolicyIDs, fixture.Expected.DeterminingPolicyIDs) {
+				t.Errorf("DeterminingPolicyIDs = %v, want %v", result.DeterminingPolicyIDs, fixture.Expected.DeterminingPolicyIDs)
+			}
+			if !reflect.DeepEqual(result.ContextDiagnostics, fixture.Expected.ContextDiagnostics) {
+				t.Errorf("ContextDiagnostics = %v, want %v", result.ContextDiagnostics, fixture.Expected.ContextDiagnostics)
 			}
 		})
 	}
