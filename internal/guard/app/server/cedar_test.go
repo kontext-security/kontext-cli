@@ -25,8 +25,11 @@ type countingHookPolicy struct {
 	calls    int
 }
 
-const portableEngineErrorPolicy = `@id("command_pattern")
-permit(principal, action == Kontext::Action::"ToolUse", resource) when { context has command && context.command like "git*" };`
+const portableEngineErrorPolicy = `@id("allow")
+permit(principal, action == Kontext::Action::"ToolUse", resource);
+
+@id("erroring_forbid")
+forbid(principal, action == Kontext::Action::"ToolUse", resource) when { !(context has command) || (context has command && context.command like "git*") };`
 
 func (p *countingHookPolicy) DecideHook(context.Context, risk.HookEvent) (risk.RiskDecision, error) {
 	p.calls++
