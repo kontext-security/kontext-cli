@@ -102,6 +102,18 @@ func TestMapDecisionRejectsInvalidStates(t *testing.T) {
 			},
 		},
 		{
+			name: "invalid UTF-8 determining policy id",
+			input: DecisionMappingInput{
+				RolloutMode:      RolloutModeEnforce,
+				EnforcementReady: true,
+				Evaluation: EvaluationOutcome{
+					State:                EvaluationStateEvaluated,
+					Decision:             DecisionAllow,
+					DeterminingPolicyIDs: []string{"\xff"},
+				},
+			},
+		},
+		{
 			name: "unresolved principal includes fallback",
 			input: DecisionMappingInput{
 				RolloutMode:            RolloutModeObserve,

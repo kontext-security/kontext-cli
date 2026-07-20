@@ -3,6 +3,7 @@ package cedareval
 import (
 	"fmt"
 	"sort"
+	"unicode/utf8"
 )
 
 const DecisionContractVersion = 1
@@ -304,8 +305,8 @@ func validateEvaluatedOutcome(evaluation EvaluationOutcome) error {
 		return fmt.Errorf("cedareval: a Cedar allow requires a determining permit")
 	}
 	for _, policyID := range evaluation.DeterminingPolicyIDs {
-		if policyID == "" {
-			return fmt.Errorf("cedareval: determining policy id cannot be empty")
+		if policyID == "" || !utf8.ValidString(policyID) {
+			return fmt.Errorf("cedareval: determining policy id must be non-empty valid UTF-8")
 		}
 	}
 	return nil
