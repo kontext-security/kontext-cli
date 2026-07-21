@@ -1,0 +1,48 @@
+version: 2
+
+project_name: kontext
+
+before:
+  hooks:
+    - pnpm install --frozen-lockfile
+    - ./scripts/build-guard-dashboard-assets.sh
+
+builds:
+  - main: ./cmd/kontext
+    binary: kontext
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+# Staging builds publish prereleases to a PRIVATE repo so that only org
+# members can download them (enforced by the formula's download strategy).
+# Tags use a staging/YYYY.MM.DD.N prefix — never vX.Y.Z — so release-please
+# on the public repo never sees them.
+release:
+  github:
+    owner: kontext-security
+    name: kontext-cli-staging-releases
+  prerelease: "true"
+  name_template: "staging {{ .Tag }}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^ci:"
+      - "^chore:"

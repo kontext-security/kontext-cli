@@ -1,0 +1,119 @@
+name: Staging Release
+
+# Cuts a staging prerelease from an arbitrary branch/SHA and updates
+# Formula/kontext-staging.rb in kontext-security/homebrew-tap.
+#
+# Staging release ASSETS live in the private
+# kontext-security/kontext-cli-staging-releases repo so only org members can
+# download them (the formula enforces this via a token-gated download
+# strategy). Tags use a staging/YYYY.MM.DD.RUN prefix — never vX.Y.Z — so
+# release-please on this repo never treats them as prod versions.
+#
+# Prerequisites (manual, one-time):
+#   1. Private repo kontext-security/kontext-cli-staging-releases exists.
+#   2. The kontext-release-bot GitHub App (same one release-please uses) is
+#      installed on that repo with Contents: read & write. The workflow mints
+#      a short-lived token per run from the app's existing
+#      KONTEXT_RELEASE_APP_CLIENT_ID / KONTEXT_RELEASE_APP_PRIVATE_KEY
+#      credentials — no PATs.
+#
+# See docs/staging.md for the install/test flow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or SHA to build (e.g. jens/eng-495-capture-mode-plumbing)"
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  # One staging publish at a time — each dispatch bumps the run-derived
+  # version suffix and rewrites the same formula file.
+  group: staging-release
+  cancel-in-progress: false
+
+jobs:
+  staging-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.0.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Compute staging tag and version
+        id: staging
+        run: |
+          tag="staging/$(date -u +%Y.%m.%d).${{ github.run_number }}"
+          version="${tag#staging/}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          git tag "${tag}"
+
+      - name: Create staging releases token
+        id: staging-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.KONTEXT_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.KONTEXT_RELEASE_APP_PRIVATE_KEY }}
+          repositories: kontext-cli-staging-releases
+          permission-contents: write
+
+      - uses: goreleaser/goreleaser-action@1a80836c5c9d9e5755a25cb59ec6f45a3b5f41a8 # v7.2.1
+        with:
+          version: "~> v2.13"
+          args: release --clean --config .goreleaser.staging.yaml
+        env:
+          # Publishes the prerelease to the private staging-releases repo.
+          # Token is minted per-run by the kontext-release-bot app and scoped
+          # to contents:write on that repo only.
+          GITHUB_TOKEN: ${{ steps.staging-token.outputs.token }}
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: kontext-security/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Render Homebrew formula
+        env:
+          VERSION: ${{ steps.staging.outputs.version }}
+        run: |
+          ./scripts/render-homebrew-formula.sh "$VERSION" dist/checksums.txt --staging > homebrew-tap/Formula/kontext-staging.rb
+          ruby -c homebrew-tap/Formula/kontext-staging.rb
+
+      - name: Publish Homebrew formula
+        env:
+          VERSION: ${{ steps.staging.outputs.version }}
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/kontext-staging.rb
+          if git diff --cached --quiet; then
+            echo "Formula unchanged; skipping commit."
+            exit 0
+          fi
+          git commit -m "chore: update kontext-staging formula to ${VERSION}"
+          git push
