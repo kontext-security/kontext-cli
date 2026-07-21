@@ -6,7 +6,7 @@ before the branch lands on `main` and becomes a prod release.
 - **Prod:** `brew install kontext-security/tap/kontext` — built from `main`
   by release-please, public assets on this repo's releases.
 - **Staging:** `brew install kontext-security/tap/kontext-staging` — built
-  on demand from any branch via the `Staging Release` workflow, assets in the
+  on demand from any branch by the `Staging Release` workflow in the
   **private** `kontext-security/kontext-cli-staging-releases` repo (org
   members only). Staging tags are valid SemVer prereleases such as
   `v0.0.0-staging.20260721.4`. They are published only to the separate
@@ -18,24 +18,24 @@ other.
 
 ## Publishing a staging build
 
-Prerequisites (one-time, repo admins):
+Prerequisites (one-time, repo admins, configured in the private release repo):
 
-1. The private repo `kontext-security/kontext-cli-staging-releases` exists.
-2. The `kontext-release-bot` GitHub App (the same app release-please uses
-   for prod releases) is installed on that repo with Contents: read & write
-   (org Settings → GitHub Apps → kontext-release-bot → Configure →
-   Repository access). The workflow mints a short-lived per-run token from
-   the app's existing credentials — no PATs or extra secrets involved.
+1. Its `main` branch contains the `Staging Release` workflow.
+2. Its `HOMEBREW_TAP_TOKEN` Actions secret has Contents: write access to
+   `kontext-security/homebrew-tap`. Releases use the private repository's own
+   short-lived `GITHUB_TOKEN` and need no cross-repository release credential.
 
 Then, from any branch:
 
 ```bash
-gh workflow run staging-release.yml -R kontext-security/kontext-cli \
+gh workflow run staging-release.yml \
+  -R kontext-security/kontext-cli-staging-releases \
   -f ref=my-feature-branch
 ```
 
-(or Actions → Staging Release → Run workflow). The workflow builds all
-platform tarballs, creates a prerelease in the private repo, and updates
+(or open `kontext-cli-staging-releases` → Actions → Staging Release → Run
+workflow). A credential-free job builds the selected CLI ref. A fresh runner
+then publishes its four archives as a private prerelease and updates
 `Formula/kontext-staging.rb` in `kontext-security/homebrew-tap`. Re-run it to
 publish a newer build; the version (`0.0.0-staging.YYYYMMDD.RUN`) increases
 monotonically so `brew upgrade kontext-staging` picks it up.
