@@ -402,22 +402,28 @@ func runManagedStream(ctx context.Context, opts DaemonOptions, dbPath, installat
 	if interval == 0 {
 		interval = managedstream.DefaultIntervalFromEnv()
 	}
-	var consecutiveAuthFailures int
+	var consecutiveAuthFailures, consecutiveFlushFailures int
 	flush := func() {
 		err := flushManagedStream(ctx, opts, dbPath, installationID)
 		if err == nil {
 			consecutiveAuthFailures = 0
+			consecutiveFlushFailures = 0
 			return
 		}
 		opts.Diagnostic.Printf("managed stream flush: %v\n", err)
 		status, ok := managedstream.AuthFailureStatus(err)
-		if !ok {
-			consecutiveAuthFailures = 0
+		if ok {
+			consecutiveFlushFailures = 0
+			consecutiveAuthFailures++
+			if managedstream.ShouldReportAuthFailure(consecutiveAuthFailures) {
+				writeStreamAuthFailure(opts, dbPath, status)
+			}
 			return
 		}
-		consecutiveAuthFailures++
-		if managedstream.ShouldReportAuthFailure(consecutiveAuthFailures) {
-			writeStreamAuthFailure(opts, dbPath, status)
+		consecutiveAuthFailures = 0
+		consecutiveFlushFailures++
+		if managedstream.ShouldReportFailure(consecutiveFlushFailures) {
+			logAlways(opts.Diagnostic, "managed stream flush failing (%d consecutive): %v\n", consecutiveFlushFailures, err)
 		}
 	}
 	flush()

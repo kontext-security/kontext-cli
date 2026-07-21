@@ -130,12 +130,20 @@ func AuthFailureStatus(err error) (int, bool) {
 	return hostedErr.StatusCode, true
 }
 
-func ShouldReportAuthFailure(consecutiveFailures int) bool {
+// ShouldReportFailure reports whether a consecutive-failure counter of any kind
+// is worth surfacing: the 3rd in a row (skips transient blips), then every 50th
+// (~8 minutes at the default interval).
+func ShouldReportFailure(consecutiveFailures int) bool {
 	if consecutiveFailures <= 0 {
 		return false
 	}
 	return consecutiveFailures == authFailureThreshold ||
 		consecutiveFailures%authFailureRefire == 0
+}
+
+// ShouldReportAuthFailure shares the generic failure-reporting cadence.
+func ShouldReportAuthFailure(consecutiveFailures int) bool {
+	return ShouldReportFailure(consecutiveFailures)
 }
 
 func Flush(ctx context.Context, opts Options) error {
