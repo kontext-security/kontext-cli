@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -15,6 +17,7 @@ type LedgerExportOptions struct {
 	UpdatedAfter   *time.Time
 	UpdatedAfterID string
 	Limit          int
+	ReceiptLimit   int
 }
 
 type LedgerBatch struct {
@@ -37,9 +40,12 @@ type LedgerCursor struct {
 const (
 	ledgerCursorUpdatedAtKeyColumn = "__cursor_updated_at_key"
 	ledgerTimestampCursorKeyLayout = "2006-01-02T15:04:05.000000000Z07:00"
+	maxSQLQueryParams              = 500
 )
 
 var ledgerFallbackTimestamp = time.Unix(0, 0).UTC()
+
+var ErrLedgerReceiptRangeTooLarge = errors.New("ledger receipt range exceeds limit")
 
 const authorizationActionsSelect = `
 select id, session_id, turn_id, tool_use_id, trace_id, span_id, parent_span_id,
@@ -71,8 +77,16 @@ func (s *Store) LedgerBatch(ctx context.Context, opts LedgerExportOptions) (Ledg
 	if err != nil {
 		return LedgerBatch{}, err
 	}
-	receipts, err := s.authorizationReceiptRangeForActions(ctx, recordIDs(actions))
+	receipts, err := s.authorizationReceiptRangeForActions(ctx, recordIDs(actions), opts.ReceiptLimit)
 	if err != nil {
+		if errors.Is(err, ErrLedgerReceiptRangeTooLarge) {
+			return LedgerBatch{
+				Sessions: []LedgerRecord{},
+				Actions:  actions,
+				Receipts: []LedgerRecord{},
+				Cursor:   cursor,
+			}, err
+		}
 		return LedgerBatch{}, err
 	}
 	actions, err = s.authorizationActionsByIDs(ctx, appendMissingIDs(recordIDs(actions), recordStrings(receipts, "action_id")))
@@ -114,23 +128,41 @@ func receiptChainAnchor(receipts []LedgerRecord) *LedgerReceiptChainAnchor {
 }
 
 func (s *Store) AgentSessions(ctx context.Context, ids []string) ([]LedgerRecord, error) {
+	ids = uniqueStrings(ids)
 	if len(ids) == 0 {
 		return []LedgerRecord{}, nil
 	}
-	placeholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
-	args := make([]any, 0, len(ids))
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	return queryLedgerRecords(ctx, s.db, fmt.Sprintf(`
+	records := []LedgerRecord{}
+	for _, chunk := range stringChunks(ids) {
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(chunk)), ",")
+		args := make([]any, 0, len(chunk))
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		chunkRecords, err := queryLedgerRecords(ctx, s.db, fmt.Sprintf(`
 select id, runtime_kind, runtime_instance_id, adapter_kind, adapter_version, agent_provider, agent,
   conversation_id, trace_id, principal_id, identity_context_json, identity_hash,
   policy_version, policy_hash, cwd, source, status, external_id, closed_at,
   mode, created_at, updated_at
 from agent_sessions
 where id in (%s)
-order by created_at, id
 	`, placeholders), args...)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, chunkRecords...)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		createdI, _ := records[i]["created_at"].(string)
+		createdJ, _ := records[j]["created_at"].(string)
+		if createdI != createdJ {
+			return createdI < createdJ
+		}
+		idI, _ := records[i]["id"].(string)
+		idJ, _ := records[j]["id"].(string)
+		return idI < idJ
+	})
+	return records, nil
 }
 
 func (s *Store) AuthorizationActions(ctx context.Context, opts LedgerExportOptions) ([]LedgerRecord, error) {
@@ -192,12 +224,31 @@ func (s *Store) authorizationActionsByIDs(ctx context.Context, ids []string) ([]
 	if len(ids) == 0 {
 		return []LedgerRecord{}, nil
 	}
-	placeholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
-	args := make([]any, 0, len(ids))
-	for _, id := range ids {
-		args = append(args, id)
+	records := []LedgerRecord{}
+	for _, chunk := range stringChunks(ids) {
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(chunk)), ",")
+		args := make([]any, 0, len(chunk))
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		chunkRecords, err := queryLedgerRecords(ctx, s.db, fmt.Sprintf("%s\nwhere id in (%s)", authorizationActionsSelectWithCursorKey(), placeholders), args...)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, chunkRecords...)
 	}
-	return queryLedgerRecords(ctx, s.db, fmt.Sprintf("%s\nwhere id in (%s)\norder by updated_at_cursor_key, id", authorizationActionsSelect, placeholders), args...)
+	sort.Slice(records, func(i, j int) bool {
+		updatedI, _ := records[i][ledgerCursorUpdatedAtKeyColumn].(string)
+		updatedJ, _ := records[j][ledgerCursorUpdatedAtKeyColumn].(string)
+		if updatedI != updatedJ {
+			return updatedI < updatedJ
+		}
+		idI, _ := records[i]["id"].(string)
+		idJ, _ := records[j]["id"].(string)
+		return idI < idJ
+	})
+	stripLedgerCursorColumns(records)
+	return records, nil
 }
 
 func (s *Store) AuthorizationReceipts(ctx context.Context, opts LedgerExportOptions) ([]LedgerRecord, error) {
@@ -215,30 +266,56 @@ func (s *Store) AuthorizationReceipts(ctx context.Context, opts LedgerExportOpti
 	return queryLedgerRecords(ctx, s.db, query, args...)
 }
 
-func (s *Store) authorizationReceiptRangeForActions(ctx context.Context, actionIDs []string) ([]LedgerRecord, error) {
+func (s *Store) authorizationReceiptRangeForActions(ctx context.Context, actionIDs []string, limit int) ([]LedgerRecord, error) {
 	actionIDs = uniqueStrings(actionIDs)
 	if len(actionIDs) == 0 {
 		return []LedgerRecord{}, nil
 	}
-	placeholders := strings.TrimRight(strings.Repeat("?,", len(actionIDs)), ",")
-	args := make([]any, 0, len(actionIDs))
-	for _, id := range actionIDs {
-		args = append(args, id)
+	var startRowID, endRowID sql.NullInt64
+	for _, chunk := range stringChunks(actionIDs) {
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(chunk)), ",")
+		args := make([]any, 0, len(chunk))
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		var chunkStart, chunkEnd sql.NullInt64
+		if err := s.db.QueryRowContext(ctx, fmt.Sprintf(`
+select min(rowid), max(rowid)
+from authorization_receipts
+where action_id in (%s)
+		`, placeholders), args...).Scan(&chunkStart, &chunkEnd); err != nil {
+			return nil, err
+		}
+		if chunkStart.Valid && (!startRowID.Valid || chunkStart.Int64 < startRowID.Int64) {
+			startRowID = chunkStart
+		}
+		if chunkEnd.Valid && (!endRowID.Valid || chunkEnd.Int64 > endRowID.Int64) {
+			endRowID = chunkEnd
+		}
 	}
-	return queryLedgerRecords(ctx, s.db, fmt.Sprintf(`
-with selected_receipts as (
-  select rowid
-  from authorization_receipts
-  where action_id in (%s)
-),
-receipt_bounds as (
-  select min(rowid) as start_rowid, max(rowid) as end_rowid
-  from selected_receipts
-)
-%s, receipt_bounds
-where authorization_receipts.rowid between receipt_bounds.start_rowid and receipt_bounds.end_rowid
-order by authorization_receipts.rowid
-	`, placeholders, authorizationReceiptsSelect), args...)
+	if !startRowID.Valid || !endRowID.Valid {
+		return []LedgerRecord{}, nil
+	}
+	// Interleaved sessions make action update order diverge from receipt insert
+	// order, so reject a wide rowid range before reading and decoding its payloads.
+	// Receipts are append-only, and concurrent inserts get rowids above endRowID,
+	// so they cannot enter this range between the count and fetch. This guard only
+	// avoids decoding cost; the caller still rejects oversized materialized payloads.
+	var count int
+	if err := s.db.QueryRowContext(ctx, `
+select count(*)
+from authorization_receipts
+where rowid between ? and ?
+	`, startRowID.Int64, endRowID.Int64).Scan(&count); err != nil {
+		return nil, err
+	}
+	if limit > 0 && count > limit {
+		return nil, fmt.Errorf("%w: count %d exceeds limit %d", ErrLedgerReceiptRangeTooLarge, count, limit)
+	}
+	return queryLedgerRecords(ctx, s.db, authorizationReceiptsSelect+`
+where rowid between ? and ?
+order by rowid
+	`, startRowID.Int64, endRowID.Int64)
 }
 
 func queryLedgerRecords(ctx context.Context, db *sql.DB, query string, args ...any) ([]LedgerRecord, error) {
@@ -449,4 +526,16 @@ func uniqueStrings(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func stringChunks(values []string) [][]string {
+	// modernc.org/sqlite caps one statement at 32,766 variables; keep every
+	// unbounded IN query comfortably below that limit.
+	chunks := make([][]string, 0, (len(values)+maxSQLQueryParams-1)/maxSQLQueryParams)
+	for len(values) > 0 {
+		size := min(len(values), maxSQLQueryParams)
+		chunks = append(chunks, values[:size])
+		values = values[size:]
+	}
+	return chunks
 }
