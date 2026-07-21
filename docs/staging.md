@@ -8,8 +8,9 @@ before the branch lands on `main` and becomes a prod release.
 - **Staging:** `brew install kontext-security/tap/kontext-staging` — built
   on demand from any branch via the `Staging Release` workflow, assets in the
   **private** `kontext-security/kontext-cli-staging-releases` repo (org
-  members only). Staging tags look like `staging/2026.07.21.4`, never
-  `vX.Y.Z`, so release-please ignores them.
+  members only). Staging tags are valid SemVer prereleases such as
+  `v0.0.0-staging.20260721.4`. They are published only to the separate
+  staging-releases repo, so release-please in the source repo never sees them.
 
 The staging formula installs the same `kontext` binary as prod, so the two
 formulae `conflicts_with` each other — uninstall one before installing the
@@ -36,7 +37,7 @@ gh workflow run staging-release.yml -R kontext-security/kontext-cli \
 (or Actions → Staging Release → Run workflow). The workflow builds all
 platform tarballs, creates a prerelease in the private repo, and updates
 `Formula/kontext-staging.rb` in `kontext-security/homebrew-tap`. Re-run it to
-publish a newer build; the version suffix (`YYYY.MM.DD.RUN`) increases
+publish a newer build; the version (`0.0.0-staging.YYYYMMDD.RUN`) increases
 monotonically so `brew upgrade kontext-staging` picks it up.
 
 ## Installing and testing
@@ -54,7 +55,9 @@ HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)" \
 
 # point the CLI at the staging backend before setup
 export KONTEXT_API_URL=https://api.staging.kontext.security
-kontext setup --token <staging-token>
+kontext setup \
+  --cloud-url https://api.staging.kontext.security \
+  --token <staging-token>
 ```
 
 `HOMEBREW_GITHUB_API_TOKEN` must be set on every `install`/`upgrade` — the
@@ -75,12 +78,10 @@ in the private repo as throwaway artifacts; prune old ones occasionally.
 
 ## Caveats
 
-- The staging build still talks to whichever backend `KONTEXT_API_URL`
-  points at — default is prod (`https://api.kontext.security`,
-  `internal/backend/backend.go`). Always export the staging host before
-  `kontext setup`. Some components resolve the backend URL independently of
-  that env var; verify coverage before relying on a staging install for
-  sensitive flows.
+- The binary still defaults to production. Export `KONTEXT_API_URL` for CLI
+  commands. `kontext setup` respects that variable too; passing `--cloud-url`
+  explicitly, as shown above, also persists the staging URL for the managed
+  background agent.
 - The staging backend hostname is not secret — it appears in this public
   repo. The private-releases mechanism only gates the binaries, not the
   topology.

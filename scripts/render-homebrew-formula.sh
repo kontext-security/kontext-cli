@@ -57,7 +57,7 @@ if [[ "$staging" == true ]]; then
   formula_class="KontextStaging"
   strategy_class="KontextStagingGitHubPrivateRepositoryReleaseDownloadStrategy"
   release_repo="kontext-security/kontext-cli-staging-releases"
-  tag="staging/${version}"
+  tag="v${version}"
   conflicts_line=$'  conflicts_with "kontext"\n'
 else
   formula_class="Kontext"
@@ -112,7 +112,7 @@ if [[ "$staging" == true ]]; then
 
       Point it at the staging backend before setup:
         export KONTEXT_API_URL=https://api.staging.kontext.security
-        kontext setup --token <staging-token>
+        kontext setup --cloud-url https://api.staging.kontext.security --token <staging-token>
 
       If installation fails with a GitHub authentication error, retry with:
         HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)" brew install kontext-security/tap/kontext-staging
