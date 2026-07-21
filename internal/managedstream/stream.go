@@ -130,12 +130,20 @@ func AuthFailureStatus(err error) (int, bool) {
 	return hostedErr.StatusCode, true
 }
 
-func ShouldReportAuthFailure(consecutiveFailures int) bool {
+// ShouldReportFailure reports whether a consecutive-failure counter of any kind
+// is worth surfacing: the 3rd in a row (skips transient blips), then every 50th
+// (~8 minutes at the default interval).
+func ShouldReportFailure(consecutiveFailures int) bool {
 	if consecutiveFailures <= 0 {
 		return false
 	}
 	return consecutiveFailures == authFailureThreshold ||
 		consecutiveFailures%authFailureRefire == 0
+}
+
+// ShouldReportAuthFailure shares the generic failure-reporting cadence.
+func ShouldReportAuthFailure(consecutiveFailures int) bool {
+	return ShouldReportFailure(consecutiveFailures)
 }
 
 func Flush(ctx context.Context, opts Options) error {
@@ -158,6 +166,7 @@ func Flush(ctx context.Context, opts Options) error {
 	}
 
 	limit := batchLimit(opts.BatchLimit)
+	maxLimit := limit
 	// Pagination within this call uses the true batch cursor so the drain
 	// makes forward progress; only the PERSISTED cursor is held back by
 	// cursorSafetyLag (see clampCursor).
@@ -171,8 +180,22 @@ func Flush(ctx context.Context, opts Options) error {
 			UpdatedAfter:   pageUpdatedAfter,
 			UpdatedAfterID: pageActionID,
 			Limit:          limit,
+			ReceiptLimit:   maxPayloadReceipts,
 		})
 		if err != nil {
+			if errors.Is(err, sqlite.ErrLedgerReceiptRangeTooLarge) {
+				if limit == 1 {
+					return advancePastMinimumBatch(statePath, batch, state, "receipt range too large", err)
+				}
+				nextLimit := reducedBatchLimit(limit)
+				opts.Diagnostic.Printf(
+					"managed stream receipt range exceeds hosted limit; reducing batch limit from %d to %d\n",
+					limit,
+					nextLimit,
+				)
+				limit = nextLimit
+				continue
+			}
 			return err
 		}
 		if len(batch.Actions) == 0 {
@@ -223,6 +246,13 @@ func Flush(ctx context.Context, opts Options) error {
 		// credential works, which is what breadcrumb-clearing needs.
 		if opts.OnFlushSuccess != nil {
 			opts.OnFlushSuccess()
+		}
+
+		// Reductions are multiplicative and per-region; recovery is additive
+		// (AIMD, like TCP), so a drain neither stays pinned at tiny batches nor
+		// oscillates against the same wide receipt range it just backed off from.
+		if limit < maxLimit {
+			limit++
 		}
 
 		if batch.Cursor == nil {

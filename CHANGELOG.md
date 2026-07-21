@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.15.1](https://github.com/kontext-security/kontext-cli/compare/v0.15.0...v0.15.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* **deps:** bump vite to 7.3.5 and esbuild to 0.28.1 for open security alerts ([#380](https://github.com/kontext-security/kontext-cli/issues/380)) ([7ae08ff](https://github.com/kontext-security/kontext-cli/commit/7ae08ff9799135f3a819f6da8f86841434d4aa4f))
+* managed-observe stale-daemon recovery — binary watchdog, status breadcrumb, doctor + --fix (ENG-516) ([#373](https://github.com/kontext-security/kontext-cli/issues/373)) ([eb92ea2](https://github.com/kontext-security/kontext-cli/commit/eb92ea2f4f44893bd1b4b5a4b6383490c174e020))
+* **managedobserve:** log consecutive stream flush failures unconditionally ([#394](https://github.com/kontext-security/kontext-cli/issues/394)) ([068e945](https://github.com/kontext-security/kontext-cli/commit/068e9450619253b03803327cc64324629fafef86))
+* **managedstream:** drain past wide receipt ranges, restore batch limit after reductions ([#393](https://github.com/kontext-security/kontext-cli/issues/393)) ([7b77d80](https://github.com/kontext-security/kontext-cli/commit/7b77d8047ecf7b75fc07dfed903816886c6938f9))
+* **sqlite:** chunk ledger IN() queries and guard wide receipt rowid ranges ([#392](https://github.com/kontext-security/kontext-cli/issues/392)) ([45a0f16](https://github.com/kontext-security/kontext-cli/commit/45a0f16b8de9ab7cd94cce93a73d003f7145c949))
+
 ## [0.15.0](https://github.com/kontext-security/kontext-cli/compare/v0.14.1...v0.15.0) (2026-07-09)
 
 
