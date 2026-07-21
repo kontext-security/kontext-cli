@@ -1,5 +1,5 @@
-# Keep in sync with .goreleaser.staging.yaml — the staging channel must build
-# exactly what prod ships.
+# Keep in sync with .goreleaser.yaml — a copy only because the private
+# staging workflow pins this filename; the build matrix must match prod.
 version: 2
 
 project_name: kontext
@@ -29,6 +29,10 @@ archives:
 
 checksum:
   name_template: "checksums.txt"
+
+# The private kontext-cli-staging-releases workflow runs this configuration
+# with --skip=publish, transfers only the archives to a fresh runner, and
+# publishes them with that repository's own short-lived GITHUB_TOKEN.
 
 changelog:
   sort: asc

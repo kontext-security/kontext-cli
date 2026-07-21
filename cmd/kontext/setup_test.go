@@ -8,6 +8,7 @@ import (
 )
 
 func TestSetupCmdFlags(t *testing.T) {
+	t.Setenv("KONTEXT_API_URL", "")
 	cmd := setupCmd()
 
 	token := cmd.Flags().Lookup("token")
@@ -29,6 +30,19 @@ func TestSetupCmdFlags(t *testing.T) {
 	uninstall := cmd.Flags().Lookup("uninstall")
 	if uninstall == nil || uninstall.DefValue != "false" {
 		t.Fatalf("--uninstall flag = %v", uninstall)
+	}
+}
+
+func TestSetupCmdCloudURLDefaultsFromEnvironment(t *testing.T) {
+	const stagingURL = "https://api.staging.kontext.security"
+	t.Setenv("KONTEXT_API_URL", stagingURL)
+
+	cloudURL := setupCmd().Flags().Lookup("cloud-url")
+	if cloudURL == nil {
+		t.Fatal("setup command missing --cloud-url flag")
+	}
+	if cloudURL.DefValue != stagingURL {
+		t.Fatalf("--cloud-url default = %q, want %q", cloudURL.DefValue, stagingURL)
 	}
 }
 
