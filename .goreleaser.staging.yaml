@@ -1,3 +1,5 @@
+# Keep in sync with .goreleaser.yaml — a copy only because the private
+# staging workflow pins this filename; the build matrix must match prod.
 version: 2
 
 project_name: kontext

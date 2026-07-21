@@ -66,19 +66,27 @@ else
   conflicts_line=$'  conflicts_with "kontext-staging"\n'
 fi
 
-# Staging formulae download from a private repo: Homebrew must send the
-# installer's GitHub token with the asset request. Mirrors the strategy used
-# by Formula/kontext-scan.rb in kontext-security/homebrew-tap.
+# Staging formulae download from a private repo. Private release assets 404
+# on the github.com/.../releases/download browser URL even with a token, so
+# the strategy resolves the asset id through the GitHub API and downloads it
+# with Accept: application/octet-stream (same approach as Homebrew's retired
+# GitHubPrivateRepositoryReleaseDownloadStrategy).
 download_strategy_preamble=""
 url_suffix=""
 if [[ "$staging" == true ]]; then
   download_strategy_preamble=$(cat <<EOF
 require "download_strategy"
+require "json"
+require "utils/curl"
 
 class ${strategy_class} < CurlDownloadStrategy
   def initialize(url, name, version, **meta)
-    token = ENV["HOMEBREW_GITHUB_API_TOKEN"].to_s.strip
-    odie <<~EOS if token.empty?
+    super
+    match = url.match(%r{^https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/(.+)\$})
+    raise CurlDownloadStrategyError, "unexpected release URL: #{url}" unless match
+    @owner, @repo, @tag, @asset_name = match.captures
+    @token = ENV["HOMEBREW_GITHUB_API_TOKEN"].to_s.strip
+    odie <<~EOS if @token.empty?
       HOMEBREW_GITHUB_API_TOKEN is required to install kontext-staging: release
       assets live in the private ${release_repo} repository.
 
@@ -86,16 +94,34 @@ class ${strategy_class} < CurlDownloadStrategy
       repo) and retry:
         HOMEBREW_GITHUB_API_TOKEN="\$(gh auth token)" brew install kontext-security/tap/kontext-staging
     EOS
+  end
 
-    meta[:headers] ||= []
-    meta[:headers] << "Authorization: Bearer #{token}"
-    super
+  private
+
+  def _fetch(url:, resolved_url:, timeout:)
+    curl_download "https://api.github.com/repos/#{@owner}/#{@repo}/releases/assets/#{asset_id}",
+                  "--header", "Accept: application/octet-stream",
+                  "--header", "Authorization: Bearer #{@token}",
+                  to: temporary_path, timeout: timeout
+  end
+
+  def asset_id
+    release = JSON.parse(Utils::Curl.curl_output(
+      "--fail", "--silent", "--location",
+      "--header", "Accept: application/vnd.github+json",
+      "--header", "Authorization: Bearer #{@token}",
+      "https://api.github.com/repos/#{@owner}/#{@repo}/releases/tags/#{@tag}"
+    ).stdout)
+    asset = release.fetch("assets", []).find { |a| a["name"] == @asset_name }
+    odie "asset #{@asset_name} not found on #{@owner}/#{@repo} release #{@tag}" unless asset
+    asset["id"]
   end
 end
 EOF
 )
-  # Command substitution strips trailing newlines; restore the separator.
-  download_strategy_preamble+=$'\n'
+  # Command substitution strips trailing newlines; restore the separator
+  # (blank line between the strategy class and the formula class).
+  download_strategy_preamble+=$'\n\n'
   url_suffix=",
           using: ${strategy_class}"
 fi
