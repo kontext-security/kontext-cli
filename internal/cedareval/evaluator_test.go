@@ -160,6 +160,78 @@ func TestConvertToolInputNumericRepresentations(t *testing.T) {
 	}
 }
 
+func TestECMAFixed4UsesJavaScriptTieBreaking(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		value      float64
+		wantFixed  string
+		wantScaled int64
+	}{
+		{
+			name:       "positive exact halfway",
+			value:      549755813888.03125,
+			wantFixed:  "549755813888.0313",
+			wantScaled: 5497558138880313,
+		},
+		{
+			name:       "negative exact halfway",
+			value:      -549755813888.03125,
+			wantFixed:  "-549755813888.0313",
+			wantScaled: -5497558138880313,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fixed, scaled, ok := ecmaFixed4(tt.value)
+			if !ok {
+				t.Fatal("ecmaFixed4() ok = false, want true")
+			}
+			if fixed != tt.wantFixed || scaled != tt.wantScaled {
+				t.Fatalf("ecmaFixed4() = (%q, %d), want (%q, %d)", fixed, scaled, tt.wantFixed, tt.wantScaled)
+			}
+			if _, _, err := ConvertToolInput(map[string]any{"value": tt.value}); err != nil {
+				t.Fatalf("ConvertToolInput() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestBuildRequestRejectsInvalidUTF8Identifiers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		principal string
+		toolName  string
+	}{
+		{name: "principal", principal: string([]byte{0xff}), toolName: "Bash"},
+		{name: "tool", principal: "alice@example.com", toolName: string([]byte{0xff})},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := BuildRequest(ToolUseInput{
+				EvaluationPrincipal: EvaluationPrincipal{
+					EntityType: PrincipalEntityType,
+					EntityID:   tt.principal,
+				},
+				ToolName:  tt.toolName,
+				ToolInput: map[string]any{},
+			})
+			if err == nil || !strings.Contains(err.Error(), "valid UTF-8") {
+				t.Fatalf("BuildRequest() error = %v, want valid UTF-8 rejection", err)
+			}
+		})
+	}
+}
+
 func TestEvaluatorPreservesEngineDiagnostics(t *testing.T) {
 	t.Parallel()
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -189,14 +190,18 @@ func convertFloat(value float64, path string) (cedar.Value, error) {
 		return cedar.Long(int64(value)), nil
 	}
 
-	// Accept exactly the doubles that round-trip through their own four-digit
-	// decimal rendering. Scaling by 10^4 in binary64 injects rounding noise and
-	// makes acceptance depend on luck (0.07 * 10000 != 700 in binary64), and it
-	// collapses distinct doubles into one decimal. Only non-integers reach
-	// here, so the 'f' rendering is exact and bounded. TypeScript mirror uses
-	// Number(value.toFixed(4)) === value; exact-halfway doubles fail the
-	// round-trip in both runtimes, so tie-breaking rules can never disagree.
-	fixed := strconv.FormatFloat(value, 'f', 4, 64)
+	// Match ECMAScript Number.prototype.toFixed(4) exactly before applying the
+	// same round-trip check as the TypeScript contract runtime. Go's 'f'
+	// formatter uses round-to-even while ECMAScript selects the larger integer
+	// on a tie, so using FormatFloat here would diverge for some large doubles.
+	fixed, scaled, ok := ecmaFixed4(value)
+	if !ok {
+		return nil, newConversionError(
+			"unsupported_decimal",
+			path,
+			"cedar decimals must lie within -922337203685477.5808..922337203685477.5807",
+		)
+	}
 	round, err := strconv.ParseFloat(fixed, 64)
 	if err != nil || round != value {
 		return nil, newConversionError(
@@ -205,19 +210,41 @@ func convertFloat(value float64, path string) (cedar.Value, error) {
 			"cedar decimals must be exactly representable with at most four fractional digits",
 		)
 	}
-	scaled, err := strconv.ParseInt(strings.Replace(fixed, ".", "", 1), 10, 64)
-	if err != nil {
-		return nil, newConversionError(
-			"unsupported_decimal",
-			path,
-			"cedar decimals must lie within -922337203685477.5808..922337203685477.5807",
-		)
-	}
 	decimal, err := cedar.NewDecimal(scaled, -4)
 	if err != nil {
 		return nil, newConversionError("unsupported_decimal", path, "cedar decimal is outside the portable range")
 	}
 	return decimal, nil
+}
+
+func ecmaFixed4(value float64) (string, int64, bool) {
+	absolute := new(big.Rat).SetFloat64(math.Abs(value))
+	absolute.Mul(absolute, big.NewRat(10_000, 1))
+
+	scaled := new(big.Int)
+	remainder := new(big.Int)
+	scaled.QuoRem(absolute.Num(), absolute.Denom(), remainder)
+	twiceRemainder := new(big.Int).Lsh(new(big.Int).Set(remainder), 1)
+	if twiceRemainder.Cmp(absolute.Denom()) >= 0 {
+		scaled.Add(scaled, big.NewInt(1))
+	}
+	if math.Signbit(value) {
+		scaled.Neg(scaled)
+	}
+	if !scaled.IsInt64() {
+		return "", 0, false
+	}
+
+	digits := new(big.Int).Abs(new(big.Int).Set(scaled)).String()
+	if len(digits) < 5 {
+		digits = strings.Repeat("0", 5-len(digits)) + digits
+	}
+	separator := len(digits) - 4
+	fixed := digits[:separator] + "." + digits[separator:]
+	if scaled.Sign() < 0 {
+		fixed = "-" + fixed
+	}
+	return fixed, scaled.Int64(), true
 }
 
 func convertSigned(value int64, path string) (cedar.Value, error) {

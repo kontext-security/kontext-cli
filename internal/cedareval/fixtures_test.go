@@ -92,6 +92,18 @@ func TestPortableFixtureProvenance(t *testing.T) {
 			cedareval.RequestContractVersion,
 		)
 	}
+	entries, err := os.ReadDir(filepath.Join("testdata", "portable", "v1"))
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		if _, ok := fixtureDigests[entry.Name()]; !ok {
+			t.Errorf("portable fixture %q has no pinned digest", entry.Name())
+		}
+	}
 	for name, expected := range fixtureDigests {
 		name := name
 		expected := expected
@@ -385,6 +397,30 @@ func readFixture(t *testing.T, name string, destination any) {
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		t.Fatalf("Decode() trailing content error = %v", err)
+	}
+
+	type fixtureMetadata struct {
+		Version int `json:"version"`
+	}
+	var metadata []fixtureMetadata
+	if bytes.HasPrefix(bytes.TrimSpace(contents), []byte("{")) {
+		var fixture fixtureMetadata
+		if err := json.Unmarshal(contents, &fixture); err != nil {
+			t.Fatalf("Decode() fixture metadata error = %v", err)
+		}
+		metadata = append(metadata, fixture)
+	} else if err := json.Unmarshal(contents, &metadata); err != nil {
+		t.Fatalf("Decode() fixture metadata error = %v", err)
+	}
+	for index, fixture := range metadata {
+		if fixture.Version != portableFixtureContractVersion {
+			t.Fatalf(
+				"fixture %d version = %d, want %d",
+				index,
+				fixture.Version,
+				portableFixtureContractVersion,
+			)
+		}
 	}
 }
 

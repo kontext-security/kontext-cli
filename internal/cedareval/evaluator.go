@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	cedar "github.com/cedar-policy/cedar-go"
 	"github.com/kontext-security/kontext-cli/internal/hook"
@@ -215,8 +216,14 @@ func validateInput(input ToolUseInput) error {
 			RequestContractVersion,
 		)
 	}
+	if !utf8.ValidString(input.EvaluationPrincipal.EntityID) {
+		return fmt.Errorf("cedareval: principal entity id must contain valid UTF-8")
+	}
 	if stringLength(input.EvaluationPrincipal.EntityID) == 0 || stringLength(input.EvaluationPrincipal.EntityID) > 1024 {
 		return fmt.Errorf("cedareval: principal entity id must contain 1 to 1024 characters")
+	}
+	if !utf8.ValidString(input.ToolName) {
+		return fmt.Errorf("cedareval: tool name must contain valid UTF-8")
 	}
 	if stringLength(input.ToolName) == 0 || stringLength(input.ToolName) > 4096 {
 		return fmt.Errorf("cedareval: tool name must contain 1 to 4096 characters")
