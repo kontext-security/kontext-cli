@@ -77,13 +77,6 @@ func NewServer(store *sqlite.Store) (*Server, error) {
 	return NewServerWithOptions(store, Options{})
 }
 
-// SetPayloadCaptureMode is retained for local callers that configure only a
-// mode. Managed refresh uses SetPayloadCaptureConfiguration so evidence and
-// effective behavior are applied atomically.
-func (s *Server) SetPayloadCaptureMode(mode payloadcapture.Mode) {
-	s.store.SetPayloadCaptureMode(mode)
-}
-
 func (s *Server) SetPayloadCaptureConfiguration(config payloadcapture.RuntimeConfiguration) {
 	s.store.SetPayloadCaptureConfiguration(config)
 }

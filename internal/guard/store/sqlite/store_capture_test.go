@@ -47,13 +47,22 @@ func capturedColumn(t *testing.T, store *Store, canonicalEvent, column string) s
 	return value
 }
 
+func setPayloadCaptureModeForTest(store *Store, mode payloadcapture.Mode) {
+	store.SetPayloadCaptureConfiguration(payloadcapture.RuntimeConfiguration{
+		ConfiguredMode: mode,
+		EffectiveMode:  mode,
+		ConfigIdentity: strings.Repeat("f", 64),
+		Confirmed:      true,
+	})
+}
+
 func TestSaveDecisionCapturesPayloadsInFullMode(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	store.SetPayloadCaptureMode(payloadcapture.ModeFull)
+	setPayloadCaptureModeForTest(store, payloadcapture.ModeFull)
 
 	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{
 		"command": "GITHUB_TOKEN=super-secret-raw-value gh api /user",
@@ -102,7 +111,7 @@ func TestSaveDecisionDefaultModeWritesNoCapturedPayloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	// No SetPayloadCaptureMode call: the default must be byte-identical to
+	// No capture configuration: the default must be byte-identical to
 	// the pre-capture behavior.
 
 	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{
@@ -156,7 +165,7 @@ func TestLedgerExportDecodesCapturedPayloadRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	store.SetPayloadCaptureMode(payloadcapture.ModeFull)
+	setPayloadCaptureModeForTest(store, payloadcapture.ModeFull)
 
 	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{
 		"command": "curl https://example.test",
@@ -261,8 +270,8 @@ func TestCaptureFailedFallbackLiteralMatchesWireFormat(t *testing.T) {
 	}
 }
 
-// The managed daemon flips the capture mode via SetPayloadCaptureMode whenever
-// the policy snapshot refreshes (~60s). The store must read the CURRENT mode
+// The managed daemon applies a complete capture configuration whenever the
+// endpoint snapshot refreshes. The store must read the CURRENT configuration
 // per recorded event — no restart, no per-session pinning.
 func TestSaveDecisionModeChangeAppliesToNextEvent(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
@@ -290,14 +299,14 @@ func TestSaveDecisionModeChangeAppliesToNextEvent(t *testing.T) {
 	}
 
 	// Snapshot flips to full: the very next event captures.
-	store.SetPayloadCaptureMode(payloadcapture.ModeFull)
+	setPayloadCaptureModeForTest(store, payloadcapture.ModeFull)
 	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{"command": "git diff"}, nil)
 	if got := capturedProposedRows(); got != 1 {
 		t.Fatalf("captured rows after flip to full = %d, want 1", got)
 	}
 
 	// Snapshot flips back to summary: capture stops again.
-	store.SetPayloadCaptureMode(payloadcapture.ModeSummary)
+	setPayloadCaptureModeForTest(store, payloadcapture.ModeSummary)
 	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{"command": "git log"}, nil)
 	if got := capturedProposedRows(); got != 1 {
 		t.Fatalf("captured rows after flip back to summary = %d, want 1", got)

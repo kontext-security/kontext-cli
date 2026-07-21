@@ -31,20 +31,6 @@ type Store struct {
 	captureConfig payloadcapture.RuntimeConfiguration
 }
 
-// SetPayloadCaptureMode sets how tool payloads are captured on subsequently
-// recorded actions. The zero value keeps capture off ("summary" behavior):
-// unset or unrecognized modes never record payload content.
-func (s *Store) SetPayloadCaptureMode(mode payloadcapture.Mode) {
-	normalized := payloadcapture.NormalizeMode(string(mode))
-	s.captureMu.Lock()
-	defer s.captureMu.Unlock()
-	s.captureConfig = payloadcapture.RuntimeConfiguration{
-		ConfiguredMode: normalized,
-		EffectiveMode:  normalized,
-		FallbackReason: "legacy_mode",
-	}
-}
-
 func (s *Store) SetPayloadCaptureConfiguration(config payloadcapture.RuntimeConfiguration) {
 	s.captureMu.Lock()
 	defer s.captureMu.Unlock()
