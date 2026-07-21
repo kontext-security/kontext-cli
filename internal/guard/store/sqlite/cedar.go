@@ -77,15 +77,12 @@ func cedarDecisionActionValues(actionID, sessionID string, event risk.HookEvent,
 	}
 }
 
-// cedarDecisionCategory marks whether a Cedar row is an authoritative decision
-// or an observe-mode shadow. In enforce mode Cedar is the authority, so the row
-// is a real policy decision ("cedar_policy", matching the DecisionStage stamped
-// by applyCedarDecision); otherwise it is a dry-run shadow the dashboard filters
-// out of authoritative views.
-func cedarDecisionCategory(evidence risk.CedarEvidence) string {
-	if evidence.AppliedRolloutMode == cedareval.RolloutModeEnforce {
-		return "cedar_policy"
-	}
+// The dedicated Cedar row preserves evaluator evidence but is never the
+// authoritative request decision. SaveDecision's primary request.decided row
+// carries the applied outcome (including the cedar_policy decision stage in
+// enforce mode), so this auxiliary row must remain excluded from decision
+// totals in every rollout mode.
+func cedarDecisionCategory(_ risk.CedarEvidence) string {
 	return "dry_run"
 }
 

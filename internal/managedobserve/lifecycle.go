@@ -105,7 +105,11 @@ func (l Lifecycle) processWithKickstart(ctx context.Context, event hook.Event, b
 		launchdMu.Unlock()
 	}
 	if l.waitForProbe(ctx) {
-		return l.finalize(event, l.call(ctx, event))
+		result, err := l.call(ctx, event)
+		if err != nil {
+			return l.daemonUnavailable(event)
+		}
+		return l.finalize(event, result)
 	}
 	return l.daemonUnavailable(event)
 }
@@ -116,22 +120,26 @@ func (l Lifecycle) processIfAvailable(ctx context.Context, event hook.Event, bud
 	if !l.probe(ctx) {
 		return l.daemonUnavailable(event)
 	}
-	return l.finalize(event, l.call(ctx, event))
+	result, err := l.call(ctx, event)
+	if err != nil {
+		return l.daemonUnavailable(event)
+	}
+	return l.finalize(event, result)
 }
 
-// finalize applies the client-side posture to a daemon result. In enforce the
-// daemon already produced the authoritative decision (the guard server does not
-// observe-transform in enforce), so it passes through unchanged — only
-// normalized. In observe the hook must never block, so the decision is forced
-// to allow with a "would" note. This is the boundary that must not silently
-// downgrade an enforce deny to allow.
+// finalize applies the client-side posture to a daemon result. Enforce accepts
+// only an explicit enforce-mode allow or deny; a stale daemon or malformed RPC
+// result is not authoritative. Non-blocking hooks are always normalized to
+// allow. In observe the hook can never block, so the decision is forced to
+// allow with a "would" note.
 func (l Lifecycle) finalize(event hook.Event, result hook.Result) hook.Result {
 	if l.enforcing() {
-		if result.Decision == "" {
-			result.Decision = hook.DecisionAllow
+		if result.Mode != managedconfig.ModeEnforce ||
+			(result.Decision != hook.DecisionAllow && result.Decision != hook.DecisionDeny) {
+			return l.daemonUnavailable(event)
 		}
-		if result.Mode == "" {
-			result.Mode = managedconfig.ModeEnforce
+		if !event.HookName.CanBlock() {
+			result.Decision = hook.DecisionAllow
 		}
 		return result
 	}
@@ -139,15 +147,17 @@ func (l Lifecycle) finalize(event hook.Event, result hook.Result) hook.Result {
 }
 
 // daemonUnavailable is the fail path when the managed daemon cannot be reached.
-// Observe fails open (it never blocks). Enforce fails closed: enforcement
-// requires an authoritative decision and an unreachable daemon cannot provide
-// one, so the tool call is denied rather than silently allowed. This means an
-// enforce endpoint with no reachable daemon blocks blocking hooks until the
-// daemon is back — the deliberate fail-closed posture for enforcement.
+// Observe fails open (it never blocks). Enforce fails closed for blocking
+// hooks: enforcement requires an authoritative decision and an unreachable
+// daemon cannot provide one. Non-blocking lifecycle hooks remain informational.
 func (l Lifecycle) daemonUnavailable(event hook.Event) hook.Result {
 	if l.enforcing() {
+		decision := hook.DecisionAllow
+		if event.HookName.CanBlock() {
+			decision = hook.DecisionDeny
+		}
 		return hook.Result{
-			Decision: hook.DecisionDeny,
+			Decision: decision,
 			Mode:     managedconfig.ModeEnforce,
 			Reason:   "Kontext enforce: managed policy daemon unavailable",
 		}
@@ -180,7 +190,7 @@ func (l Lifecycle) waitForProbe(ctx context.Context) bool {
 	}
 }
 
-func (l Lifecycle) call(ctx context.Context, event hook.Event) hook.Result {
+func (l Lifecycle) call(ctx context.Context, event hook.Event) (hook.Result, error) {
 	client := localruntime.NewClient(l.SocketPath)
 	client.Timeout = time.Until(deadlineOr(ctx, time.Now().Add(asyncHookWait)))
 	if client.Timeout <= 0 {
@@ -189,9 +199,9 @@ func (l Lifecycle) call(ctx context.Context, event hook.Event) hook.Result {
 	result, err := client.Process(ctx, event)
 	if err != nil {
 		l.Diagnostic.Printf("managed observe call: %v\n", err)
-		return hook.Result{Decision: hook.DecisionAllow, Reason: "managed observe daemon unavailable"}
+		return hook.Result{}, err
 	}
-	return result
+	return result, nil
 }
 
 func observeResult(event hook.Event, result hook.Result) hook.Result {
