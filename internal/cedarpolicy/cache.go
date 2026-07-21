@@ -353,7 +353,11 @@ func (r *Refresher) Refresh(ctx context.Context) error {
 		r.recordFailure(err)
 		return err
 	}
-	return r.Cache.Apply(result, r.now())
+	if err := r.Cache.Apply(result, r.now()); err != nil {
+		r.recordFailure(err)
+		return err
+	}
+	return nil
 }
 
 func (r *Refresher) Run(ctx context.Context) {

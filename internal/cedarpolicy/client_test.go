@@ -68,6 +68,7 @@ func TestClientFetchStateResponses(t *testing.T) {
 	}{
 		{name: "disabled", status: http.StatusOK, body: StateResponse{ResponseVersion: 1, RequestContractVersion: 1, State: StateDisabled, RolloutMode: "disabled"}},
 		{name: "no active policy", status: http.StatusOK, body: StateResponse{ResponseVersion: 1, RequestContractVersion: 1, State: StateNoActivePolicy}},
+		{name: "principal unavailable", status: http.StatusOK, body: StateResponse{ResponseVersion: 1, RequestContractVersion: 1, State: StatePrincipalUnavailable}},
 		{name: "unauthorized", status: http.StatusUnauthorized, body: StateResponse{ResponseVersion: 1, RequestContractVersion: 1, State: StateUnauthorized}},
 		{name: "unsupported", status: http.StatusNotAcceptable, body: StateResponse{ResponseVersion: 1, RequestContractVersion: 1, State: StateUnsupportedVersion, SupportedResponseVersions: []int{1}, SupportedRequestContractVersions: []int{1}}},
 		{name: "unavailable", status: http.StatusServiceUnavailable, body: StateResponse{ResponseVersion: 1, RequestContractVersion: 1, State: StateUnavailable, Retryable: true}},
@@ -89,6 +90,38 @@ func TestClientFetchStateResponses(t *testing.T) {
 			}
 			if result.State != test.body.State {
 				t.Fatalf("Fetch().State = %q, want %q", result.State, test.body.State)
+			}
+		})
+	}
+}
+
+func TestClientRejectsStateThatDoesNotMatchHTTPStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   StateResponse
+	}{
+		{name: "success with unavailable", status: http.StatusOK, body: StateResponse{ResponseVersion: 1, RequestContractVersion: 1, State: StateUnavailable, Retryable: true}},
+		{name: "unauthorized with disabled", status: http.StatusUnauthorized, body: StateResponse{ResponseVersion: 1, RequestContractVersion: 1, State: StateDisabled, RolloutMode: "disabled"}},
+		{name: "not acceptable with unauthorized", status: http.StatusNotAcceptable, body: StateResponse{ResponseVersion: 1, RequestContractVersion: 1, State: StateUnauthorized}},
+		{name: "unavailable with disabled", status: http.StatusServiceUnavailable, body: StateResponse{ResponseVersion: 1, RequestContractVersion: 1, State: StateDisabled, RolloutMode: "disabled"}},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.status)
+				_ = json.NewEncoder(w).Encode(test.body)
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL, server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.Fetch(context.Background(), "token", testInstallationID, ""); err == nil {
+				t.Fatal("Fetch() error = nil, want HTTP status/state mismatch")
 			}
 		})
 	}

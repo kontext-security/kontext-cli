@@ -109,7 +109,13 @@ func (c *Client) Fetch(ctx context.Context, installToken, installationID, deploy
 			}
 			return FetchResult{State: StateSuccess, Deployment: &deployment, ETag: etag}, nil
 		}
-		return decodeStateResult(body, etag)
+		return decodeStateResult(
+			body,
+			etag,
+			StateDisabled,
+			StateNoActivePolicy,
+			StatePrincipalUnavailable,
+		)
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotAcceptable || resp.StatusCode == http.StatusServiceUnavailable {
@@ -120,12 +126,18 @@ func (c *Client) Fetch(ctx context.Context, installToken, installationID, deploy
 		if len(body) > MaxResponseBytes {
 			return FetchResult{}, fmt.Errorf("cedar policy: response exceeds %d bytes", MaxResponseBytes)
 		}
-		return decodeStateResult(body, etag)
+		expectedState := StateUnauthorized
+		if resp.StatusCode == http.StatusNotAcceptable {
+			expectedState = StateUnsupportedVersion
+		} else if resp.StatusCode == http.StatusServiceUnavailable {
+			expectedState = StateUnavailable
+		}
+		return decodeStateResult(body, etag, expectedState)
 	}
 	return FetchResult{}, fmt.Errorf("cedar policy fetch: unexpected status %d", resp.StatusCode)
 }
 
-func decodeStateResult(body []byte, etag string) (FetchResult, error) {
+func decodeStateResult(body []byte, etag string, allowedStates ...State) (FetchResult, error) {
 	var state StateResponse
 	if err := decodeStrict(strings.NewReader(string(body)), &state); err != nil {
 		return FetchResult{}, fmt.Errorf("cedar policy: decode state: %w", err)
@@ -133,7 +145,12 @@ func decodeStateResult(body []byte, etag string) (FetchResult, error) {
 	if err := state.Validate(); err != nil {
 		return FetchResult{}, err
 	}
-	return FetchResult{State: state.State, Response: &state, ETag: etag}, nil
+	for _, allowed := range allowedStates {
+		if state.State == allowed {
+			return FetchResult{State: state.State, Response: &state, ETag: etag}, nil
+		}
+	}
+	return FetchResult{}, fmt.Errorf("cedar policy: response state %q does not match HTTP status", state.State)
 }
 
 func parseETag(value string) string {

@@ -2,7 +2,10 @@ package cedarpolicy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -163,6 +166,45 @@ func TestRefresherMarksFailureWithoutDroppingKnownGood(t *testing.T) {
 	}
 	if snapshot := cache.Current(); snapshot.Deployment == nil || !snapshot.Status.Stale {
 		t.Fatalf("failed refresh discarded known good: %#v", snapshot)
+	}
+}
+
+func TestRefresherRecordsCacheApplyFailure(t *testing.T) {
+	now := time.Now().UTC()
+	notDirectory := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(notDirectory, []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cache := NewCache(filepath.Join(notDirectory, "cache.json"), time.Hour)
+	state := StateResponse{
+		ResponseVersion:        1,
+		RequestContractVersion: 1,
+		State:                  StateDisabled,
+		RolloutMode:            "disabled",
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(state)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresher := Refresher{
+		Client:         client,
+		Cache:          cache,
+		InstallationID: testInstallationID,
+		Now:            func() time.Time { return now },
+		TokenSource: func(context.Context) (string, error) {
+			return "token", nil
+		},
+	}
+	if err := refresher.Refresh(context.Background()); err == nil {
+		t.Fatal("Refresh() error = nil, want cache persistence failure")
+	}
+	snapshot := cache.Current()
+	if !snapshot.Status.Stale || snapshot.Status.LastError == "" || !snapshot.Status.LastAttemptAt.Equal(now) {
+		t.Fatalf("failed apply status = %#v", snapshot.Status)
 	}
 }
 
