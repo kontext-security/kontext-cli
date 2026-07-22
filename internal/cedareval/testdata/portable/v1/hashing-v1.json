@@ -1,0 +1,28 @@
+[
+  {
+    "version": 1,
+    "name": "observe-policy-for-alice",
+    "policyText": "@id(\"allow_read\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"Read\");",
+    "rolloutMode": "observe",
+    "evaluationPrincipal": {
+      "entityType": "Kontext::User",
+      "entityId": "alice@example.com"
+    },
+    "expectedPolicyHash": "8a7304637341166679a0a61d629afd6d565b64372548092784157da3ae3a38ca",
+    "expectedDeploymentPreimage": "[\"kontext:cedar-deployment:v2\",1,1,\"8a7304637341166679a0a61d629afd6d565b64372548092784157da3ae3a38ca\",\"observe\",\"Kontext::User\",\"alice@example.com\"]",
+    "expectedDeploymentIdentity": "b9c31bdf2805ca4fd89e6109684831646c7f83d75a5165f015e367243b7fee4b"
+  },
+  {
+    "version": 1,
+    "name": "unicode-and-json-sensitive-principal",
+    "policyText": "@id(\"allow_read\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource == Kontext::Tool::\"Read\");",
+    "rolloutMode": "enforce",
+    "evaluationPrincipal": {
+      "entityType": "Kontext::User",
+      "entityId": "Jöhn<>&\"\\\u2028\u2029@例え.テスト"
+    },
+    "expectedPolicyHash": "8a7304637341166679a0a61d629afd6d565b64372548092784157da3ae3a38ca",
+    "expectedDeploymentPreimage": "[\"kontext:cedar-deployment:v2\",1,1,\"8a7304637341166679a0a61d629afd6d565b64372548092784157da3ae3a38ca\",\"enforce\",\"Kontext::User\",\"Jöhn<>&\\\"\\\\\u2028\u2029@例え.テスト\"]",
+    "expectedDeploymentIdentity": "434b7cde3aadd03fc086f3079df82881eead2c3f7d876db495f6e9a09a5606ec"
+  }
+]

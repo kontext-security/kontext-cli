@@ -1,0 +1,26 @@
+[
+  {
+    "version": 1,
+    "name": "guarded-context-type-error",
+    "description": "A present context field with the wrong Cedar type produces an engine diagnostic without relying on error text.",
+    "policies": [
+      "@id(\"command_pattern\")\npermit(principal, action == Kontext::Action::\"ToolUse\", resource) when { context has command && context.command like \"git*\" };"
+    ],
+    "request": {
+      "evaluationPrincipal": {
+        "entityType": "Kontext::User",
+        "entityId": "alice@example.com"
+      },
+      "toolName": "Bash",
+      "toolInput": {
+        "command": 1
+      }
+    },
+    "expected": {
+      "decision": "deny",
+      "engineErrorCount": 1,
+      "determiningPolicyIds": [],
+      "contextDiagnostics": []
+    }
+  }
+]
