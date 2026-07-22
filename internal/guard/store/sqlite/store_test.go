@@ -9,8 +9,50 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/cedareval"
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
 )
+
+func TestSaveDecisionStoresCedarEvidenceWithoutPayload(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	principal := &cedareval.EvaluationPrincipal{EntityType: cedareval.PrincipalEntityType, EntityID: "user@example.com"}
+	_, err = store.SaveDecision(context.Background(), risk.HookEvent{SessionID: "s1", HookEventName: "PreToolUse", ToolName: "Read", ToolUseID: "tool-1", ToolInput: map[string]any{"secret": "must-not-duplicate"}}, risk.RiskDecision{
+		Decision:   risk.DecisionAllow,
+		Reason:     "current allow",
+		ReasonCode: "current_allow",
+		RiskEvent:  risk.RiskEvent{Decision: risk.DecisionAllow},
+		Cedar:      &risk.CedarEvidence{PolicyHash: strings.Repeat("a", 64), DeploymentIdentity: strings.Repeat("b", 64), AppliedRolloutMode: cedareval.RolloutModeObserve, EvaluatorVersion: "cedar-go/test", Mapping: cedareval.DecisionMapping{EvaluationState: cedareval.EvaluationStateEvaluated, EvaluationPrincipal: principal, CedarDecision: cedareval.DecisionAllow, DerivedCedarAction: cedareval.DerivedCedarActionAllow, EffectiveExecutionAction: cedareval.EffectiveExecutionActionAllow, EvaluationReasonCode: cedareval.ReasonPolicyEvaluated, DecisionReasonCode: cedareval.ReasonPermit, EffectiveReasonCode: cedareval.ReasonObserveNonAuthoritative, DeterminingPolicyIDs: []string{"permit-read"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var category, result, reasonCode, contextJSON string
+	var captured any
+	err = store.db.QueryRowContext(context.Background(), `select decision_category, decision_result, reason_code, context_json, tool_input_captured_json from authorization_actions where provider = 'cedar'`).Scan(&category, &result, &reasonCode, &contextJSON, &captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if category != "dry_run" || result != "allow" || reasonCode != string(cedareval.ReasonObserveNonAuthoritative) || captured != nil {
+		t.Fatalf("Cedar row = category %q result %q reason %q captured %#v", category, result, reasonCode, captured)
+	}
+	var contextEvidence map[string]any
+	if err := json.Unmarshal([]byte(contextJSON), &contextEvidence); err != nil {
+		t.Fatal(err)
+	}
+	for field, want := range map[string]string{
+		"evaluation_reason_code": string(cedareval.ReasonPolicyEvaluated),
+		"decision_reason_code":   string(cedareval.ReasonPermit),
+		"effective_reason_code":  string(cedareval.ReasonObserveNonAuthoritative),
+	} {
+		if got := contextEvidence[field]; got != want {
+			t.Fatalf("context evidence %s = %#v, want %q", field, got, want)
+		}
+	}
+}
 
 func TestEmptyCollectionsEncodeAsJSONArray(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")

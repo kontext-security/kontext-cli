@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/cedareval"
 	"github.com/kontext-security/kontext-cli/internal/guard/decision"
 	"github.com/kontext-security/kontext-cli/internal/providerpolicy"
 )
@@ -107,6 +108,25 @@ type RiskDecision struct {
 	// event, grouped per provider; each evaluation is recorded as a separate
 	// request.decided ledger row.
 	ProviderPolicy []ProviderPolicyEvaluations `json:"provider_policy,omitempty"`
+	Cedar          *CedarEvidence              `json:"cedar,omitempty"`
+}
+
+// CedarEvidence is the local evaluator's decision evidence. It is separate
+// from the effective hook decision so observe mode cannot become authority by
+// accident.
+type CedarEvidence struct {
+	ResponseVersion        int                           `json:"responseVersion,omitempty"`
+	RequestContractVersion int                           `json:"requestContractVersion,omitempty"`
+	PolicyHash             string                        `json:"policyHash,omitempty"`
+	DeploymentIdentity     string                        `json:"deploymentIdentity,omitempty"`
+	ConfiguredRolloutMode  cedareval.RolloutMode         `json:"configuredRolloutMode,omitempty"`
+	AppliedRolloutMode     cedareval.RolloutMode         `json:"appliedRolloutMode"`
+	Mapping                cedareval.DecisionMapping     `json:"mapping"`
+	ContextDiagnostics     []cedareval.ContextDiagnostic `json:"contextDiagnostics"`
+	EngineErrorCount       int                           `json:"engineErrorCount"`
+	CacheFetchedAt         time.Time                     `json:"cacheFetchedAt,omitempty"`
+	CacheStale             bool                          `json:"cacheStale"`
+	EvaluatorVersion       string                        `json:"evaluatorVersion"`
 }
 
 // ProviderPolicyEvaluations groups one provider's synced-policy evaluations

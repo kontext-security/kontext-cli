@@ -170,6 +170,7 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			server.HubspotPolicyBinding(hubspotCache),
 		},
 		EndpointID:         installationState.InstallationID,
+		CedarPolicies:      cedarCache,
 		Mode:               mode,
 		Diagnostic:         opts.Diagnostic,
 		SkipInitialSession: true,

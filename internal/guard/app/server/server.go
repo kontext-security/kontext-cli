@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/cedarpolicy"
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
 	"github.com/kontext-security/kontext-cli/internal/guard/policy"
 	"github.com/kontext-security/kontext-cli/internal/guard/policyconfig"
@@ -52,6 +53,7 @@ type Options struct {
 	PolicyConfigProvider PolicyConfigProvider
 	ProviderPolicies     []ProviderPolicyBinding
 	EndpointID           string
+	CedarPolicies        cedarpolicy.SnapshotProvider
 	CurrentSessionID     string
 	Mode                 string
 }
@@ -133,6 +135,7 @@ func NewServerWithPolicyConfigAndOptions(store *sqlite.Store, policy PolicyProvi
 			PolicyConfigProvider: policyStoreConfigProvider{store: policyStore},
 		})
 	}
+	policy = newCedarPolicyProvider(policy, opts.CedarPolicies)
 	currentSessionID := strings.TrimSpace(opts.CurrentSessionID)
 	mode := strings.TrimSpace(opts.Mode)
 	if currentSessionID != "" && mode == "" {
