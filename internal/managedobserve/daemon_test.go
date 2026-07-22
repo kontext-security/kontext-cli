@@ -410,6 +410,9 @@ func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
 				"requestContractVersion": 1,
 				"state":                  "no_active_policy",
 			})
+		case "/api/v1/installations/ins_0123456789abcdefghijklmnopqrstuv/configuration":
+			// Configuration refresh is independent of provider-policy refresh.
+			w.WriteHeader(http.StatusServiceUnavailable)
 		case "/api/v1/authorization-ledger/batches":
 			w.WriteHeader(http.StatusAccepted)
 		default:
@@ -434,13 +437,15 @@ func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- RunDaemon(ctx, DaemonOptions{
-			SocketPath:            socketPath,
-			DBPath:                dbPath,
-			IdleTimeout:           time.Hour,
-			StreamInterval:        time.Hour,
-			StreamHTTPClient:      server.Client(),
-			PolicyRefreshInterval: 20 * time.Millisecond,
-			PolicyHTTPClient:      server.Client(),
+			SocketPath:                    socketPath,
+			DBPath:                        dbPath,
+			IdleTimeout:                   time.Hour,
+			StreamInterval:                time.Hour,
+			StreamHTTPClient:              server.Client(),
+			PolicyRefreshInterval:         20 * time.Millisecond,
+			PolicyHTTPClient:              server.Client(),
+			EndpointConfigRefreshInterval: 20 * time.Millisecond,
+			EndpointConfigHTTPClient:      server.Client(),
 		})
 	}()
 	stopped := false
@@ -486,6 +491,8 @@ func TestRunDaemonExitsCleanlyAfterHomebrewUpgradeSignal(t *testing.T) {
 				"requestContractVersion": 1,
 				"state":                  "no_active_policy",
 			})
+		case "/api/v1/installations/ins_0123456789abcdefghijklmnopqrstuv/configuration":
+			w.WriteHeader(http.StatusServiceUnavailable)
 		case "/api/v1/policy/github/snapshot", "/api/v1/policy/hubspot/snapshot":
 			w.WriteHeader(http.StatusNotFound)
 		default:
@@ -738,12 +745,14 @@ func startTestDaemon(t *testing.T) (string, string, func()) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- RunDaemon(ctx, DaemonOptions{
-			SocketPath:            socketPath,
-			DBPath:                dbPath,
-			IdleTimeout:           time.Hour,
-			StreamHTTPClient:      server.Client(),
-			PolicyRefreshInterval: time.Hour,
-			PolicyHTTPClient:      server.Client(),
+			SocketPath:                    socketPath,
+			DBPath:                        dbPath,
+			IdleTimeout:                   time.Hour,
+			StreamHTTPClient:              server.Client(),
+			PolicyRefreshInterval:         time.Hour,
+			PolicyHTTPClient:              server.Client(),
+			EndpointConfigRefreshInterval: time.Hour,
+			EndpointConfigHTTPClient:      server.Client(),
 		})
 	}()
 	waitForSocket(t, socketPath, errCh)

@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kontext-security/kontext-cli/internal/guard/risk"
@@ -45,13 +47,22 @@ func capturedColumn(t *testing.T, store *Store, canonicalEvent, column string) s
 	return value
 }
 
+func setPayloadCaptureModeForTest(store *Store, mode payloadcapture.Mode) {
+	store.SetPayloadCaptureConfiguration(payloadcapture.RuntimeConfiguration{
+		ConfiguredMode: mode,
+		EffectiveMode:  mode,
+		ConfigIdentity: strings.Repeat("f", 64),
+		Confirmed:      true,
+	})
+}
+
 func TestSaveDecisionCapturesPayloadsInFullMode(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	store.SetPayloadCaptureMode(payloadcapture.ModeFull)
+	setPayloadCaptureModeForTest(store, payloadcapture.ModeFull)
 
 	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{
 		"command": "GITHUB_TOKEN=super-secret-raw-value gh api /user",
@@ -100,7 +111,7 @@ func TestSaveDecisionDefaultModeWritesNoCapturedPayloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	// No SetPayloadCaptureMode call: the default must be byte-identical to
+	// No capture configuration: the default must be byte-identical to
 	// the pre-capture behavior.
 
 	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{
@@ -154,7 +165,7 @@ func TestLedgerExportDecodesCapturedPayloadRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	store.SetPayloadCaptureMode(payloadcapture.ModeFull)
+	setPayloadCaptureModeForTest(store, payloadcapture.ModeFull)
 
 	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{
 		"command": "curl https://example.test",
@@ -259,8 +270,8 @@ func TestCaptureFailedFallbackLiteralMatchesWireFormat(t *testing.T) {
 	}
 }
 
-// The managed daemon flips the capture mode via SetPayloadCaptureMode whenever
-// the policy snapshot refreshes (~60s). The store must read the CURRENT mode
+// The managed daemon applies a complete capture configuration whenever the
+// endpoint snapshot refreshes. The store must read the CURRENT configuration
 // per recorded event — no restart, no per-session pinning.
 func TestSaveDecisionModeChangeAppliesToNextEvent(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/guard.db")
@@ -288,16 +299,121 @@ func TestSaveDecisionModeChangeAppliesToNextEvent(t *testing.T) {
 	}
 
 	// Snapshot flips to full: the very next event captures.
-	store.SetPayloadCaptureMode(payloadcapture.ModeFull)
+	setPayloadCaptureModeForTest(store, payloadcapture.ModeFull)
 	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{"command": "git diff"}, nil)
 	if got := capturedProposedRows(); got != 1 {
 		t.Fatalf("captured rows after flip to full = %d, want 1", got)
 	}
 
 	// Snapshot flips back to summary: capture stops again.
-	store.SetPayloadCaptureMode(payloadcapture.ModeSummary)
+	setPayloadCaptureModeForTest(store, payloadcapture.ModeSummary)
 	saveCaptureFixtureDecision(t, store, "PreToolUse", map[string]any{"command": "git log"}, nil)
 	if got := capturedProposedRows(); got != 1 {
 		t.Fatalf("captured rows after flip back to summary = %d, want 1", got)
+	}
+}
+
+func TestSaveDecisionSnapshotsConcurrentCaptureConfiguration(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/guard.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	full := payloadcapture.RuntimeConfiguration{
+		ConfiguredMode: payloadcapture.ModeFull,
+		EffectiveMode:  payloadcapture.ModeFull,
+		ConfigIdentity: strings.Repeat("a", 64),
+		Confirmed:      true,
+	}
+	summary := payloadcapture.RuntimeConfiguration{
+		ConfiguredMode: payloadcapture.ModeSummary,
+		EffectiveMode:  payloadcapture.ModeSummary,
+		ConfigIdentity: strings.Repeat("b", 64),
+		Confirmed:      true,
+	}
+	store.SetPayloadCaptureConfiguration(summary)
+	stop := make(chan struct{})
+	var flips sync.WaitGroup
+	flips.Add(1)
+	go func() {
+		defer flips.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				store.SetPayloadCaptureConfiguration(full)
+				store.SetPayloadCaptureConfiguration(summary)
+			}
+		}
+	}()
+	for index := range 40 {
+		_, err := store.SaveDecision(context.Background(), risk.HookEvent{
+			SessionID:     "s-capture-concurrent",
+			Agent:         "claude-code",
+			HookEventName: "PreToolUse",
+			ToolName:      "Bash",
+			ToolUseID:     fmt.Sprintf("tool-flip-%02d", index),
+			CWD:           "/tmp/project",
+			ToolInput:     map[string]any{"command": "git status"},
+		}, risk.RiskDecision{Decision: risk.DecisionAllow, Reason: "test", ReasonCode: "test"})
+		if err != nil {
+			close(stop)
+			flips.Wait()
+			t.Fatal(err)
+		}
+	}
+	close(stop)
+	flips.Wait()
+
+	rows, err := store.db.QueryContext(context.Background(), `
+select tool_use_id, canonical_event_type, context_json, tool_input_captured_json
+from authorization_actions
+where session_id = 's-capture-concurrent'
+order by tool_use_id, case canonical_event_type when 'request.proposed' then 0 else 1 end`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	type observed struct {
+		config   payloadcapture.RuntimeConfiguration
+		proposed bool
+	}
+	byToolUse := map[string]observed{}
+	for rows.Next() {
+		var toolUseID, eventType, contextJSON string
+		var captured sql.NullString
+		if err := rows.Scan(&toolUseID, &eventType, &contextJSON, &captured); err != nil {
+			t.Fatal(err)
+		}
+		var contextValue struct {
+			PayloadCapture payloadcapture.RuntimeConfiguration `json:"payload_capture"`
+		}
+		if err := json.Unmarshal([]byte(contextJSON), &contextValue); err != nil {
+			t.Fatal(err)
+		}
+		config := contextValue.PayloadCapture
+		if !config.Confirmed || config.ConfiguredMode != config.EffectiveMode ||
+			(config.ConfigIdentity != full.ConfigIdentity && config.ConfigIdentity != summary.ConfigIdentity) {
+			t.Fatalf("invalid capture evidence for %s: %#v", toolUseID, config)
+		}
+		if eventType == canonicalEventRequestProposed {
+			if captured.Valid != (config.EffectiveMode == payloadcapture.ModeFull) {
+				t.Fatalf("capture/evidence mismatch for %s: config=%#v captured=%t", toolUseID, config, captured.Valid)
+			}
+			byToolUse[toolUseID] = observed{config: config, proposed: true}
+			continue
+		}
+		proposed := byToolUse[toolUseID]
+		if !proposed.proposed || proposed.config != config {
+			t.Fatalf("decision %s mixed capture snapshots: proposed=%#v decided=%#v", toolUseID, proposed.config, config)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(byToolUse) != 40 {
+		t.Fatalf("observed decisions = %d, want 40", len(byToolUse))
 	}
 }

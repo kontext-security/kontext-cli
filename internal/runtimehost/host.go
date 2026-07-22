@@ -237,13 +237,11 @@ func clientResultTransform(mode guardhookruntime.Mode) func(hook.Event, hook.Res
 	}
 }
 
-// SetPayloadCaptureMode forwards the org's payload-capture directive to the
-// guard server's store. Safe on a nil host (no-op).
-func (h *Host) SetPayloadCaptureMode(mode payloadcapture.Mode) {
+func (h *Host) SetPayloadCaptureConfiguration(config payloadcapture.RuntimeConfiguration) {
 	if h == nil || h.server == nil {
 		return
 	}
-	h.server.SetPayloadCaptureMode(mode)
+	h.server.SetPayloadCaptureConfiguration(config)
 }
 
 func (h *Host) Close(ctx context.Context) error {
