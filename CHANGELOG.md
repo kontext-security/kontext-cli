@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.16.0](https://github.com/kontext-security/kontext-cli/compare/v0.15.1...v0.16.0) (2026-07-22)
+
+
+### Features
+
+* add staging brew channel for testing branches against the staging backend ([#395](https://github.com/kontext-security/kontext-cli/issues/395)) ([d2400bc](https://github.com/kontext-security/kontext-cli/commit/d2400bc143e335fc854acfbabbe840a64655817b))
+* **config:** sync endpoint configuration independently ([#387](https://github.com/kontext-security/kontext-cli/issues/387)) ([69d72f5](https://github.com/kontext-security/kontext-cli/commit/69d72f5d70598d40c76a89085dc98bf6b1ac2ab7))
+* **policy:** add Go Cedar decision conformance ([#383](https://github.com/kontext-security/kontext-cli/issues/383)) ([eab6639](https://github.com/kontext-security/kontext-cli/commit/eab66390bdec55e6a7c7a130307584cd09d3315f))
+* **policy:** add Go Cedar evaluator conformance ([#382](https://github.com/kontext-security/kontext-cli/issues/382)) ([3184f5d](https://github.com/kontext-security/kontext-cli/commit/3184f5dbebc5ef2b814cc4d6287268016524262a))
+* **policy:** cache native Cedar deployments ([#384](https://github.com/kontext-security/kontext-cli/issues/384)) ([e6d02c2](https://github.com/kontext-security/kontext-cli/commit/e6d02c29eb9aaa191068fc6db6ab2ffdb9714a99))
+* **policy:** gate Cedar enforcement cutover ([#386](https://github.com/kontext-security/kontext-cli/issues/386)) ([0ea3fd0](https://github.com/kontext-security/kontext-cli/commit/0ea3fd0f922f1d6e1a3a29f6fb4e3de0ec577a05))
+* **policy:** observe local Cedar decisions ([#385](https://github.com/kontext-security/kontext-cli/issues/385)) ([02d90ec](https://github.com/kontext-security/kontext-cli/commit/02d90ec7c5a2155ac94b304f6ffcfeba8035e0ae))
+
 ## [0.15.1](https://github.com/kontext-security/kontext-cli/compare/v0.15.0...v0.15.1) (2026-07-21)
 
 
