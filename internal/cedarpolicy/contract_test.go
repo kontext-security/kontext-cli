@@ -1,0 +1,106 @@
+package cedarpolicy
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/kontext-security/kontext-cli/internal/cedareval"
+)
+
+func TestDeploymentValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*Deployment)
+		wantErr string
+	}{
+		{name: "valid response"},
+		{
+			name: "policy hash mismatch",
+			mutate: func(d *Deployment) {
+				d.PolicyHash = strings.Repeat("a", 64)
+			},
+			wantErr: "policy hash",
+		},
+		{
+			name: "deployment identity mismatch",
+			mutate: func(d *Deployment) {
+				d.DeploymentIdentity = strings.Repeat("b", 64)
+			},
+			wantErr: "deployment identity",
+		},
+		{
+			name: "unsupported mode",
+			mutate: func(d *Deployment) {
+				d.RolloutMode = "future"
+			},
+			wantErr: "rollout mode",
+		},
+		{
+			name: "oversized signature",
+			mutate: func(d *Deployment) {
+				d.Signature = strings.Repeat("x", 8193)
+			},
+			wantErr: "signature",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			deployment := testDeployment(t, cedareval.RolloutModeObserve)
+			if test.mutate != nil {
+				test.mutate(&deployment)
+			}
+			err := deployment.Validate()
+			if test.wantErr == "" && err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+			if test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+				t.Fatalf("Validate() error = %v, want containing %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestStateResponseRejectsWrongShape(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "unknown field",
+			body: `{"responseVersion":1,"requestContractVersion":1,"state":"no_active_policy","extra":true}`,
+		},
+		{
+			name: "known field on wrong state",
+			body: `{"responseVersion":1,"requestContractVersion":1,"state":"no_active_policy","retryable":true}`,
+		},
+		{
+			name: "missing disabled mode",
+			body: `{"responseVersion":1,"requestContractVersion":1,"state":"disabled"}`,
+		},
+		{
+			name: "unsupported versions not exact",
+			body: `{"responseVersion":1,"requestContractVersion":1,"state":"unsupported_version","supportedResponseVersions":[1,2],"supportedRequestContractVersions":[1]}`,
+		},
+		{
+			name: "retired principal detail state",
+			body: `{"responseVersion":1,"requestContractVersion":1,"state":"principal_unmatched"}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var response StateResponse
+			if err := json.Unmarshal([]byte(test.body), &response); err == nil {
+				t.Fatal("Unmarshal() error = nil")
+			}
+		})
+	}
+}
+
+func TestDecodeStrictRejectsTrailingData(t *testing.T) {
+	body := `{"responseVersion":1,"requestContractVersion":1,"state":"no_active_policy"}{}`
+	var response StateResponse
+	if err := decodeStrict(strings.NewReader(body), &response); err == nil {
+		t.Fatal("decodeStrict() error = nil")
+	}
+}
