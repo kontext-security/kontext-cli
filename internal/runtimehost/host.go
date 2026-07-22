@@ -41,6 +41,7 @@ type Options struct {
 	JudgeDownloadProgress     judge.DownloadProgressHandler
 	ProviderPolicies          []server.ProviderPolicyBinding
 	CedarPolicies             cedarpolicy.SnapshotProvider
+	CedarEnforcement          bool
 	EndpointID                string
 	Mode                      guardhookruntime.Mode
 	Diagnostic                diagnostic.Logger
@@ -119,6 +120,7 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		ProviderPolicies: opts.ProviderPolicies,
 		EndpointID:       opts.EndpointID,
 		CedarPolicies:    opts.CedarPolicies,
+		CedarEnforcement: opts.CedarEnforcement,
 		CurrentSessionID: serverSessionID,
 		Mode:             string(mode),
 	})

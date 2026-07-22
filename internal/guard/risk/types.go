@@ -125,7 +125,10 @@ type CedarEvidence struct {
 	ContextDiagnostics     []cedareval.ContextDiagnostic `json:"contextDiagnostics"`
 	EngineErrorCount       int                           `json:"engineErrorCount"`
 	CacheFetchedAt         time.Time                     `json:"cacheFetchedAt,omitempty"`
+	DistributionState      string                        `json:"distributionState,omitempty"`
 	CacheStale             bool                          `json:"cacheStale"`
+	CacheExpired           bool                          `json:"cacheExpired"`
+	CacheInvalid           bool                          `json:"cacheInvalid"`
 	EvaluatorVersion       string                        `json:"evaluatorVersion"`
 }
 

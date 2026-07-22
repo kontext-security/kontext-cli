@@ -54,6 +54,7 @@ type Options struct {
 	ProviderPolicies     []ProviderPolicyBinding
 	EndpointID           string
 	CedarPolicies        cedarpolicy.SnapshotProvider
+	CedarEnforcement     bool
 	CurrentSessionID     string
 	Mode                 string
 }
@@ -135,7 +136,7 @@ func NewServerWithPolicyConfigAndOptions(store *sqlite.Store, policy PolicyProvi
 			PolicyConfigProvider: policyStoreConfigProvider{store: policyStore},
 		})
 	}
-	policy = newCedarPolicyProvider(policy, opts.CedarPolicies)
+	policy = newCedarPolicyProvider(policy, opts.CedarPolicies, opts.CedarEnforcement)
 	currentSessionID := strings.TrimSpace(opts.CurrentSessionID)
 	mode := strings.TrimSpace(opts.Mode)
 	if currentSessionID != "" && mode == "" {

@@ -34,7 +34,10 @@ func cedarDecisionActionValues(actionID, sessionID string, event risk.HookEvent,
 		"response_version":         evidence.ResponseVersion,
 		"request_contract_version": evidence.RequestContractVersion,
 		"cache_fetched_at":         evidence.CacheFetchedAt,
+		"distribution_state":       evidence.DistributionState,
 		"cache_stale":              evidence.CacheStale,
+		"cache_expired":            evidence.CacheExpired,
+		"cache_invalid":            evidence.CacheInvalid,
 		"evaluator_version":        evidence.EvaluatorVersion,
 		"evaluation_state":         evidence.Mapping.EvaluationState,
 		"derived_action":           evidence.Mapping.DerivedCedarAction,
@@ -74,7 +77,12 @@ func cedarDecisionActionValues(actionID, sessionID string, event risk.HookEvent,
 	}
 }
 
-func cedarDecisionCategory(evidence risk.CedarEvidence) string {
+// The dedicated Cedar row preserves evaluator evidence but is never the
+// authoritative request decision. SaveDecision's primary request.decided row
+// carries the applied outcome (including the cedar_policy decision stage in
+// enforce mode), so this auxiliary row must remain excluded from decision
+// totals in every rollout mode.
+func cedarDecisionCategory(_ risk.CedarEvidence) string {
 	return "dry_run"
 }
 

@@ -31,6 +31,10 @@ type Lifecycle struct {
 	Label      string
 	Kickstart  func(context.Context, string) error
 	Diagnostic diagnostic.Logger
+	// Mode is the managed rollout posture ("observe" or "enforce"). Empty is
+	// treated as observe. In enforce the daemon's decision is authoritative and
+	// passes through unchanged; in observe the hook can never block.
+	Mode string
 }
 
 func NewLifecycle() Lifecycle {
@@ -38,7 +42,27 @@ func NewLifecycle() Lifecycle {
 		SocketPath: DefaultSocketPath(),
 		Label:      DefaultLabel(),
 		Kickstart:  KickstartLaunchd,
+		Mode:       loadManagedMode(),
 	}
+}
+
+// loadManagedMode reads the managed rollout posture from the installed managed
+// config, defaulting to observe when the config is absent or unreadable (the
+// caller only reaches here when Active() already succeeded, so this is a
+// defensive fallback).
+func loadManagedMode() string {
+	cfg, err := managedconfig.Load()
+	if err != nil {
+		return managedconfig.Mode
+	}
+	if cfg.Config.Mode == managedconfig.ModeEnforce {
+		return managedconfig.ModeEnforce
+	}
+	return managedconfig.Mode
+}
+
+func (l Lifecycle) enforcing() bool {
+	return l.Mode == managedconfig.ModeEnforce
 }
 
 func Active() bool {
@@ -81,18 +105,64 @@ func (l Lifecycle) processWithKickstart(ctx context.Context, event hook.Event, b
 		launchdMu.Unlock()
 	}
 	if l.waitForProbe(ctx) {
-		return observeResult(event, l.call(ctx, event))
+		result, err := l.call(ctx, event)
+		if err != nil {
+			return l.daemonUnavailable(event)
+		}
+		return l.finalize(event, result)
 	}
-	return observeResult(event, hook.Result{Decision: hook.DecisionAllow, Reason: "managed observe daemon unavailable"})
+	return l.daemonUnavailable(event)
 }
 
 func (l Lifecycle) processIfAvailable(ctx context.Context, event hook.Event, budget time.Duration) hook.Result {
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	if !l.probe(ctx) {
-		return observeResult(event, hook.Result{Decision: hook.DecisionAllow, Reason: "managed observe daemon unavailable"})
+		return l.daemonUnavailable(event)
 	}
-	return observeResult(event, l.call(ctx, event))
+	result, err := l.call(ctx, event)
+	if err != nil {
+		return l.daemonUnavailable(event)
+	}
+	return l.finalize(event, result)
+}
+
+// finalize applies the client-side posture to a daemon result. Enforce accepts
+// only an explicit enforce-mode allow or deny; a stale daemon or malformed RPC
+// result is not authoritative. Non-blocking hooks are always normalized to
+// allow. In observe the hook can never block, so the decision is forced to
+// allow with a "would" note.
+func (l Lifecycle) finalize(event hook.Event, result hook.Result) hook.Result {
+	if l.enforcing() {
+		if result.Mode != managedconfig.ModeEnforce ||
+			(result.Decision != hook.DecisionAllow && result.Decision != hook.DecisionDeny) {
+			return l.daemonUnavailable(event)
+		}
+		if !event.HookName.CanBlock() {
+			result.Decision = hook.DecisionAllow
+		}
+		return result
+	}
+	return observeResult(event, result)
+}
+
+// daemonUnavailable is the fail path when the managed daemon cannot be reached.
+// Observe fails open (it never blocks). Enforce fails closed for blocking
+// hooks: enforcement requires an authoritative decision and an unreachable
+// daemon cannot provide one. Non-blocking lifecycle hooks remain informational.
+func (l Lifecycle) daemonUnavailable(event hook.Event) hook.Result {
+	if l.enforcing() {
+		decision := hook.DecisionAllow
+		if event.HookName.CanBlock() {
+			decision = hook.DecisionDeny
+		}
+		return hook.Result{
+			Decision: decision,
+			Mode:     managedconfig.ModeEnforce,
+			Reason:   "Kontext enforce: managed policy daemon unavailable",
+		}
+	}
+	return observeResult(event, hook.Result{Decision: hook.DecisionAllow, Reason: "managed observe daemon unavailable"})
 }
 
 func (l Lifecycle) probe(ctx context.Context) bool {
@@ -120,7 +190,7 @@ func (l Lifecycle) waitForProbe(ctx context.Context) bool {
 	}
 }
 
-func (l Lifecycle) call(ctx context.Context, event hook.Event) hook.Result {
+func (l Lifecycle) call(ctx context.Context, event hook.Event) (hook.Result, error) {
 	client := localruntime.NewClient(l.SocketPath)
 	client.Timeout = time.Until(deadlineOr(ctx, time.Now().Add(asyncHookWait)))
 	if client.Timeout <= 0 {
@@ -129,9 +199,9 @@ func (l Lifecycle) call(ctx context.Context, event hook.Event) hook.Result {
 	result, err := client.Process(ctx, event)
 	if err != nil {
 		l.Diagnostic.Printf("managed observe call: %v\n", err)
-		return hook.Result{Decision: hook.DecisionAllow, Reason: "managed observe daemon unavailable"}
+		return hook.Result{}, err
 	}
-	return result
+	return result, nil
 }
 
 func observeResult(event hook.Event, result hook.Result) hook.Result {
