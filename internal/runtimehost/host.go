@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/cedarpolicy"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
 	"github.com/kontext-security/kontext-cli/internal/guard/app/server"
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
@@ -39,6 +40,8 @@ type Options struct {
 	JudgeManagedDefault       bool
 	JudgeDownloadProgress     judge.DownloadProgressHandler
 	ProviderPolicies          []server.ProviderPolicyBinding
+	CedarPolicies             cedarpolicy.SnapshotProvider
+	CedarEnforcement          bool
 	EndpointID                string
 	Mode                      guardhookruntime.Mode
 	Diagnostic                diagnostic.Logger
@@ -116,6 +119,8 @@ func Start(ctx context.Context, opts Options) (*Host, error) {
 		Judge:            localJudge,
 		ProviderPolicies: opts.ProviderPolicies,
 		EndpointID:       opts.EndpointID,
+		CedarPolicies:    opts.CedarPolicies,
+		CedarEnforcement: opts.CedarEnforcement,
 		CurrentSessionID: serverSessionID,
 		Mode:             string(mode),
 	})
@@ -237,13 +242,11 @@ func clientResultTransform(mode guardhookruntime.Mode) func(hook.Event, hook.Res
 	}
 }
 
-// SetPayloadCaptureMode forwards the org's payload-capture directive to the
-// guard server's store. Safe on a nil host (no-op).
-func (h *Host) SetPayloadCaptureMode(mode payloadcapture.Mode) {
+func (h *Host) SetPayloadCaptureConfiguration(config payloadcapture.RuntimeConfiguration) {
 	if h == nil || h.server == nil {
 		return
 	}
-	h.server.SetPayloadCaptureMode(mode)
+	h.server.SetPayloadCaptureConfiguration(config)
 }
 
 func (h *Host) Close(ctx context.Context) error {

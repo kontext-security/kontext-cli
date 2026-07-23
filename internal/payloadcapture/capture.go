@@ -22,6 +22,44 @@ const (
 	ModeFull Mode = "full"
 )
 
+// RuntimeConfiguration is the atomic evidence snapshot applied to one
+// recorded decision. ConfiguredMode records the validated server directive;
+// EffectiveMode records the privacy-safe mode actually used for capture.
+type RuntimeConfiguration struct {
+	ConfiguredMode Mode   `json:"configured_mode"`
+	EffectiveMode  Mode   `json:"effective_mode"`
+	ConfigIdentity string `json:"config_identity,omitempty"`
+	Confirmed      bool   `json:"confirmed"`
+	FallbackReason string `json:"fallback_reason,omitempty"`
+}
+
+func DefaultRuntimeConfiguration() RuntimeConfiguration {
+	return RuntimeConfiguration{
+		ConfiguredMode: ModeSummary,
+		EffectiveMode:  ModeSummary,
+		FallbackReason: "no_confirmed_config",
+	}
+}
+
+// SafeRuntimeConfiguration prevents malformed or unconfirmed state from
+// enabling capture. It retains configured evidence while forcing effective
+// behavior to summary.
+func SafeRuntimeConfiguration(config RuntimeConfiguration) RuntimeConfiguration {
+	config.ConfiguredMode = NormalizeMode(string(config.ConfiguredMode))
+	config.EffectiveMode = NormalizeMode(string(config.EffectiveMode))
+	if !config.Confirmed || config.ConfigIdentity == "" {
+		config.Confirmed = false
+		config.EffectiveMode = ModeSummary
+		if config.FallbackReason == "" {
+			config.FallbackReason = "unconfirmed"
+		}
+	}
+	if config.Confirmed {
+		config.FallbackReason = ""
+	}
+	return config
+}
+
 // NormalizeMode maps an org-policy mode string to a Mode. Absent ("") or
 // unrecognized values normalize to ModeSummary: an unknown mode must never
 // mean "send content".

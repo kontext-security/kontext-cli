@@ -25,6 +25,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/kontext-security/kontext-cli/internal/backend"
 	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
 	"github.com/kontext-security/kontext-cli/internal/codexmanaged"
 	"github.com/kontext-security/kontext-cli/internal/installation"
@@ -139,7 +140,9 @@ func Run(ctx context.Context, opts Options) error {
 
 	cloudURL := strings.TrimSpace(opts.CloudURL)
 	if cloudURL == "" {
-		cloudURL = DefaultCloudURL
+		// Same env-aware default as the --cloud-url flag, so KONTEXT_API_URL
+		// is honored even when the flag is explicitly emptied.
+		cloudURL = backend.BaseURL()
 	}
 	// Same rules the daemon's parser applies, so a bad --cloud-url fails
 	// before any state is written.

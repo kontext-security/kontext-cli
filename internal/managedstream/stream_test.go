@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -409,22 +410,29 @@ func TestFlushRetriesWithSmallerBatchWhenHostedBackendRejectsSize(t *testing.T) 
 		t.Fatalf("Flush() error = %v", err)
 	}
 
-	// The first post is rejected (413) and retried at half size; the same
-	// call then drains the remaining backlog at the reduced size.
-	if len(actionCounts) != 5 {
-		t.Fatalf("request count = %d, want 5 (1 rejected + 4 reduced batches)", len(actionCounts))
+	// The first post is rejected (413) and retried at half size; after an
+	// accepted retry, later batches grow again while draining the full backlog.
+	if len(actionCounts) < 3 {
+		t.Fatalf("action counts = %v, want rejected post, smaller retry, and recovered batch", actionCounts)
 	}
 	if actionCounts[0] <= actionCounts[1] {
 		t.Fatalf("action counts = %v, want retry with a smaller batch", actionCounts)
 	}
 	accepted := 0
+	recovered := false
 	for _, count := range actionCounts[1:] {
 		accepted += count
+		if count > actionCounts[1] {
+			recovered = true
+		}
 	}
 	// Pages can overlap via receipt-chain continuity, so require at least
 	// full coverage of the 8-action backlog.
 	if accepted < 8 {
 		t.Fatalf("accepted %d actions, want at least the whole backlog (8)", accepted)
+	}
+	if !recovered {
+		t.Fatalf("action counts = %v, want batch limit to recover after smaller retry", actionCounts)
 	}
 	state, err := LoadState(statePath)
 	if err != nil {
@@ -631,6 +639,90 @@ func TestFlushAdvancesCursorPastOversizedMinimumBatch(t *testing.T) {
 	if state.UpdatedAfter == nil || state.ActionID == "" {
 		t.Fatalf("state = %+v, want cursor advanced", state)
 	}
+}
+
+func TestFlushAdvancesCursorPastMinimumBatchWithWideReceiptRange(t *testing.T) {
+	store, dbPath := testStore(t)
+	saveTestDecision(t, store, "session-1", "toolu_1")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var poisonActionID string
+	if err := db.QueryRow(`
+select id
+from authorization_actions
+order by updated_at_cursor_key, id
+limit 1
+	`).Scan(&poisonActionID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxPayloadReceipts; i++ {
+		if _, err := tx.Exec(`
+insert into authorization_receipts(
+  id, action_id, session_id, receipt_type, receipt_payload_json, receipt_hash, created_at
+) values(?, 'act_foreign', 'session-foreign', 'observed', '{}', ?, ?)
+		`, fmt.Sprintf("rcpt_foreign_%04d", i), fmt.Sprintf("hash_%04d", i), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tx.Exec(`
+insert into authorization_receipts(
+  id, action_id, session_id, receipt_type, receipt_payload_json, receipt_hash, created_at
+) values('rcpt_poison_tail', ?, 'session-1', 'observed', '{}', 'hash_poison_tail', ?)
+	`, poisonActionID, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	called := false
+	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})}
+
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	err = Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      statePath,
+		CloudURL:       "https://example.test",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     8,
+		HTTPClient:     client,
+	})
+	if err == nil || !strings.Contains(err.Error(), "receipt range too large") {
+		t.Fatalf("Flush() error = %v, want receipt range diagnostic", err)
+	}
+	if !errors.Is(err, sqlite.ErrLedgerReceiptRangeTooLarge) {
+		t.Fatalf("Flush() error = %v, want ErrLedgerReceiptRangeTooLarge", err)
+	}
+	if called {
+		t.Fatal("server was called despite wide receipt range")
+	}
+	state, err := LoadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.UpdatedAfter == nil || state.ActionID != poisonActionID {
+		t.Fatalf("state = %+v, want cursor advanced past %s", state, poisonActionID)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func TestFlushPreservesHeartbeatStatePastOversizedMinimumBatch(t *testing.T) {
@@ -988,5 +1080,57 @@ func saveLargeTestDecision(t *testing.T, store *sqlite.Store, sessionID, toolUse
 	})
 	if err != nil {
 		t.Fatalf("SaveDecision() error = %v", err)
+	}
+}
+
+func TestFlushRestoresBatchLimitAfterReduction(t *testing.T) {
+	store, dbPath := testStore(t)
+	for i := 0; i < 25; i++ {
+		saveTestDecision(t, store, "session-1", fmt.Sprintf("toolu_%02d", i))
+	}
+
+	var batchSizes []int
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload Payload
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if requests == 1 {
+			return &http.Response{StatusCode: http.StatusRequestEntityTooLarge, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		batchSizes = append(batchSizes, len(payload.Actions))
+		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})}
+
+	statePath := filepath.Join(t.TempDir(), "stream-state.json")
+	if err := Flush(context.Background(), Options{
+		DBPath:         dbPath,
+		StatePath:      statePath,
+		CloudURL:       "https://example.test",
+		InstallationID: "ins_0123456789abcdefghijklmnopqrstuv",
+		InstallToken:   "test-install-token",
+		BatchLimit:     8,
+		HTTPClient:     client,
+	}); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+
+	// The first post is rejected with 413 → the page limit halves to 4; each
+	// accepted post then increments it by one toward the cap. Payload action counts
+	// exceed the page size (the receipt rowid range pulls in neighbors), so
+	// assert recovery via the essential property: without it every remaining
+	// page stays at 4 and no accepted payload ever reaches the original cap.
+	maxSize := 0
+	for _, size := range batchSizes {
+		maxSize = max(maxSize, size)
+	}
+	if maxSize < 8 {
+		t.Fatalf("accepted batch sizes = %v, want at least one >= 8 (limit recovered)", batchSizes)
 	}
 }

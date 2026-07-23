@@ -188,9 +188,5 @@ func runCommandOutput(ctx context.Context, path string, args ...string) (string,
 }
 
 func logHomebrewUpdater(log diagnostic.Logger, format string, args ...any) {
-	if log.Enabled() {
-		log.Printf(format, args...)
-		return
-	}
-	fmt.Fprint(os.Stderr, diagnostic.Redact(fmt.Sprintf(format, args...)))
+	logAlways(log, format, args...)
 }

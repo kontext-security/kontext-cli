@@ -1,0 +1,43 @@
+# Keep in sync with .goreleaser.yaml — a copy only because the private
+# staging workflow pins this filename; the build matrix must match prod.
+version: 2
+
+project_name: kontext
+
+before:
+  hooks:
+    - pnpm install --frozen-lockfile
+    - ./scripts/build-guard-dashboard-assets.sh
+
+builds:
+  - main: ./cmd/kontext
+    binary: kontext
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+# The private kontext-cli-staging-releases workflow runs this configuration
+# with --skip=publish, transfers only the archives to a fresh runner, and
+# publishes them with that repository's own short-lived GITHUB_TOKEN.
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^ci:"
+      - "^chore:"

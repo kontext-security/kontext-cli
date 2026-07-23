@@ -25,29 +25,25 @@ type Store struct {
 	path   string
 	signer receiptSigner
 
-	// captureMode lives on Store (a mutable setter) rather than flowing
-	// through the policy-provider chain: what gets persisted is a storage
-	// concern, and the synced-policy layer only needs to flip it.
-	captureMu   sync.RWMutex
-	captureMode payloadcapture.Mode
+	// Capture configuration lives on Store so each persisted decision can
+	// snapshot behavior and evidence atomically.
+	captureMu     sync.RWMutex
+	captureConfig payloadcapture.RuntimeConfiguration
 }
 
-// SetPayloadCaptureMode sets how tool payloads are captured on subsequently
-// recorded actions. The zero value keeps capture off ("summary" behavior):
-// unset or unrecognized modes never record payload content.
-func (s *Store) SetPayloadCaptureMode(mode payloadcapture.Mode) {
+func (s *Store) SetPayloadCaptureConfiguration(config payloadcapture.RuntimeConfiguration) {
 	s.captureMu.Lock()
 	defer s.captureMu.Unlock()
-	s.captureMode = mode
+	s.captureConfig = payloadcapture.SafeRuntimeConfiguration(config)
 }
 
-func (s *Store) payloadCaptureMode() payloadcapture.Mode {
+func (s *Store) payloadCaptureConfiguration() payloadcapture.RuntimeConfiguration {
 	s.captureMu.RLock()
 	defer s.captureMu.RUnlock()
-	if s.captureMode == "" {
-		return payloadcapture.ModeSummary
+	if s.captureConfig.EffectiveMode == "" {
+		return payloadcapture.DefaultRuntimeConfiguration()
 	}
-	return s.captureMode
+	return s.captureConfig
 }
 
 type DecisionRecord struct {
@@ -767,22 +763,25 @@ on conflict(id) do update set
 
 	// Snapshot the mode once so every row of this decision is captured
 	// under the same policy, even if the mode flips concurrently.
-	captureMode := s.payloadCaptureMode()
+	captureConfig := s.payloadCaptureConfiguration()
 
 	actionID := "act_" + uuid.NewString()
 	if event.HookEventName == "PreToolUse" {
 		proposedID := "act_" + uuid.NewString()
-		if err := s.insertAction(ctx, tx, proposedID, sessionID, event, decision, canonicalEventRequestProposed, "event", captureMode, now); err != nil {
+		if err := s.insertAction(ctx, tx, proposedID, sessionID, event, decision, canonicalEventRequestProposed, "event", captureConfig, now); err != nil {
 			return DecisionRecord{}, err
 		}
-		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventRequestDecided, "decision", captureMode, now.Add(time.Millisecond)); err != nil {
+		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventRequestDecided, "decision", captureConfig, now.Add(time.Millisecond)); err != nil {
 			return DecisionRecord{}, err
 		}
 		if err := s.insertProviderDryRunActions(ctx, tx, sessionID, event, decision, now.Add(2*time.Millisecond)); err != nil {
 			return DecisionRecord{}, err
 		}
+		if err := s.insertCedarDecisionAction(ctx, tx, sessionID, event, decision, now.Add(3*time.Millisecond)); err != nil {
+			return DecisionRecord{}, err
+		}
 	} else {
-		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventType(event.HookEventName), "outcome", captureMode, now); err != nil {
+		if err := s.insertAction(ctx, tx, actionID, sessionID, event, decision, canonicalEventType(event.HookEventName), "outcome", captureConfig, now); err != nil {
 			return DecisionRecord{}, err
 		}
 	}
@@ -808,8 +807,8 @@ on conflict(id) do update set
 	}, nil
 }
 
-func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, canonicalEvent, receiptType string, captureMode payloadcapture.Mode, now time.Time) error {
-	action, err := actionValues(actionID, sessionID, event, decision, canonicalEvent, captureMode, now)
+func (s *Store) insertAction(ctx context.Context, tx *sql.Tx, actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, canonicalEvent, receiptType string, captureConfig payloadcapture.RuntimeConfiguration, now time.Time) error {
+	action, err := actionValues(actionID, sessionID, event, decision, canonicalEvent, captureConfig, now)
 	if err != nil {
 		return err
 	}
@@ -893,7 +892,7 @@ func capturedRecordJSON(payload map[string]any, mode payloadcapture.Mode) any {
 	return string(raw)
 }
 
-func actionValues(actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, canonicalEvent string, captureMode payloadcapture.Mode, now time.Time) (map[string]any, error) {
+func actionValues(actionID, sessionID string, event risk.HookEvent, decision risk.RiskDecision, canonicalEvent string, captureConfig payloadcapture.RuntimeConfiguration, now time.Time) (map[string]any, error) {
 	riskEvent := decision.RiskEvent
 	if canonicalEvent != canonicalEventRequestDecided {
 		riskEvent.Decision = ""
@@ -928,6 +927,7 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 	contextPayload := map[string]any{
 		"cwd":             event.CWD,
 		"hook_event_name": event.HookEventName,
+		"payload_capture": captureConfig,
 	}
 	if branch != "" {
 		contextPayload["github"] = map[string]any{"branch_or_ref": branch}
@@ -953,8 +953,8 @@ func actionValues(actionID, sessionID string, event risk.HookEvent, decision ris
 		decisionResult = canonicalDecisionResult(decision.Decision)
 	}
 	outcome, outputSummary, outputHash, errorRedacted := outcomeValues(event, decision)
-	toolInputCaptured := capturedInputJSON(event, canonicalEvent, captureMode)
-	toolOutputCaptured := capturedOutputJSON(event, canonicalEvent, captureMode)
+	toolInputCaptured := capturedInputJSON(event, canonicalEvent, captureConfig.EffectiveMode)
+	toolOutputCaptured := capturedOutputJSON(event, canonicalEvent, captureConfig.EffectiveMode)
 	proposedAt := ""
 	decisionAt := ""
 	completedAt := ""

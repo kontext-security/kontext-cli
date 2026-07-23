@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/cedarpolicy"
 	"github.com/kontext-security/kontext-cli/internal/claudemanaged"
 	"github.com/kontext-security/kontext-cli/internal/diagnostic"
+	"github.com/kontext-security/kontext-cli/internal/endpointconfig"
 	"github.com/kontext-security/kontext-cli/internal/githubpolicy"
 	"github.com/kontext-security/kontext-cli/internal/guard/app/server"
 	guardhookruntime "github.com/kontext-security/kontext-cli/internal/guard/hookruntime"
@@ -25,23 +27,31 @@ import (
 )
 
 type DaemonOptions struct {
-	SocketPath             string
-	DBPath                 string
-	IdleTimeout            time.Duration
-	StreamStatePath        string
-	StreamInterval         time.Duration
-	StreamHTTPClient       *http.Client
-	GithubPolicyCachePath  string
-	HubspotPolicyCachePath string
+	SocketPath              string
+	DBPath                  string
+	IdleTimeout             time.Duration
+	StreamStatePath         string
+	StreamInterval          time.Duration
+	StreamHTTPClient        *http.Client
+	GithubPolicyCachePath   string
+	HubspotPolicyCachePath  string
+	CedarPolicyCachePath    string
+	EndpointConfigCachePath string
 	// PolicyRefreshInterval and PolicyHTTPClient apply to every provider's
 	// snapshot refresh loop (test knobs; zero values use defaults).
-	PolicyRefreshInterval time.Duration
-	PolicyHTTPClient      *http.Client
-	Diagnostic            diagnostic.Logger
+	PolicyRefreshInterval         time.Duration
+	PolicyHTTPClient              *http.Client
+	EndpointConfigRefreshInterval time.Duration
+	EndpointConfigHTTPClient      *http.Client
+	Diagnostic                    diagnostic.Logger
+	// BinaryVersion is the CLI binary version, for startup logging and future
+	// status reporting.
+	BinaryVersion string
 	// FallbackDeploymentVersion is reported to the ledger when no MDM
 	// deployment-version marker exists (self-serve brew installs).
 	FallbackDeploymentVersion string
 	HomebrewUpdater           func(context.Context, managedconfig.LoadedConfig, diagnostic.Logger) <-chan struct{}
+	BinaryWatchdog            func(context.Context, diagnostic.Logger) <-chan struct{}
 }
 
 var (
@@ -50,6 +60,12 @@ var (
 )
 
 func RunDaemon(ctx context.Context, opts DaemonOptions) error {
+	binaryVersion := opts.BinaryVersion
+	if binaryVersion == "" {
+		binaryVersion = "dev"
+	}
+	logAlways(opts.Diagnostic, "managed-observe daemon %s (pid %d) started\n", binaryVersion, os.Getpid())
+
 	loadedConfig, err := managedconfig.Load()
 	if err != nil {
 		if errors.Is(err, managedconfig.ErrNotManaged) {
@@ -118,6 +134,32 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 
 	githubCache := newProviderPolicyCache(opts.GithubPolicyCachePath, dbPath, githubpolicy.Config, opts.Diagnostic)
 	hubspotCache := newProviderPolicyCache(opts.HubspotPolicyCachePath, dbPath, hubspotpolicy.Config, opts.Diagnostic)
+	cedarCachePath := opts.CedarPolicyCachePath
+	if cedarCachePath == "" {
+		cedarCachePath = cedarpolicy.DefaultCachePathForDB(dbPath)
+	}
+	cedarCache := cedarpolicy.NewCache(cedarCachePath, 0)
+	if err := cedarCache.Load(); err != nil {
+		cedarCache.MarkInvalid(err)
+		opts.Diagnostic.Printf("cedar policy cache load: %v\n", err)
+	}
+	cedarClient, err := cedarpolicy.NewClient(loadedConfig.Config.CloudURL, opts.PolicyHTTPClient)
+	if err != nil {
+		return fmt.Errorf("configure cedar policy client: %w", err)
+	}
+	endpointConfigCachePath := opts.EndpointConfigCachePath
+	if endpointConfigCachePath == "" {
+		endpointConfigCachePath = endpointconfig.DefaultCachePathForDB(dbPath)
+	}
+	endpointConfigCache := endpointconfig.NewCache(endpointConfigCachePath)
+	if err := endpointConfigCache.Load(); err != nil {
+		endpointConfigCache.MarkInvalid(err)
+		opts.Diagnostic.Printf("endpoint configuration cache load: %v\n", err)
+	}
+	endpointConfigClient, err := endpointconfig.NewClient(loadedConfig.Config.CloudURL, opts.EndpointConfigHTTPClient)
+	if err != nil {
+		return fmt.Errorf("configure endpoint configuration client: %w", err)
+	}
 
 	host, err := runtimehost.Start(ctx, runtimehost.Options{
 		AgentName:  managedconfig.Agent,
@@ -128,6 +170,8 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			server.HubspotPolicyBinding(hubspotCache),
 		},
 		EndpointID:         installationState.InstallationID,
+		CedarPolicies:      cedarCache,
+		CedarEnforcement:   mode == guardhookruntime.ModeEnforce,
 		Mode:               mode,
 		Diagnostic:         opts.Diagnostic,
 		SkipInitialSession: true,
@@ -143,20 +187,50 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		return err
 	}
 	defer host.Close(context.Background())
-
-	// Restore the capture mode from the persisted snapshot before the first
-	// fetch completes, so an offline restart keeps the org's last-known
-	// directive instead of silently reverting to the "summary" default.
-	if snapshot, _, ok := githubCache.CurrentSnapshot(); ok {
-		host.SetPayloadCaptureMode(payloadcapture.NormalizeMode(snapshot.PayloadCaptureMode))
+	if err := WriteDaemonStatus(dbPath, binaryVersion); err != nil {
+		opts.Diagnostic.Printf("write daemon-status breadcrumb: %v\n", err)
 	}
+
+	// Persisted endpoint configuration is conditional state only. Capture stays
+	// at the privacy-safe default until this process receives a confirming 200
+	// or matching 304 from the independent configuration endpoint.
+	host.SetPayloadCaptureConfiguration(captureConfiguration(endpointConfigCache.Current()))
 
 	policyCtx, stopPolicyRefresh := context.WithCancel(ctx)
 	defer stopPolicyRefresh()
-	// Capture mode rides the github snapshot only (the org-level directive);
-	// other providers' refreshers pass nil and never touch the gate.
-	go runProviderPolicy(policyCtx, opts, githubpolicy.Config, githubCache, installationState.InstallationID, host.SetPayloadCaptureMode)
-	go runProviderPolicy(policyCtx, opts, hubspotpolicy.Config, hubspotCache, installationState.InstallationID, nil)
+	go runProviderPolicy(policyCtx, opts, githubpolicy.Config, githubCache, installationState.InstallationID)
+	go runProviderPolicy(policyCtx, opts, hubspotpolicy.Config, hubspotCache, installationState.InstallationID)
+	cedarRefresher := cedarpolicy.Refresher{
+		Client: cedarClient,
+		Cache:  cedarCache,
+		TokenSource: func(refreshCtx context.Context) (string, error) {
+			loaded, err := managedconfig.Load()
+			if err != nil {
+				return "", err
+			}
+			return managedconfig.ResolveInstallToken(refreshCtx, loaded.Config.Credentials.InstallTokenRef)
+		},
+		InstallationID: installationState.InstallationID,
+		Interval:       opts.PolicyRefreshInterval,
+	}
+	go cedarRefresher.Run(policyCtx)
+	endpointConfigRefresher := endpointconfig.Refresher{
+		Client: endpointConfigClient,
+		Cache:  endpointConfigCache,
+		TokenSource: func(refreshCtx context.Context) (string, error) {
+			loaded, err := managedconfig.Load()
+			if err != nil {
+				return "", err
+			}
+			return managedconfig.ResolveInstallToken(refreshCtx, loaded.Config.Credentials.InstallTokenRef)
+		},
+		InstallationID: installationState.InstallationID,
+		Interval:       opts.EndpointConfigRefreshInterval,
+		OnChanged: func(snapshot endpointconfig.Snapshot) {
+			host.SetPayloadCaptureConfiguration(captureConfiguration(snapshot))
+		},
+	}
+	go endpointConfigRefresher.Run(policyCtx)
 
 	streamCtx, stopStream := context.WithCancel(ctx)
 	defer stopStream()
@@ -170,6 +244,12 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 		startUpdater = startHomebrewUpdater
 	}
 	upgraded := startUpdater(ctx, loadedConfig, opts.Diagnostic)
+
+	startWatchdog := opts.BinaryWatchdog
+	if startWatchdog == nil {
+		startWatchdog = startBinaryWatchdog
+	}
+	binaryReplaced := startWatchdog(ctx, opts.Diagnostic)
 
 	idleTimeout := opts.IdleTimeout
 	if idleTimeout == 0 {
@@ -187,9 +267,14 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 				return nil
 			}
 			upgraded = nil
+		case _, ok := <-binaryReplaced:
+			if ok {
+				return nil
+			}
+			binaryReplaced = nil
 		case err := <-streamErr:
 			if err != nil {
-				opts.Diagnostic.Printf("managed stream exited: %v\n", err)
+				logAlways(opts.Diagnostic, "managed stream exited: %v\n", err)
 				return fmt.Errorf("managed stream failed: %w", err)
 			}
 			return nil
@@ -199,6 +284,16 @@ func RunDaemon(ctx context.Context, opts DaemonOptions) error {
 			}
 		}
 	}
+}
+
+func captureConfiguration(snapshot endpointconfig.Snapshot) payloadcapture.RuntimeConfiguration {
+	return payloadcapture.SafeRuntimeConfiguration(payloadcapture.RuntimeConfiguration{
+		ConfiguredMode: snapshot.Configured.PayloadCaptureMode,
+		EffectiveMode:  snapshot.Config.PayloadCaptureMode,
+		ConfigIdentity: snapshot.ConfigIdentity,
+		Confirmed:      snapshot.Confirmed,
+		FallbackReason: snapshot.FallbackReason,
+	})
 }
 
 func requireManagedHooksForLegacyCowork(cfg managedconfig.Config) error {
@@ -308,13 +403,13 @@ func newProviderPolicyCache(path, dbPath string, config providerpolicy.Config, d
 // route first ships is acceptable.
 const notConfiguredBackoffTicks = 10
 
-func runProviderPolicy(ctx context.Context, opts DaemonOptions, config providerpolicy.Config, cache *providerpolicy.Cache, installationID string, applyCaptureMode func(payloadcapture.Mode)) {
+func runProviderPolicy(ctx context.Context, opts DaemonOptions, config providerpolicy.Config, cache *providerpolicy.Cache, installationID string) {
 	interval := opts.PolicyRefreshInterval
 	if interval == 0 {
 		interval = providerpolicy.IntervalFromEnv(config)
 	}
 	skipTicks := 0
-	if refreshProviderPolicy(ctx, opts, config, cache, installationID, applyCaptureMode) {
+	if refreshProviderPolicy(ctx, opts, config, cache, installationID) {
 		skipTicks = notConfiguredBackoffTicks - 1
 	}
 	ticker := time.NewTicker(interval)
@@ -328,7 +423,7 @@ func runProviderPolicy(ctx context.Context, opts DaemonOptions, config providerp
 				skipTicks--
 				continue
 			}
-			if refreshProviderPolicy(ctx, opts, config, cache, installationID, applyCaptureMode) {
+			if refreshProviderPolicy(ctx, opts, config, cache, installationID) {
 				skipTicks = notConfiguredBackoffTicks - 1
 			}
 		}
@@ -337,7 +432,7 @@ func runProviderPolicy(ctx context.Context, opts DaemonOptions, config providerp
 
 // refreshProviderPolicy fetches and applies one snapshot; it reports whether
 // the cloud answered not-configured (the caller backs off polling then).
-func refreshProviderPolicy(ctx context.Context, opts DaemonOptions, config providerpolicy.Config, cache *providerpolicy.Cache, installationID string, applyCaptureMode func(payloadcapture.Mode)) bool {
+func refreshProviderPolicy(ctx context.Context, opts DaemonOptions, config providerpolicy.Config, cache *providerpolicy.Cache, installationID string) bool {
 	loadedConfig, installToken, err := loadManagedConfig(ctx)
 	if err != nil {
 		cache.MarkFetchFailed(err)
@@ -364,12 +459,6 @@ func refreshProviderPolicy(ctx context.Context, opts DaemonOptions, config provi
 	if err := cache.Apply(snapshot, time.Now().UTC()); err != nil {
 		opts.Diagnostic.Printf("%s policy persist: %v\n", config.ProviderKey, err)
 	}
-	// Applied from the freshly fetched snapshot, not re-read from the cache:
-	// payloadCaptureMode is excluded from the snapshot hash, so the fetched
-	// value must win regardless of any hash-based short-circuit.
-	if applyCaptureMode != nil {
-		applyCaptureMode(payloadcapture.NormalizeMode(snapshot.PayloadCaptureMode))
-	}
 	return false
 }
 
@@ -378,22 +467,28 @@ func runManagedStream(ctx context.Context, opts DaemonOptions, dbPath, installat
 	if interval == 0 {
 		interval = managedstream.DefaultIntervalFromEnv()
 	}
-	var consecutiveAuthFailures int
+	var consecutiveAuthFailures, consecutiveFlushFailures int
 	flush := func() {
 		err := flushManagedStream(ctx, opts, dbPath, installationID)
 		if err == nil {
 			consecutiveAuthFailures = 0
+			consecutiveFlushFailures = 0
 			return
 		}
 		opts.Diagnostic.Printf("managed stream flush: %v\n", err)
 		status, ok := managedstream.AuthFailureStatus(err)
-		if !ok {
-			consecutiveAuthFailures = 0
+		if ok {
+			consecutiveFlushFailures = 0
+			consecutiveAuthFailures++
+			if managedstream.ShouldReportAuthFailure(consecutiveAuthFailures) {
+				writeStreamAuthFailure(opts, dbPath, status)
+			}
 			return
 		}
-		consecutiveAuthFailures++
-		if managedstream.ShouldReportAuthFailure(consecutiveAuthFailures) {
-			writeStreamAuthFailure(opts, dbPath, status)
+		consecutiveAuthFailures = 0
+		consecutiveFlushFailures++
+		if managedstream.ShouldReportFailure(consecutiveFlushFailures) {
+			logAlways(opts.Diagnostic, "managed stream flush failing (%d consecutive): %v\n", consecutiveFlushFailures, err)
 		}
 	}
 	flush()

@@ -21,11 +21,16 @@ import (
 	"github.com/kontext-security/kontext-cli/internal/managedconfig"
 )
 
+const testRuntimeTimeout = 5 * time.Second
+
 func TestDaemonPreservesHookSessionIDs(t *testing.T) {
 	socketPath, dbPath, stop := startTestDaemon(t)
+	if status := LoadDaemonStatus(dbPath); status == nil || status.PID == 0 {
+		t.Fatalf("LoadDaemonStatus = %+v, want non-zero PID", status)
+	}
 
 	client := localruntime.NewClient(socketPath)
-	client.Timeout = time.Second
+	client.Timeout = testRuntimeTimeout
 	for _, sessionID := range []string{"claude-session-one", "claude-session-two"} {
 		result, err := client.Process(context.Background(), hook.Event{
 			SessionID: sessionID,
@@ -57,7 +62,7 @@ func TestDaemonSessionEndClosesHookSessionID(t *testing.T) {
 	socketPath, dbPath, stop := startTestDaemon(t)
 
 	client := localruntime.NewClient(socketPath)
-	client.Timeout = time.Second
+	client.Timeout = testRuntimeTimeout
 	result, err := client.Process(context.Background(), hook.Event{
 		SessionID: "claude-session-end",
 		Agent:     "claude",
@@ -160,7 +165,7 @@ func TestDaemonStreamsLedgerBatches(t *testing.T) {
 	waitForSocket(t, socketPath, errCh)
 
 	client := localruntime.NewClient(socketPath)
-	client.Timeout = time.Second
+	client.Timeout = testRuntimeTimeout
 	if _, err := client.Process(context.Background(), hook.Event{
 		SessionID: "claude-stream-session",
 		Agent:     "claude",
@@ -264,7 +269,7 @@ func TestDaemonRefreshesStreamInstallToken(t *testing.T) {
 	t.Setenv("KONTEXT_INSTALL_TOKEN", "refreshed-install-token")
 
 	client := localruntime.NewClient(socketPath)
-	client.Timeout = time.Second
+	client.Timeout = testRuntimeTimeout
 	if _, err := client.Process(context.Background(), hook.Event{
 		SessionID: "claude-stream-token-session",
 		Agent:     "claude",
@@ -341,7 +346,7 @@ func TestDaemonWritesAuthErrorAfterConsecutiveStreamAuthFailures(t *testing.T) {
 	waitForSocket(t, socketPath, errCh)
 
 	client := localruntime.NewClient(socketPath)
-	client.Timeout = time.Second
+	client.Timeout = testRuntimeTimeout
 	if _, err := client.Process(context.Background(), hook.Event{
 		SessionID: "claude-auth-error-session",
 		Agent:     "claude",
@@ -399,6 +404,15 @@ func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
 			// 404 — so the daemon treats this as quietly-not-configured
 			// (keep any cache, mark stale, back off polling), not a failure.
 			w.WriteHeader(http.StatusNotFound)
+		case "/api/v1/installations/ins_0123456789abcdefghijklmnopqrstuv/policy":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"responseVersion":        1,
+				"requestContractVersion": 1,
+				"state":                  "no_active_policy",
+			})
+		case "/api/v1/installations/ins_0123456789abcdefghijklmnopqrstuv/configuration":
+			// Configuration refresh is independent of provider-policy refresh.
+			w.WriteHeader(http.StatusServiceUnavailable)
 		case "/api/v1/authorization-ledger/batches":
 			w.WriteHeader(http.StatusAccepted)
 		default:
@@ -423,13 +437,15 @@ func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- RunDaemon(ctx, DaemonOptions{
-			SocketPath:            socketPath,
-			DBPath:                dbPath,
-			IdleTimeout:           time.Hour,
-			StreamInterval:        time.Hour,
-			StreamHTTPClient:      server.Client(),
-			PolicyRefreshInterval: 20 * time.Millisecond,
-			PolicyHTTPClient:      server.Client(),
+			SocketPath:                    socketPath,
+			DBPath:                        dbPath,
+			IdleTimeout:                   time.Hour,
+			StreamInterval:                time.Hour,
+			StreamHTTPClient:              server.Client(),
+			PolicyRefreshInterval:         20 * time.Millisecond,
+			PolicyHTTPClient:              server.Client(),
+			EndpointConfigRefreshInterval: 20 * time.Millisecond,
+			EndpointConfigHTTPClient:      server.Client(),
 		})
 	}()
 	stopped := false
@@ -467,8 +483,21 @@ func TestDaemonRefreshesGithubPolicyInstallToken(t *testing.T) {
 }
 
 func TestRunDaemonExitsCleanlyAfterHomebrewUpgradeSignal(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusAccepted)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/installations/ins_0123456789abcdefghijklmnopqrstuv/policy":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"responseVersion":        1,
+				"requestContractVersion": 1,
+				"state":                  "no_active_policy",
+			})
+		case "/api/v1/installations/ins_0123456789abcdefghijklmnopqrstuv/configuration":
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case "/api/v1/policy/github/snapshot", "/api/v1/policy/hubspot/snapshot":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusAccepted)
+		}
 	}))
 	t.Cleanup(server.Close)
 
@@ -716,13 +745,18 @@ func startTestDaemon(t *testing.T) (string, string, func()) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- RunDaemon(ctx, DaemonOptions{
-			SocketPath:       socketPath,
-			DBPath:           dbPath,
-			IdleTimeout:      time.Hour,
-			StreamHTTPClient: server.Client(),
+			SocketPath:                    socketPath,
+			DBPath:                        dbPath,
+			IdleTimeout:                   time.Hour,
+			StreamHTTPClient:              server.Client(),
+			PolicyRefreshInterval:         time.Hour,
+			PolicyHTTPClient:              server.Client(),
+			EndpointConfigRefreshInterval: time.Hour,
+			EndpointConfigHTTPClient:      server.Client(),
 		})
 	}()
 	waitForSocket(t, socketPath, errCh)
+	waitForDaemonStatus(t, dbPath, errCh)
 	stopped := false
 	stop := func() {
 		if stopped {
@@ -760,6 +794,23 @@ func waitForSocket(t *testing.T, socketPath string, errCh <-chan error) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("managed observe daemon socket %s did not become ready", socketPath)
+}
+
+func waitForDaemonStatus(t *testing.T, dbPath string, errCh <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-errCh:
+			t.Fatalf("RunDaemon exited before status was ready: %v", err)
+		default:
+		}
+		if status := LoadDaemonStatus(dbPath); status != nil && status.PID != 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("managed observe daemon status did not become ready")
 }
 
 func writeTestManagedConfig(t *testing.T, path string) {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kontext-security/kontext-cli/internal/cedarpolicy"
 	"github.com/kontext-security/kontext-cli/internal/guard/judge"
 	"github.com/kontext-security/kontext-cli/internal/guard/policy"
 	"github.com/kontext-security/kontext-cli/internal/guard/policyconfig"
@@ -52,6 +53,8 @@ type Options struct {
 	PolicyConfigProvider PolicyConfigProvider
 	ProviderPolicies     []ProviderPolicyBinding
 	EndpointID           string
+	CedarPolicies        cedarpolicy.SnapshotProvider
+	CedarEnforcement     bool
 	CurrentSessionID     string
 	Mode                 string
 }
@@ -77,11 +80,8 @@ func NewServer(store *sqlite.Store) (*Server, error) {
 	return NewServerWithOptions(store, Options{})
 }
 
-// SetPayloadCaptureMode forwards the org's payload-capture directive to the
-// store, which reads it per recorded action. Called by the managed daemon's
-// policy refresh cycle whenever a snapshot is fetched or restored from disk.
-func (s *Server) SetPayloadCaptureMode(mode payloadcapture.Mode) {
-	s.store.SetPayloadCaptureMode(mode)
+func (s *Server) SetPayloadCaptureConfiguration(config payloadcapture.RuntimeConfiguration) {
+	s.store.SetPayloadCaptureConfiguration(config)
 }
 
 func NewServerWithOptions(store *sqlite.Store, opts Options) (*Server, error) {
@@ -136,6 +136,7 @@ func NewServerWithPolicyConfigAndOptions(store *sqlite.Store, policy PolicyProvi
 			PolicyConfigProvider: policyStoreConfigProvider{store: policyStore},
 		})
 	}
+	policy = newCedarPolicyProvider(policy, opts.CedarPolicies, opts.CedarEnforcement)
 	currentSessionID := strings.TrimSpace(opts.CurrentSessionID)
 	mode := strings.TrimSpace(opts.Mode)
 	if currentSessionID != "" && mode == "" {
