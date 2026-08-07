@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/kontext-security/kontext-cli/compare/v1.0.1...v1.0.2) (2026-08-07)
+
+
+### Bug Fixes
+
+* **endpointconfig:** tolerate weak ETags and log refresh failures ([#454](https://github.com/kontext-security/kontext-cli/issues/454)) ([48e859a](https://github.com/kontext-security/kontext-cli/commit/48e859a4a3feea3aeae3659d9fe21f4ba5990445))
+
 ## [1.0.1](https://github.com/kontext-security/kontext-cli/compare/v1.0.0...v1.0.1) (2026-08-05)
 
 
